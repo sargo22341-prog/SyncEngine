@@ -1,0 +1,21 @@
+[package]
+name = "sync-versioning"
+description = "Conservation des versions SyncEngine : avant qu'un fichier de la destination soit remplacé ou supprimé, en dépose une copie vérifiée dans un magasin de versions séparé (sous-dossier par exécution, jamais d'écrasement). Ne décide d'aucune action."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+connector-api.workspace = true
+sync-copy.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+sync-verify.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+connector-memory.workspace = true
+
+[lints]
+workspace = true

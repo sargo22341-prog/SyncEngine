@@ -2,7 +2,8 @@
 //!
 //! Composition directe (faute d'orchestrateur) : connecteur local en
 //! lecture seule → scanner → comparaison → stratégie → plan. Le plan est
-//! affiché (texte ou JSON versionné) ; **rien n'est exécuté**. Les textes
+//! affiché (texte ou JSON versionné) ; **rien n'est exécuté** ici
+//! (`execute` réutilise [`build_plan`] puis l'exécuteur). Les textes
 //! français sont produits ici, jamais dans les moteurs.
 
 use std::io::Write;
@@ -18,20 +19,31 @@ use sync_plan::{
     ExecutionPlan, Operation, OverwritePolicy, PlanPolicy, PlanSide, Reason, SyncMode,
     UncertainCause,
 };
+use sync_scanner::Inventory;
 
 use crate::cli::{DiscoveryArgs, PreviewArgs};
 use crate::discovery::{
     DiscoveryError, exit, filter_of, kind_marker, run_scan, scan_options, write_issues,
 };
 
-/// `syncengine preview` : renvoie le code de sortie.
-pub(crate) fn preview_command(
-    out: &mut dyn Write,
+/// Plan calculé et inventaires qui l'ont produit.
+pub(crate) struct Planned {
+    /// Plan (même modèle pour la simulation et l'exécution).
+    pub(crate) plan: ExecutionPlan,
+    /// Inventaire de la source.
+    pub(crate) source: Inventory,
+    /// Inventaire de la destination.
+    pub(crate) destination: Inventory,
+}
+
+/// Calcule le plan : connecteur local en lecture seule → scanner →
+/// comparaison → stratégie. Aucune écriture.
+pub(crate) fn build_plan(
     source_root: &Path,
     destination_root: &Path,
     args: &DiscoveryArgs,
     preview: &PreviewArgs,
-) -> Result<u8, DiscoveryError> {
+) -> Result<Planned, DiscoveryError> {
     let filter = filter_of(args)?;
     let (strategy, policy) = strategy_and_policy(preview)?;
     ensure_not_nested(source_root, destination_root)?;
@@ -49,6 +61,26 @@ pub(crate) fn preview_command(
             PlanningError::InvalidPolicy(violation) => DiscoveryError::Policy(violation),
             other => DiscoveryError::Plan(other.to_string()),
         })?;
+    Ok(Planned {
+        plan,
+        source,
+        destination,
+    })
+}
+
+/// `syncengine preview` : renvoie le code de sortie.
+pub(crate) fn preview_command(
+    out: &mut dyn Write,
+    source_root: &Path,
+    destination_root: &Path,
+    args: &DiscoveryArgs,
+    preview: &PreviewArgs,
+) -> Result<u8, DiscoveryError> {
+    let Planned {
+        plan,
+        source,
+        destination,
+    } = build_plan(source_root, destination_root, args, preview)?;
 
     if preview.json {
         let json = plan
@@ -103,7 +135,7 @@ fn strategy_and_policy(
 /// source. Les chemins sont résolus (liens et jonctions compris) ; un
 /// dossier introuvable est laissé au scan, qui le signale comme
 /// indisponible.
-fn ensure_not_nested(source: &Path, destination: &Path) -> Result<(), DiscoveryError> {
+pub(crate) fn ensure_not_nested(source: &Path, destination: &Path) -> Result<(), DiscoveryError> {
     let (Ok(source), Ok(destination)) = (
         std::fs::canonicalize(source),
         std::fs::canonicalize(destination),
@@ -122,6 +154,16 @@ fn ensure_not_nested(source: &Path, destination: &Path) -> Result<(), DiscoveryE
     Err(DiscoveryError::Nested(message.to_owned()))
 }
 
+/// Libellé d'emplacement enregistré dans le plan (chemin absolu, sans accès
+/// disque) ; sert aussi à vérifier qu'un plan enregistré désigne bien les
+/// dossiers fournis.
+pub(crate) fn location(path: &Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
+}
+
 fn plan_context(source: &Path, destination: &Path) -> Result<PlanContext, DiscoveryError> {
     let created_at = Timestamp::now()
         .map_err(|error| DiscoveryError::Plan(format!("horloge système : {error}")))?;
@@ -131,12 +173,6 @@ fn plan_context(source: &Path, destination: &Path) -> Result<PlanContext, Discov
         std::process::id()
     ))
     .map_err(|error| DiscoveryError::Plan(error.to_string()))?;
-    let location = |path: &Path| {
-        std::path::absolute(path)
-            .unwrap_or_else(|_| path.to_path_buf())
-            .display()
-            .to_string()
-    };
     Ok(PlanContext {
         plan_id,
         profile: None,
@@ -207,7 +243,7 @@ fn write_summary(out: &mut dyn Write, plan: &ExecutionPlan) -> std::io::Result<(
     }
     writeln!(
         out,
-        "SIMULATION : rien n'a été modifié ; aucune commande n'exécute encore ce plan."
+        "SIMULATION : rien n'a été modifié ; « syncengine execute … --confirm » exécuterait ce plan."
     )
 }
 
@@ -225,7 +261,7 @@ fn operation_line(op: &Operation) -> String {
     )
 }
 
-fn action_label(action: Action) -> &'static str {
+pub(crate) fn action_label(action: Action) -> &'static str {
     match action {
         Action::Copy => "COPIER",
         Action::Replace => "REMPLACER",

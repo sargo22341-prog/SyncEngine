@@ -1,0 +1,20 @@
+[package]
+name = "sync-copy"
+description = "Moteur de transfert SyncEngine : copie un fichier en flux d'un connecteur vers un autre, dans un dépôt temporaire, en calculant son empreinte BLAKE3. Ne décide d'aucune action, ne supprime rien ; la validation du dépôt revient à l'exécuteur."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+blake3.workspace = true
+connector-api.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+connector-memory.workspace = true
+
+[lints]
+workspace = true

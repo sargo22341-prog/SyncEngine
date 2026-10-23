@@ -83,6 +83,61 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "sync-scanner",
         ],
     ),
+    // Exécution (phase 04) : consomme le contrat de plan, jamais la
+    // découverte ni les stratégies (hors tests).
+    (
+        "sync-copy",
+        &[
+            "sync-core",
+            "sync-errors",
+            "connector-api",
+            "connector-memory",
+        ],
+    ),
+    (
+        "sync-verify",
+        &[
+            "sync-core",
+            "sync-errors",
+            "connector-api",
+            "connector-memory",
+        ],
+    ),
+    (
+        "sync-versioning",
+        &[
+            "sync-core",
+            "sync-errors",
+            "connector-api",
+            "sync-copy",
+            "sync-verify",
+            "connector-memory",
+        ],
+    ),
+    ("sync-journal", &["sync-core", "sync-errors", "sync-plan"]),
+    (
+        "sync-executor",
+        &[
+            "sync-core",
+            "sync-errors",
+            "sync-events",
+            "connector-api",
+            "sync-plan",
+            "sync-copy",
+            "sync-verify",
+            "sync-versioning",
+            "sync-journal",
+            // dev-dependencies (plans construits par le pipeline réel)
+            "connector-local",
+            "connector-memory",
+            "sync-filter",
+            "sync-scanner",
+            "sync-compare",
+            "sync-decisions",
+            "sync-backup",
+            "sync-mirror",
+        ],
+    ),
     (
         "syncengine-cli",
         &[
@@ -98,6 +153,10 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "sync-decisions",
             "sync-backup",
             "sync-mirror",
+            "sync-verify",
+            "sync-versioning",
+            "sync-journal",
+            "sync-executor",
         ],
     ),
     ("syncengine-architecture-tests", &[]),
@@ -110,6 +169,26 @@ const TEST_DOUBLES: &[&str] = &["connector-memory"];
 /// implémentation de connecteur (seul le contrat `connector-api` est admis,
 /// et seulement pour les tests).
 const PLANNING: &[&str] = &["sync-plan", "sync-decisions", "sync-backup", "sync-mirror"];
+
+/// Paquets d'exécution : ils appliquent un plan sans le recalculer et
+/// n'accèdent au stockage que par le contrat `connector-api`.
+const EXECUTION: &[&str] = &[
+    "sync-copy",
+    "sync-verify",
+    "sync-versioning",
+    "sync-journal",
+    "sync-executor",
+];
+
+/// Paquets qui décident (découverte, comparaison, stratégies) : interdits
+/// aux paquets d'exécution hors tests.
+const DECIDING: &[&str] = &[
+    "sync-scanner",
+    "sync-compare",
+    "sync-decisions",
+    "sync-backup",
+    "sync-mirror",
+];
 
 /// Paquets de présentation : seuls autorisés à dépendre de Tauri.
 const PRESENTATION: &[&str] = &[];
@@ -239,6 +318,27 @@ fn planning_crates_never_depend_on_connector_implementations() {
             assert!(
                 !dep.starts_with("connector-"),
                 "{} dépend de {dep} : la planification ne fait aucune E/S",
+                package.name
+            );
+        }
+    }
+}
+
+#[test]
+fn execution_crates_never_decide_nor_bypass_the_connector_contract() {
+    for package in workspace_packages() {
+        if !EXECUTION.contains(&package.name.as_str()) {
+            continue;
+        }
+        for dep in &package.non_dev_dependencies {
+            assert!(
+                !DECIDING.contains(&dep.as_str()),
+                "{} dépend de {dep} : l'exécution applique un plan, elle ne le recalcule pas",
+                package.name
+            );
+            assert!(
+                dep == "connector-api" || !dep.starts_with("connector-"),
+                "{} dépend de {dep} : l'exécution passe par le contrat connector-api",
                 package.name
             );
         }

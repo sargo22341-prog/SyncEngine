@@ -1,0 +1,21 @@
+[package]
+name = "sync-journal"
+description = "Journal durable d'exécution SyncEngine : enregistrements versionnés (JSON Lines) écrits et synchronisés sur disque avant et après chaque mutation, relecture tolérante à une fin tronquée et diagnostic de reprise d'une exécution interrompue. N'effectue aucune mutation de données utilisateur."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+sync-plan.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

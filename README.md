@@ -1,6 +1,6 @@
 # SyncEngine — Kit de contexte pour sessions IA
 
-Ce kit constitue une **spécification de démarrage** ; il ne contient pas encore d'application fonctionnelle.
+SyncEngine fournit une CLI Rust pour inventorier, comparer, prévisualiser et exécuter des sauvegardes ou miroirs locaux. L'interface graphique, l'agent et les connecteurs réseau/cloud ne sont pas encore implémentés.
 
 ## Entrée rapide
 1. Lire `CONTEXTE.md`, puis `AGENTS.md`, puis `docs/CONTRATS.md`.
@@ -20,8 +20,8 @@ Ce kit constitue une **spécification de démarrage** ; il ne contient pas encor
 - UI Tauri 2 + frontend TypeScript ; tout le métier, les transferts et les connecteurs en Rust.
 - `AGENTS.md` s'applique au dépôt et reste sous 400 lignes.
 
-## État actuel : phase 03 (décisions et plans, sans exécution)
-Le workspace compile les contrats (`sync-core`, `sync-errors`, `sync-events`, `connector-api`, `sync-plan`), un connecteur local **en lecture seule** (`connector-local`), les moteurs de découverte (`sync-filter`, `sync-scanner`, `sync-compare`) et de planification (`sync-decisions`, `sync-backup`, `sync-mirror`), et une CLI qui inventorie, compare et **prévisualise** le plan d'une sauvegarde ou d'un miroir. **Aucune** exécution n'existe encore : rien n'est jamais copié, modifié ni supprimé.
+## État actuel : phase 04 (exécution sécurisée locale)
+Le workspace comprend les contrats, la découverte, les stratégies sauvegarde/miroir et les moteurs `sync-copy`, `sync-verify`, `sync-versioning`, `sync-journal`, `sync-executor`. `scan`, `compare` et `preview` restent sans mutation ; **`execute` modifie réellement la destination**, après confirmation. La source est ouverte en lecture seule. Les contrats de phase 04 sont soumis à revue (ADR 0004).
 
 Prérequis : `docs/BUILD.md`. Exemples :
 ```sh
@@ -38,3 +38,42 @@ Lecture de `compare` : `<` gauche seulement, `>` droite seulement, `!=` différe
 Lecture de `preview` : une ligne par chemin — `COPIER`, `REMPLACER`, `CONSERVER`, `SUPPRIMER`, `CONFLIT` (rien n'est écrit), `IGNORER` (incertitude, lien, suppression refusée…) — avec son motif. Une sauvegarde ne supprime jamais ; un miroir ne supprime qu'avec `--allow-delete`, et jamais si un inventaire est incomplet, si la source est vide ou au-delà de 50 % des entrées de la destination (réglable). Codes : 0 rien à faire, 1 opérations prévues, 2 usage (dont destination imbriquée dans la source), 3 conflits, chemins ignorés ou inventaire incomplet, 4 échec (aucun plan).
 
 Contrats compilés : `docs/CONTRATS.md` ; décisions : `docs/adr/` ; état de passation : `docs/ETAT_PROJET.md`.
+
+### Exécuter et diagnostiquer (phase 04)
+Les dossiers source/destination doivent exister et ne pas être imbriqués.
+Chaque exécution exige `--confirm` et un **nouveau** fichier `--journal`,
+hors de ces deux arbres. Exemple de sauvegarde puis diagnostic :
+
+```sh
+cargo run -p syncengine-cli -- execute ./source ./destination --confirm --journal ./execution-01.jsonl --progress
+cargo run -p syncengine-cli -- journal ./execution-01.jsonl
+```
+
+Pour conserver les fichiers remplacés/supprimés, créer un dossier séparé
+`./versions`, puis ajouter `--versions-dir ./versions`. Un miroir avec
+suppressions exige la politique `--mode mirror --allow-delete` **et** la
+confirmation `--confirm-delete` ; les plafonds de preview restent applicables.
+
+Exécuter un plan enregistré (dans l'heure, sans changer les arbres) :
+
+```sh
+cargo run -p syncengine-cli -- preview ./source ./destination --hash --json > plan.json
+cargo run -p syncengine-cli -- execute ./source ./destination --plan ./plan.json --confirm --journal ./execution-02.jsonl
+```
+
+Le fichier doit être du JSON UTF-8 (sous Windows PowerShell 5.1, utiliser
+une écriture UTF-8 explicite plutôt que la redirection UTF-16 par défaut).
+Les options de planification et de filtrage ne se combinent pas avec `--plan`.
+Chaque précondition est revérifiée avant mutation. `--verify content`
+(défaut) relit le contenu déposé et vérifie BLAKE3 ; `--verify size` ne
+détecte pas une corruption de même taille. `--json` produit le rapport.
+Codes `execute` : 0 succès, 2 usage, 3 réserves/refus, 4 échec/annulation ;
+`journal` : 0 succès, 3 réserves ou interruption, 4 échec.
+
+Limites : pas de verrou contre deux exécutions concurrentes sur les mêmes
+arbres, fenêtre résiduelle entre contrôle des chemins et mutation, repli FAT
+non atomique, pas de rétention des versions. Ctrl+C ne déclenche pas encore
+l'annulation coopérative ; après interruption, lire le journal puis refaire
+une preview. Un temporaire `.syncengine-….partial` peut rester sans être
+consigné si l'arrêt survient pendant le transfert. Linux et CI non validés
+dans cette session ; détails des tests et limites dans l'état du projet.

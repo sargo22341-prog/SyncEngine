@@ -1,0 +1,22 @@
+[package]
+name = "sync-verify"
+description = "Contrôles d'intégrité SyncEngine : compare une observation enregistrée (nature, taille, date à la précision déclarée, empreinte) à l'état actuel, contrôle un transfert et relit un contenu pour en vérifier l'empreinte BLAKE3. Constate des écarts, ne décide et ne modifie rien."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+blake3.workspace = true
+connector-api.workspace = true
+serde.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+connector-memory.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

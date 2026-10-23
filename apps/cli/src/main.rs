@@ -1,13 +1,15 @@
 //! Point d'entrée de la CLI `syncengine`.
 //!
-//! Phase 03 : aide, version, et trois commandes **en lecture seule** —
+//! Phase 04 : aide, version, trois commandes **en lecture seule** —
 //! `scan` (inventaire d'un dossier local), `compare` (différences entre
-//! deux dossiers locaux) et `preview` (plan d'une sauvegarde ou d'un
-//! miroir, simulé). Aucune commande ne copie, ne modifie ni ne supprime de
-//! fichier.
+//! deux dossiers locaux), `preview` (plan d'une sauvegarde ou d'un miroir,
+//! simulé) —, `execute` (exécution **réelle** du même plan, qui modifie la
+//! destination, sur confirmation explicite et avec journal durable) et
+//! `journal` (diagnostic d'un journal, en lecture seule).
 
 mod cli;
 mod discovery;
+mod execute;
 mod preview;
 
 use std::io::{self, Write};
@@ -49,6 +51,21 @@ fn run(command: Command) -> ExitCode {
             options,
             preview,
         } => preview::preview_command(&mut out, &source, &destination, &options, &preview),
+        Command::Execute {
+            source,
+            destination,
+            options,
+            preview,
+            execute,
+        } => execute::execute_command(
+            &mut out,
+            &source,
+            &destination,
+            &options,
+            &preview,
+            &execute,
+        ),
+        Command::Journal { path } => execute::journal_command(&mut out, &path),
     };
     let flushed = out.flush();
     match (result, flushed) {

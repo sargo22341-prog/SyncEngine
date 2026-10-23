@@ -5,9 +5,10 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use connector_api::{
-    CaseSensitivity, ClockSource, ContentReader, ListPage, ListingConsistency, ListingIssue,
-    ListingIssueKind, NameIssue, PageToken, Pagination, StorageCapabilities, StorageConnector,
-    StorageError, StorageErrorKind, StorageFeature, StorageOperation, SymlinkSupport,
+    CaseSensitivity, ClockSource, ContentReader, ContentWriter, ListPage, ListingConsistency,
+    ListingIssue, ListingIssueKind, NameIssue, PageToken, Pagination, StorageCapabilities,
+    StorageConnector, StorageError, StorageErrorKind, StorageFeature, StorageOperation,
+    SymlinkSupport, WriteOptions, ensure_supported,
 };
 use sync_core::{
     CancellationToken, ConnectorId, EntryKind, FileEntry, FileMetadata, ResourcePath, Timestamp,
@@ -16,6 +17,7 @@ use sync_core::{
 
 use crate::errors::{io_error, local_error};
 use crate::paths::{is_ambiguous_here, resolve};
+use crate::write;
 
 /// Nombre d'entrées lues entre deux consultations du jeton d'annulation.
 const CANCEL_CHECK_INTERVAL: usize = 256;
@@ -30,6 +32,7 @@ const CANCEL_CHECK_INTERVAL: usize = 256;
 pub struct LocalOptions {
     timestamp_precision: Option<TimestampPrecision>,
     case_sensitivity: Option<CaseSensitivity>,
+    mutations: bool,
 }
 
 impl LocalOptions {
@@ -51,6 +54,16 @@ impl LocalOptions {
     #[must_use]
     pub fn with_case_sensitivity(mut self, case: CaseSensitivity) -> Self {
         self.case_sensitivity = Some(case);
+        self
+    }
+
+    /// Autorise les mutations (création de répertoire, écriture en deux
+    /// temps, suppression non récursive). **Désactivées par défaut** : une
+    /// extrémité source s'ouvre sans cette option, ce qui rend toute
+    /// mutation de la source structurellement impossible.
+    #[must_use]
+    pub fn with_mutations(mut self) -> Self {
+        self.mutations = true;
         self
     }
 }
@@ -90,12 +103,21 @@ impl std::fmt::Display for LocalConfigError {
 
 impl std::error::Error for LocalConfigError {}
 
-/// Connecteur du système de fichiers local, **en lecture seule**.
+/// Connecteur du système de fichiers local, **en lecture seule par défaut**.
 ///
 /// - Les liens symboliques et jonctions sont rapportés comme
-///   [`EntryKind::Symlink`] et jamais suivis, ni en listing ni en lecture ;
-///   la racine elle-même peut être un lien (choix explicite de l'utilisateur).
-/// - Aucune méthode n'écrit, ne crée ni ne supprime quoi que ce soit.
+///   [`EntryKind::Symlink`] et jamais suivis, ni en listing, ni en lecture,
+///   ni en écriture ; la racine elle-même peut être un lien (choix explicite
+///   de l'utilisateur).
+/// - Sans [`LocalOptions::with_mutations`], aucune méthode n'écrit, ne crée
+///   ni ne supprime quoi que ce soit (`NotSupported`).
+/// - Avec mutations : écriture dans un fichier temporaire du même dossier
+///   (`.syncengine-….partial`), rendu durable (`fsync`) puis publié par
+///   lien physique (création, sans écrasement possible) ou renommage
+///   (remplacement) ; suppression d'un fichier ou d'un dossier **vide**
+///   seulement ; un chemin traversant un lien est refusé, et la position
+///   réelle du dossier parent sous la racine est revérifiée juste avant la
+///   publication (voir `write.rs` pour la limite résiduelle).
 /// - La construction ne fait aucun accès disque : une racine absente est
 ///   signalée par la première opération, comme `Disconnected`.
 #[derive(Debug)]
@@ -126,6 +148,14 @@ impl LocalConnector {
             StorageFeature::StreamingRead,
             StorageFeature::Cancellation,
         ]);
+        if options.mutations {
+            capabilities = capabilities.with_features([
+                StorageFeature::Write,
+                StorageFeature::StreamingWrite,
+                StorageFeature::CreateDirectory,
+                StorageFeature::Delete,
+            ]);
+        }
         capabilities.case_sensitivity = options
             .case_sensitivity
             .unwrap_or_else(default_case_sensitivity);
@@ -149,21 +179,7 @@ impl LocalConnector {
     }
 
     fn entry_from_metadata(&self, path: ResourcePath, metadata: &fs::Metadata) -> FileEntry {
-        let file_type = metadata.file_type();
-        let kind = kind_of(&file_type);
-        let mut observed = FileMetadata::unknown();
-        if kind == EntryKind::File {
-            observed = observed.with_size(metadata.len());
-        }
-        // Une date illisible ou hors plage reste inconnue, jamais zéro.
-        if let Some(modified) = metadata
-            .modified()
-            .ok()
-            .and_then(|time| Timestamp::from_system_time(time).ok())
-        {
-            observed = observed.with_modified(modified, self.precision);
-        }
-        FileEntry::new(path, kind, observed)
+        entry_of(path, metadata, self.precision)
     }
 
     /// Vérifie la racine : son absence est une indisponibilité de
@@ -188,6 +204,55 @@ impl LocalConnector {
             Err(error) => Err(io_error(error, operation, &root)),
         }
     }
+
+    /// Contrôles communs avant une mutation : capacité déclarée, pas
+    /// d'annulation, racine disponible, chemin autre que la racine.
+    fn before_mutation(
+        &self,
+        feature: StorageFeature,
+        operation: StorageOperation,
+        path: &ResourcePath,
+        cancel: &CancellationToken,
+    ) -> Result<(), StorageError> {
+        ensure_supported(self, feature, operation)
+            .map_err(|error| error.with_path(path.clone()))?;
+        if cancel.is_cancelled() {
+            return Err(cancelled(operation, path));
+        }
+        self.check_root(operation)?;
+        if path.is_root() {
+            return Err(local_error(
+                StorageErrorKind::Permanent,
+                operation,
+                path,
+                "la racine elle-même ne peut pas être créée, écrite ni supprimée",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Entrée observée à partir de métadonnées lues sans suivre de lien.
+pub(crate) fn entry_of(
+    path: ResourcePath,
+    metadata: &fs::Metadata,
+    precision: TimestampPrecision,
+) -> FileEntry {
+    let file_type = metadata.file_type();
+    let kind = kind_of(&file_type);
+    let mut observed = FileMetadata::unknown();
+    if kind == EntryKind::File {
+        observed = observed.with_size(metadata.len());
+    }
+    // Une date illisible ou hors plage reste inconnue, jamais zéro.
+    if let Some(modified) = metadata
+        .modified()
+        .ok()
+        .and_then(|time| Timestamp::from_system_time(time).ok())
+    {
+        observed = observed.with_modified(modified, precision);
+    }
+    FileEntry::new(path, kind, observed)
 }
 
 fn kind_of(file_type: &fs::FileType) -> EntryKind {
@@ -203,7 +268,7 @@ fn kind_of(file_type: &fs::FileType) -> EntryKind {
     }
 }
 
-fn cancelled(operation: StorageOperation, path: &ResourcePath) -> StorageError {
+pub(crate) fn cancelled(operation: StorageOperation, path: &ResourcePath) -> StorageError {
     local_error(StorageErrorKind::Cancelled, operation, path, "annulé")
 }
 
@@ -373,6 +438,39 @@ impl StorageConnector for LocalConnector {
             path: path.clone(),
             cancel: cancel.clone(),
         }))
+    }
+
+    fn create_directory(
+        &self,
+        path: &ResourcePath,
+        cancel: &CancellationToken,
+    ) -> Result<FileEntry, StorageError> {
+        let operation = StorageOperation::CreateDirectory;
+        self.before_mutation(StorageFeature::CreateDirectory, operation, path, cancel)?;
+        write::create_directory(&self.root, path, self.precision)
+    }
+
+    fn open_write(
+        &self,
+        path: &ResourcePath,
+        options: &WriteOptions,
+        cancel: &CancellationToken,
+    ) -> Result<Box<dyn ContentWriter>, StorageError> {
+        let operation = StorageOperation::Write;
+        self.before_mutation(StorageFeature::Write, operation, path, cancel)?;
+        let writer = write::LocalWriter::open(&self.root, path, *options, self.precision, cancel)?;
+        Ok(Box::new(writer))
+    }
+
+    fn delete(
+        &self,
+        path: &ResourcePath,
+        expected: EntryKind,
+        cancel: &CancellationToken,
+    ) -> Result<(), StorageError> {
+        let operation = StorageOperation::Delete;
+        self.before_mutation(StorageFeature::Delete, operation, path, cancel)?;
+        write::delete(&self.root, path, expected)
     }
 }
 

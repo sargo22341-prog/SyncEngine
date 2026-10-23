@@ -1,7 +1,8 @@
 //! Commandes `scan` et `compare` : composition des moteurs et rendu texte.
 //!
 //! Lecture seule : seuls le connecteur local (sans capacité d'écriture), le
-//! scanner, le filtre et la comparaison sont utilisés. L'orchestrateur
+//! scanner, le filtre et la comparaison sont utilisés ; `execute` y ajoute
+//! un connecteur avec mutations pour la seule destination. L'orchestrateur
 //! applicatif n'existe pas encore ; cette composition directe sera reprise
 //! par lui.
 
@@ -56,6 +57,8 @@ pub(crate) enum DiscoveryError {
     Policy(sync_decisions::PolicyViolation),
     /// Planification ou sérialisation du plan impossible.
     Plan(String),
+    /// Exécution refusée avant toute mutation, ou journal inexploitable.
+    Execution(String),
     /// Écriture de la sortie impossible.
     Output(io::Error),
 }
@@ -76,6 +79,7 @@ impl std::fmt::Display for DiscoveryError {
             Self::Nested(message) => write!(f, "{message} : aucun plan produit"),
             Self::Policy(error) => write!(f, "politique refusée : {error}"),
             Self::Plan(message) => write!(f, "plan impossible : {message}"),
+            Self::Execution(message) => write!(f, "{message}"),
             Self::Output(error) => write!(f, "sortie impossible : {error}"),
         }
     }
@@ -119,12 +123,21 @@ pub(crate) fn scan_options(args: &DiscoveryArgs) -> ScanOptions {
     }
 }
 
-fn connector_for(root: &Path) -> Result<LocalConnector, DiscoveryError> {
+/// Connecteur local **en lecture seule** sur `root`.
+pub(crate) fn connector_for(root: &Path) -> Result<LocalConnector, DiscoveryError> {
+    local_connector(root, LocalOptions::new())
+}
+
+/// Connecteur local sur `root` avec `options` (mutations éventuelles).
+pub(crate) fn local_connector(
+    root: &Path,
+    options: LocalOptions,
+) -> Result<LocalConnector, DiscoveryError> {
     // `absolute` ne touche pas au disque : un dossier absent sera signalé
     // par le scan comme indisponible, jamais comme vide.
     let absolute = std::path::absolute(root)
         .map_err(|error| DiscoveryError::Path(format!("{} : {error}", root.display())))?;
-    LocalConnector::new(absolute, LocalOptions::new())
+    LocalConnector::new(absolute, options)
         .map_err(|error| DiscoveryError::Path(format!("{} : {error}", root.display())))
 }
 

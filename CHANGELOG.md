@@ -2,6 +2,30 @@
 
 ## [0.1.0] — non publié
 
+### Ajouté (phase 04 — exécution sécurisée locale)
+- `sync-copy`, `sync-verify`, `sync-versioning`, `sync-journal`, `sync-executor` :
+  transferts en flux, vérification BLAKE3 par défaut, versions facultatives,
+  journal JSON Lines v1 durable et diagnostic après interruption.
+- Exécution du plan de preview avec préconditions revérifiées, refus motivés,
+  dépendances respectées, suppressions non récursives en dernier, progression
+  agrégée et annulation coopérative dans les moteurs.
+- Arrêt sur disque plein, déconnexion, annulation ou journal indisponible.
+- CLI `execute` (`--confirm`, nouveau `--journal`, `--confirm-delete` si
+  nécessaire, `--plan`, `--verify`, `--versions-dir`, `--progress`, `--json`)
+  et `journal` ; journal/versions refusés dans les arbres synchronisés.
+
+### Modifié (phase 04)
+- `StorageConnector` : `create_directory`, `open_write`, `delete`, avec
+  défaut `NotSupported` ; écriture `ContentWriter` en deux temps.
+- Connecteur local : mutations sur activation explicite, temporaire + fsync,
+  date source préservée, contrôle de la position réelle du parent renforcé
+  (fenêtre résiduelle documentée dans l'ADR 0004, revue demandée).
+- Double mémoire : mutations et pannes injectables ; règle d'architecture
+  interdisant les dépendances de l'exécution vers les stratégies/décisions.
+- Aide CLI et deux instantanés texte de preview : seule la dernière ligne
+  est régénérée car l'exécution existe désormais.
+- CLI : un journal situé à côté de la destination est accepté.
+
 ### Ajouté (phase 03 — décisions et plans, aucune mutation)
 - `sync-plan` : plan d'exécution immuable, sérialisable en JSON versionné
   (`schema_version` 1) et validé au chargement ; opérations `copy`, `replace`,

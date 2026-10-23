@@ -5,6 +5,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use sync_plan::{OverwritePolicy, SyncMode};
+use sync_verify::VerifyMode;
 
 /// Options communes de découverte (filtres, empreintes).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -57,6 +58,25 @@ impl Default for PreviewArgs {
     }
 }
 
+/// Options propres à la commande `execute`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ExecuteArgs {
+    /// `--confirm` : exécution réelle demandée explicitement.
+    pub(crate) confirm: bool,
+    /// `--confirm-delete` : suppressions du plan confirmées explicitement.
+    pub(crate) confirm_delete: bool,
+    /// `--journal <FICHIER>` : journal durable (nouveau fichier).
+    pub(crate) journal: Option<PathBuf>,
+    /// `--verify size|content` (défaut : content).
+    pub(crate) verify: VerifyMode,
+    /// `--versions-dir <DOSSIER>` : conserve les fichiers remplacés ou supprimés.
+    pub(crate) versions: Option<PathBuf>,
+    /// `--plan <FICHIER>` : exécute un plan JSON enregistré par `preview --json`.
+    pub(crate) plan: Option<PathBuf>,
+    /// `--progress` : progression agrégée sur la sortie d'erreur.
+    pub(crate) progress: bool,
+}
+
 /// Commande reconnue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -93,6 +113,24 @@ pub(crate) enum Command {
         /// Options de planification et d'affichage.
         preview: PreviewArgs,
     },
+    /// Exécuter réellement un plan (modifie la destination).
+    Execute {
+        /// Dossier source (jamais modifié).
+        source: PathBuf,
+        /// Dossier destination.
+        destination: PathBuf,
+        /// Options de découverte, identiques des deux côtés.
+        options: DiscoveryArgs,
+        /// Options de planification et d'affichage.
+        preview: PreviewArgs,
+        /// Options d'exécution.
+        execute: ExecuteArgs,
+    },
+    /// Diagnostiquer un journal d'exécution (lecture seule).
+    Journal {
+        /// Fichier journal.
+        path: PathBuf,
+    },
 }
 
 /// Erreur d'utilisation.
@@ -121,6 +159,12 @@ pub(crate) enum ParseError {
     RequiresAllowDelete(String),
     /// `--allow-delete` hors du mode miroir.
     DeleteRequiresMirror,
+    /// `execute` sans `--confirm`.
+    ConfirmRequired,
+    /// `execute` sans `--journal`.
+    JournalRequired,
+    /// `--plan` combiné à des options de découverte ou de plan.
+    PlanFileExclusive(String),
 }
 
 impl fmt::Display for ParseError {
@@ -142,6 +186,16 @@ impl fmt::Display for ParseError {
             }
             Self::DeleteRequiresMirror => f.write_str(
                 "« --allow-delete » exige « --mode mirror » : une sauvegarde ne supprime jamais",
+            ),
+            Self::ConfirmRequired => f.write_str(
+                "« execute » MODIFIE la destination : ajoutez « --confirm »                  (ou simulez d'abord avec « preview »)",
+            ),
+            Self::JournalRequired => f.write_str(
+                "« execute » exige « --journal <FICHIER> » (journal durable, nouveau fichier)",
+            ),
+            Self::PlanFileExclusive(option) => write!(
+                f,
+                "« {option} » est incompatible avec « --plan » : le plan enregistré fixe déjà                  filtres et politiques"
             ),
         }
     }
@@ -199,8 +253,101 @@ where
                 preview,
             })
         }
+        "execute" => {
+            let mut preview = PreviewArgs::default();
+            let mut execute = ExecuteArgs::default();
+            let mut plan_options = Vec::new();
+            let (paths, options) = parse_discovery(args, |option, value| {
+                if execute_option(&mut execute, option, value)? {
+                    return Ok(true);
+                }
+                let known = preview_option(&mut preview, option, value)?;
+                if known && !matches!(option, "--all" | "--json") {
+                    plan_options.push(option.to_owned());
+                }
+                Ok(known)
+            })?;
+            let [source, destination] =
+                expect_paths(paths, &["dossier source", "dossier destination"])?;
+            check_preview(&preview)?;
+            check_execute(&execute, &options, &plan_options)?;
+            Ok(Command::Execute {
+                source,
+                destination,
+                options,
+                preview,
+                execute,
+            })
+        }
+        "journal" => {
+            let mut paths = Vec::new();
+            for arg in args {
+                if arg
+                    .to_str()
+                    .is_some_and(|text| text.starts_with('-') && text != "-")
+                {
+                    return Err(ParseError::UnknownOption(
+                        arg.to_string_lossy().into_owned(),
+                    ));
+                }
+                paths.push(PathBuf::from(arg));
+            }
+            let [path] = expect_paths(paths, &["fichier journal"])?;
+            Ok(Command::Journal { path })
+        }
         _ => Err(ParseError::UnknownCommand(first)),
     }
+}
+
+/// Options propres à `execute`.
+fn execute_option(
+    execute: &mut ExecuteArgs,
+    option: &str,
+    value: &mut ValueReader<'_>,
+) -> Result<bool, ParseError> {
+    match option {
+        "--confirm" => execute.confirm = true,
+        "--confirm-delete" => execute.confirm_delete = true,
+        "--progress" => execute.progress = true,
+        "--journal" => execute.journal = Some(PathBuf::from(value()?)),
+        "--versions-dir" => execute.versions = Some(PathBuf::from(value()?)),
+        "--plan" => execute.plan = Some(PathBuf::from(value()?)),
+        "--verify" => {
+            let text = value()?;
+            execute.verify = match text.as_str() {
+                "size" => VerifyMode::Size,
+                "content" => VerifyMode::Content,
+                _ => return Err(invalid(option, text)),
+            };
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Confirmation explicite, journal obligatoire, `--plan` exclusif.
+fn check_execute(
+    execute: &ExecuteArgs,
+    discovery: &DiscoveryArgs,
+    plan_options: &[String],
+) -> Result<(), ParseError> {
+    if !execute.confirm {
+        return Err(ParseError::ConfirmRequired);
+    }
+    if execute.journal.is_none() {
+        return Err(ParseError::JournalRequired);
+    }
+    if execute.plan.is_some() {
+        if let Some(option) = plan_options.first() {
+            return Err(ParseError::PlanFileExclusive(option.clone()));
+        }
+        if discovery != &DiscoveryArgs::default() {
+            return Err(ParseError::PlanFileExclusive(
+                "options de filtre ou --hash".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn no_more(
@@ -372,19 +519,24 @@ pub(crate) fn version_text() -> String {
 /// Texte d'aide.
 pub(crate) fn help_text() -> String {
     format!(
-        "syncengine {} — phase 03 : inventaire, comparaison et prévisualisation de plans\n\
+        "syncengine {} — phase 04 : inventaire, comparaison, plans et exécution locale sûre\n\
          \n\
          UTILISATION :\n\
          \x20   syncengine scan <DOSSIER> [OPTIONS]\n\
          \x20   syncengine compare <GAUCHE> <DROITE> [OPTIONS] [--all]\n\
          \x20   syncengine preview <SOURCE> <DESTINATION> [OPTIONS] [OPTIONS DE PLAN]\n\
+         \x20   syncengine execute <SOURCE> <DESTINATION> --confirm --journal <FICHIER>\n\
+         \x20                      [OPTIONS] [OPTIONS DE PLAN] [OPTIONS D'EXÉCUTION]\n\
+         \x20   syncengine journal <FICHIER>\n\
          \x20   syncengine help | version\n\
          \n\
          COMMANDES :\n\
          \x20   scan      Inventorie un dossier local et signale les zones illisibles\n\
          \x20   compare   Compare deux dossiers locaux et affiche les différences\n\
-         \x20   preview   Calcule et affiche le plan d'une sauvegarde ou d'un miroir\n\
-         \x20             (copier, remplacer, conserver, supprimer, conflit, ignorer)\n\
+         \x20   preview   SIMULATION : calcule et affiche le plan d'une sauvegarde ou d'un\n\
+         \x20             miroir (copier, remplacer, conserver, supprimer, conflit, ignorer)\n\
+         \x20   execute   EXÉCUTION RÉELLE du même plan : MODIFIE la destination\n\
+         \x20   journal   Diagnostique un journal d'exécution (terminée ou interrompue)\n\
          \x20   help      Affiche cette aide (aussi -h, --help)\n\
          \x20   version   Affiche la version et la cible compilée (aussi -V, --version)\n\
          \n\
@@ -394,9 +546,10 @@ pub(crate) fn help_text() -> String {
          \x20   --exclude <MOTIF>    Écarte les fichiers correspondants (répétable)\n\
          \x20   --exclude-dir <MOTIF> Ne parcourt pas les dossiers correspondants (répétable)\n\
          \x20   --ignore-case        Motifs insensibles à la casse\n\
-         \x20   --all                (compare, preview) Affiche aussi les chemins équivalents\n\
+         \x20   --all                (compare, preview, execute) Affiche aussi les chemins\n\
+         \x20                        sans action\n\
          \n\
-         OPTIONS DE PLAN (preview) :\n\
+         OPTIONS DE PLAN (preview, execute) :\n\
          \x20   --mode backup|mirror       Sauvegarde (défaut, ne supprime jamais) ou miroir\n\
          \x20   --overwrite <POLITIQUE>    Fichiers différents : source-wins (défaut miroir),\n\
          \x20                              newer (défaut sauvegarde : conflit si la\n\
@@ -406,21 +559,37 @@ pub(crate) fn help_text() -> String {
          \x20   --max-delete-percent <P>   Refuse toute suppression au-delà de P % des\n\
          \x20                              entrées de la destination (défaut 50)\n\
          \x20   --allow-empty-source       Admet des suppressions si la source est vide\n\
-         \x20   --json                     Écrit le plan JSON versionné au lieu du texte\n\
+         \x20   --json                     preview : plan JSON versionné ; execute : rapport JSON\n\
+         \n\
+         OPTIONS D'EXÉCUTION (execute) :\n\
+         \x20   --confirm                  Obligatoire : confirme l'exécution réelle\n\
+         \x20   --journal <FICHIER>        Obligatoire : journal durable (nouveau fichier,\n\
+         \x20                              hors source et destination)\n\
+         \x20   --confirm-delete           Obligatoire si le plan prévoit des suppressions\n\
+         \x20   --verify content|size      content (défaut) : relit chaque fichier déposé et\n\
+         \x20                              compare son empreinte avant de le valider\n\
+         \x20   --versions-dir <DOSSIER>   Conserve une copie de chaque fichier remplacé ou\n\
+         \x20                              supprimé (dossier existant, hors source et destination)\n\
+         \x20   --plan <FICHIER>           Exécute un plan enregistré par « preview --json »\n\
+         \x20                              (âge maximal 1 h ; sans options de filtre ni de plan)\n\
+         \x20   --progress                 Progression agrégée sur la sortie d'erreur\n\
          \n\
          Motifs : glob sur le chemin relatif avec « / » ; sans « / », sur le nom seul\n\
          (« *.tmp », « build/**/*.o », « **/node_modules »).\n\
          \n\
          CODES DE SORTIE :\n\
-         \x20   0  inventaire complet ; aucune différence (compare) ; rien à faire (preview)\n\
+         \x20   0  inventaire complet ; aucune différence (compare) ; rien à faire (preview) ;\n\
+         \x20      exécution réussie (execute) ; exécution terminée sans réserve (journal)\n\
          \x20   1  différences constatées (compare) ; opérations prévues (preview)\n\
          \x20   2  erreur d'utilisation (dont destination imbriquée dans la source)\n\
-         \x20   3  inventaire incomplet, constats incertains, conflits ou chemins ignorés\n\
-         \x20   4  échec (dossier inaccessible, sortie impossible) : aucun plan produit\n\
+         \x20   3  inventaire incomplet, constats incertains, conflits ou chemins ignorés ;\n\
+         \x20      exécution terminée avec refus ou réserves ; exécution interrompue (journal)\n\
+         \x20   4  échec : aucun plan produit, exécution refusée, en échec ou annulée\n\
          \n\
-         Simulation uniquement : SyncEngine lit les dossiers indiqués mais ne crée,\n\
-         ne modifie et ne supprime jamais aucun fichier dans cette version.\n\
-         « preview » affiche un plan ; aucune commande ne l'exécute encore.\n",
+         « preview » ne modifie rien. « execute » ne lit la source qu'en lecture seule\n\
+         et ne modifie la destination qu'après revérification de chaque précondition :\n\
+         fichier copié dans un fichier temporaire, vérifié, puis publié ; aucune\n\
+         suppression sans « --allow-delete », « --confirm-delete » et inventaires complets.\n",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -573,11 +742,125 @@ mod tests {
     }
 
     #[test]
-    fn help_states_read_only_simulation() {
+    fn help_distinguishes_simulation_and_real_execution() {
         let help = help_text();
-        assert!(help.contains("Simulation uniquement"));
-        assert!(help.contains("ne supprime jamais aucun fichier"));
-        assert!(help.contains("aucune commande ne l'exécute encore"));
+        assert!(help.contains("SIMULATION"));
+        assert!(help.contains("EXÉCUTION RÉELLE"));
+        assert!(help.contains("« preview » ne modifie rien"));
+        assert!(help.contains("--confirm-delete"));
+    }
+
+    #[test]
+    fn execute_requires_confirmation_and_journal() {
+        assert_eq!(
+            parse(args(&["execute", "a", "b"])),
+            Err(ParseError::ConfirmRequired)
+        );
+        assert_eq!(
+            parse(args(&["execute", "a", "b", "--confirm"])),
+            Err(ParseError::JournalRequired)
+        );
+        let command = parse(args(&[
+            "execute",
+            "a",
+            "b",
+            "--confirm",
+            "--journal",
+            "j.jsonl",
+            "--mode",
+            "mirror",
+            "--allow-delete",
+            "--confirm-delete",
+            "--verify",
+            "size",
+            "--versions-dir",
+            "v",
+            "--progress",
+        ]))
+        .unwrap();
+        assert_eq!(
+            command,
+            Command::Execute {
+                source: PathBuf::from("a"),
+                destination: PathBuf::from("b"),
+                options: DiscoveryArgs::default(),
+                preview: PreviewArgs {
+                    mode: SyncMode::Mirror,
+                    allow_delete: true,
+                    ..PreviewArgs::default()
+                },
+                execute: ExecuteArgs {
+                    confirm: true,
+                    confirm_delete: true,
+                    journal: Some(PathBuf::from("j.jsonl")),
+                    verify: VerifyMode::Size,
+                    versions: Some(PathBuf::from("v")),
+                    plan: None,
+                    progress: true,
+                },
+            }
+        );
+        assert_eq!(
+            parse(args(&[
+                "execute",
+                "a",
+                "b",
+                "--confirm",
+                "--journal",
+                "j",
+                "--verify",
+                "rien"
+            ])),
+            Err(ParseError::InvalidValue {
+                option: "--verify".to_owned(),
+                value: "rien".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn plan_file_excludes_planning_options() {
+        let base = [
+            "execute",
+            "a",
+            "b",
+            "--confirm",
+            "--journal",
+            "j",
+            "--plan",
+            "p.json",
+        ];
+        assert!(parse(args(&base)).is_ok());
+        let mut with_mode = base.to_vec();
+        with_mode.extend(["--mode", "mirror"]);
+        assert_eq!(
+            parse(args(&with_mode)),
+            Err(ParseError::PlanFileExclusive("--mode".to_owned()))
+        );
+        let mut with_filter = base.to_vec();
+        with_filter.extend(["--exclude", "*.tmp"]);
+        assert!(matches!(
+            parse(args(&with_filter)),
+            Err(ParseError::PlanFileExclusive(_))
+        ));
+    }
+
+    #[test]
+    fn parses_journal_command() {
+        assert_eq!(
+            parse(args(&["journal", "j.jsonl"])),
+            Ok(Command::Journal {
+                path: PathBuf::from("j.jsonl")
+            })
+        );
+        assert_eq!(
+            parse(args(&["journal"])),
+            Err(ParseError::MissingPath("fichier journal"))
+        );
+        assert_eq!(
+            parse(args(&["journal", "j", "--all"])),
+            Err(ParseError::UnknownOption("--all".to_owned()))
+        );
     }
 
     #[test]

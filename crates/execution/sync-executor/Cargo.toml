@@ -1,0 +1,35 @@
+[package]
+name = "sync-executor"
+description = "Exécuteur de plans SyncEngine : applique un ExecutionPlan validé en revérifiant chaque précondition juste avant chaque mutation, coordonne copie, vérification, conservation des versions et suppressions non récursives, consigne un journal durable, diffuse une progression agrégée et s'arrête proprement sur annulation, disque plein ou déconnexion."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+connector-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sync-copy.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+sync-events.workspace = true
+sync-journal.workspace = true
+sync-plan.workspace = true
+sync-verify.workspace = true
+sync-versioning.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+connector-local.workspace = true
+connector-memory.workspace = true
+sync-backup.workspace = true
+sync-compare.workspace = true
+sync-decisions.workspace = true
+sync-filter.workspace = true
+sync-mirror.workspace = true
+sync-scanner.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

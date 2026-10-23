@@ -1,0 +1,740 @@
+//! Déroulement d'une exécution.
+
+use std::collections::HashMap;
+
+use connector_api::{CommitMode, StorageError, StorageErrorKind, WriteOptions};
+use sync_copy::{CopyError, CopyRequest, CopyStage, StagedCopy, stage_copy};
+use sync_core::{EntryKind, ExecutionStatus, OperationId, ResourcePath};
+use sync_errors::{ClassifiedError, ErrorContext, ErrorReport, Severity};
+use sync_events::{EmitOutcome, EventEmitter, EventKind, ProgressSnapshot};
+use sync_journal::{JournalError, JournalRecord, JournalTotals};
+use sync_plan::{Action, EntrySnapshot, Operation, PlanSide};
+use sync_verify::{
+    Mismatch, VerifyError, VerifyMode, check_transfer, check_written, compare_observation,
+    verify_content,
+};
+use sync_versioning::VersioningError;
+
+use crate::ExecutionRequest;
+use crate::error::{ExecutionError, Fault, RefusalNotice};
+use crate::report::{ExecutionReport, OperationOutcome, OutcomeStatus, Refusal, StopCause};
+
+/// Raison pour laquelle une mutation n'a pas abouti.
+enum Interrupt {
+    Refused(Refusal),
+    Failed {
+        report: Box<ErrorReport>,
+        stop: Option<StopCause>,
+    },
+    Cancelled,
+}
+
+/// Mutation réalisée : octets validés, version conservée.
+type Done = (u64, Option<ResourcePath>);
+
+/// Progression agrégée.
+#[derive(Debug, Default)]
+struct Progress {
+    entries_done: u64,
+    entries_total: u64,
+    bytes_done: u64,
+    bytes_total: Option<u64>,
+    bytes_at_last_event: u64,
+}
+
+impl Progress {
+    fn snapshot(&self) -> ProgressSnapshot {
+        ProgressSnapshot {
+            entries_done: self.entries_done,
+            entries_total: Some(self.entries_total),
+            bytes_done: self.bytes_done,
+            bytes_total: self.bytes_total,
+        }
+    }
+}
+
+fn emit(events: Option<&EventEmitter>, kind: EventKind) {
+    if let Some(events) = events {
+        // Les événements sont informatifs : une perte est comptée et
+        // signalée par l'émetteur lui-même, jamais bloquante.
+        match events.emit(kind) {
+            EmitOutcome::Delivered | EmitOutcome::Dropped(_) => {}
+        }
+    }
+}
+
+/// Avance la progression d'un bloc transféré ; émet au plus un événement
+/// par intervalle d'octets.
+fn advance(progress: &mut Progress, events: Option<&EventEmitter>, interval: u64, bytes: u64) {
+    progress.bytes_done = progress.bytes_done.saturating_add(bytes);
+    if progress.bytes_done - progress.bytes_at_last_event >= interval {
+        progress.bytes_at_last_event = progress.bytes_done;
+        emit(events, EventKind::Progress(progress.snapshot()));
+    }
+}
+
+fn stop_for(kind: StorageErrorKind, side: PlanSide) -> Option<StopCause> {
+    match kind {
+        StorageErrorKind::Cancelled => Some(StopCause::Cancelled),
+        StorageErrorKind::InsufficientSpace => Some(StopCause::InsufficientSpace),
+        StorageErrorKind::Disconnected => Some(match side {
+            PlanSide::Source => StopCause::SourceUnavailable,
+            PlanSide::Destination => StopCause::DestinationUnavailable,
+        }),
+        _ => None,
+    }
+}
+
+pub(crate) struct Run<'a> {
+    req: ExecutionRequest<'a>,
+    context: ErrorContext,
+    outcomes: Vec<Option<OutcomeStatus>>,
+    index: HashMap<&'a OperationId, usize>,
+    stop: Option<StopCause>,
+    deletions_blocked: bool,
+    progress: Progress,
+    leftovers: Vec<ResourcePath>,
+}
+
+impl<'a> Run<'a> {
+    pub(crate) fn start(req: ExecutionRequest<'a>) -> Result<ExecutionReport, ExecutionError> {
+        let plan = req.plan;
+        let summary = plan.summary();
+        req.journal
+            .append(JournalRecord::ExecutionStarted {
+                execution: req.execution_id.clone(),
+                plan: plan.id().clone(),
+                profile: plan.profile().cloned(),
+                operations: plan.operations().len() as u64,
+                mutations: summary.mutations(),
+                source: plan.source().location().to_owned(),
+                destination: plan.destination().location().to_owned(),
+                versions: req.versions.map(|store| store.folder().clone()),
+            })
+            .map_err(ExecutionError::Journal)?;
+        let mut context = ErrorContext::new().with_execution(req.execution_id.clone());
+        if let Some(profile) = plan.profile() {
+            context = context.with_profile(profile.clone());
+        }
+        let operations = plan.operations();
+        let mut run = Run {
+            context,
+            outcomes: vec![None; operations.len()],
+            index: operations
+                .iter()
+                .enumerate()
+                .map(|(index, op)| (op.id(), index))
+                .collect(),
+            stop: None,
+            deletions_blocked: false,
+            progress: Progress {
+                entries_total: summary.mutations(),
+                bytes_total: (summary.unknown_sizes == 0).then_some(summary.bytes_to_transfer),
+                ..Progress::default()
+            },
+            leftovers: Vec::new(),
+            req,
+        };
+        emit(
+            run.req.events,
+            EventKind::StatusChanged {
+                status: ExecutionStatus::Running,
+            },
+        );
+        emit(run.req.events, EventKind::Progress(run.progress.snapshot()));
+
+        // Copies, créations, remplacements : dans l'ordre des chemins.
+        for (index, op) in operations.iter().enumerate() {
+            if op.action() != Action::Delete {
+                run.visit(index, op);
+            }
+        }
+        // Suppressions : en dernier, du plus profond au moins profond.
+        if summary.delete > 0 && run.stop.is_none() {
+            run.check_source_before_deletions();
+        }
+        for (index, op) in operations.iter().enumerate().rev() {
+            if op.action() == Action::Delete {
+                run.visit(index, op);
+            }
+        }
+        Ok(run.finish())
+    }
+
+    fn ctx(&self, op: &Operation) -> ErrorContext {
+        self.context
+            .clone()
+            .with_operation(op.id().clone())
+            .with_path(op.path().clone())
+    }
+
+    fn fail(
+        &self,
+        op: &Operation,
+        error: &dyn ClassifiedError,
+        stop: Option<StopCause>,
+    ) -> Interrupt {
+        Interrupt::Failed {
+            report: Box::new(ErrorReport::capture(error, Severity::Error, &self.ctx(op))),
+            stop,
+        }
+    }
+
+    fn storage(&self, op: &Operation, error: &StorageError, side: PlanSide) -> Interrupt {
+        if error.kind() == StorageErrorKind::Cancelled {
+            return Interrupt::Cancelled;
+        }
+        self.fail(op, error, stop_for(error.kind(), side))
+    }
+
+    fn journal_failure(&self, op: &Operation, error: &JournalError) -> Interrupt {
+        self.fail(op, error, Some(StopCause::JournalFailure))
+    }
+
+    fn visit(&mut self, index: usize, op: &'a Operation) {
+        let status = self.status_of(op);
+        let mutation = op.action().is_mutation();
+        if mutation && !matches!(status, OutcomeStatus::NotStarted) {
+            self.progress.entries_done += 1;
+            self.report_outcome(op, &status);
+        }
+        if let Some(slot) = self.outcomes.get_mut(index) {
+            *slot = Some(status);
+        }
+    }
+
+    fn status_of(&mut self, op: &'a Operation) -> OutcomeStatus {
+        if !op.action().is_mutation() {
+            return OutcomeStatus::NoAction;
+        }
+        if self.stop.is_some() {
+            return OutcomeStatus::NotStarted;
+        }
+        if self.req.cancel.is_cancelled() {
+            self.stop = Some(StopCause::Cancelled);
+            return OutcomeStatus::NotStarted;
+        }
+        if let Some(dependency) = op
+            .depends_on()
+            .iter()
+            .find(|dependency| !self.is_done(dependency))
+        {
+            return OutcomeStatus::Refused {
+                refusal: Refusal::DependencyNotDone {
+                    operation: dependency.clone(),
+                },
+            };
+        }
+        if let Err(error) = self.req.journal.append(JournalRecord::OperationStarted {
+            operation: op.id().clone(),
+            path: op.path().clone(),
+            action: op.action(),
+        }) {
+            self.stop = Some(StopCause::JournalFailure);
+            self.diagnostic(&error, Severity::Fatal, op);
+            return OutcomeStatus::NotStarted;
+        }
+        let result = match op.action() {
+            Action::Copy => self.copy(op),
+            Action::Replace => self.replace(op),
+            Action::Delete => self.delete(op),
+            _ => Err(self.fail(op, &Fault::UnsupportedKind(op.kind()), None)),
+        };
+        match result {
+            Ok((bytes, version)) => OutcomeStatus::Done { bytes, version },
+            Err(Interrupt::Refused(refusal)) => OutcomeStatus::Refused { refusal },
+            Err(Interrupt::Cancelled) => {
+                self.stop = Some(StopCause::Cancelled);
+                OutcomeStatus::Cancelled
+            }
+            Err(Interrupt::Failed { report, stop }) => {
+                if stop.is_some() && self.stop.is_none() {
+                    self.stop = stop;
+                }
+                if stop == Some(StopCause::SourceUnavailable) {
+                    self.deletions_blocked = true;
+                }
+                OutcomeStatus::Failed { error: *report }
+            }
+        }
+    }
+
+    fn is_done(&self, id: &OperationId) -> bool {
+        self.index
+            .get(id)
+            .and_then(|&index| self.outcomes.get(index))
+            .is_some_and(|status| matches!(status, Some(OutcomeStatus::Done { .. })))
+    }
+
+    /// Consigne l'issue, émet diagnostic et progression.
+    fn report_outcome(&mut self, op: &Operation, status: &OutcomeStatus) {
+        let (bytes, error_class, detail) = match status {
+            OutcomeStatus::Done { bytes, .. } => (*bytes, None, None),
+            OutcomeStatus::Refused { refusal } => {
+                self.diagnostic(&RefusalNotice(refusal.clone()), Severity::Warning, op);
+                (0, None, serde_json::to_string(refusal).ok())
+            }
+            OutcomeStatus::Failed { error } => {
+                emit(self.req.events, EventKind::Diagnostic(error.clone()));
+                (0, Some(error.class()), Some(error.message().to_owned()))
+            }
+            _ => (0, None, None),
+        };
+        if let Err(error) = self.req.journal.append(JournalRecord::OperationFinished {
+            operation: op.id().clone(),
+            path: op.path().clone(),
+            action: op.action(),
+            outcome: status.code(),
+            bytes,
+            error_class,
+            detail,
+        }) {
+            if self.stop.is_none() {
+                self.stop = Some(StopCause::JournalFailure);
+            }
+            self.diagnostic(&error, Severity::Fatal, op);
+        }
+        emit(
+            self.req.events,
+            EventKind::Progress(self.progress.snapshot()),
+        );
+    }
+
+    fn diagnostic(&self, error: &dyn ClassifiedError, severity: Severity, op: &Operation) {
+        emit(
+            self.req.events,
+            EventKind::Diagnostic(ErrorReport::capture(error, severity, &self.ctx(op))),
+        );
+    }
+
+    // --- Préconditions -------------------------------------------------------
+
+    fn snapshot<'s>(
+        &self,
+        op: &Operation,
+        snapshot: Option<&'s EntrySnapshot>,
+    ) -> Result<&'s EntrySnapshot, Interrupt> {
+        snapshot.ok_or_else(|| self.fail(op, &Fault::MissingObservation, None))
+    }
+
+    /// `source_unchanged` : la source correspond encore à l'observation.
+    fn verify_source(&self, op: &Operation) -> Result<(), Interrupt> {
+        let snapshot = self.snapshot(op, op.source())?;
+        match self.req.source.stat(op.path(), self.req.cancel) {
+            Ok(entry) => compare_observation(snapshot.kind(), snapshot.metadata(), &entry)
+                .map_err(|mismatch| Interrupt::Refused(Refusal::SourceChanged { mismatch })),
+            Err(error) if error.kind() == StorageErrorKind::NotFound => {
+                Err(Interrupt::Refused(Refusal::SourceVanished))
+            }
+            Err(error) => Err(self.storage(op, &error, PlanSide::Source)),
+        }
+    }
+
+    /// `destination_absent` : rien n'est apparu à la destination.
+    fn verify_destination_absent(&self, op: &Operation) -> Result<(), Interrupt> {
+        match self.req.destination.stat(op.path(), self.req.cancel) {
+            Err(error) if error.kind() == StorageErrorKind::NotFound => Ok(()),
+            Ok(_) => Err(Interrupt::Refused(Refusal::DestinationAppeared)),
+            Err(error) => Err(self.storage(op, &error, PlanSide::Destination)),
+        }
+    }
+
+    /// `destination_unchanged` : la destination correspond encore à
+    /// l'observation.
+    fn verify_destination_unchanged(&self, op: &Operation) -> Result<(), Interrupt> {
+        let snapshot = self.snapshot(op, op.destination())?;
+        match self.req.destination.stat(op.path(), self.req.cancel) {
+            Ok(entry) => compare_observation(snapshot.kind(), snapshot.metadata(), &entry)
+                .map_err(|mismatch| Interrupt::Refused(Refusal::DestinationChanged { mismatch })),
+            Err(error) if error.kind() == StorageErrorKind::NotFound => {
+                Err(Interrupt::Refused(Refusal::DestinationVanished))
+            }
+            Err(error) => Err(self.storage(op, &error, PlanSide::Destination)),
+        }
+    }
+
+    /// Avant la première suppression : la source doit être lisible.
+    fn check_source_before_deletions(&mut self) {
+        let root = ResourcePath::root();
+        match self.req.source.stat(&root, self.req.cancel) {
+            Ok(entry) if entry.kind() == EntryKind::Directory => {}
+            _ => self.deletions_blocked = true,
+        }
+    }
+
+    // --- Transfert -------------------------------------------------------------
+
+    /// Abandonne un dépôt ; un échec du retrait est rapporté (fichier restant).
+    fn abort(&mut self, staged: StagedCopy, op: &Operation) {
+        let staging = staged.staging_path().cloned();
+        if let Err(error) = staged.abort() {
+            self.diagnostic(&error, Severity::Error, op);
+            if let Some(staging) = staging {
+                self.leftovers.push(staging);
+            }
+        }
+    }
+
+    fn copy_failure(&mut self, op: &Operation, error: &CopyError) -> Interrupt {
+        if error.cleanup_error().is_some()
+            && let Some(staging) = error.staging_path()
+        {
+            self.leftovers.push(staging.clone());
+        }
+        let side = match error.stage() {
+            CopyStage::OpenSource | CopyStage::Read => PlanSide::Source,
+            _ => PlanSide::Destination,
+        };
+        if error.kind() == StorageErrorKind::Cancelled {
+            return Interrupt::Cancelled;
+        }
+        self.fail(op, error, stop_for(error.kind(), side))
+    }
+
+    /// Transfère dans un dépôt temporaire puis contrôle : taille et
+    /// empreinte attendues, source inchangée après lecture, relecture du
+    /// dépôt (mode `content`).
+    fn transfer(
+        &mut self,
+        op: &Operation,
+        source: &EntrySnapshot,
+    ) -> Result<StagedCopy, Interrupt> {
+        let options = WriteOptions::new()
+            .with_modified(source.metadata().modified())
+            .with_size_hint(source.metadata().size());
+        let request = CopyRequest::new(self.req.source, op.path(), self.req.destination, op.path())
+            .with_options(options)
+            .with_buffer_size(self.req.options.buffer_size);
+        let events = self.req.events;
+        let interval = self.req.options.progress_interval_bytes;
+        let progress = &mut self.progress;
+        let staged = match stage_copy(
+            &request,
+            &mut |bytes| advance(progress, events, interval, bytes),
+            self.req.cancel,
+        ) {
+            Ok(staged) => staged,
+            Err(error) => return Err(self.copy_failure(op, &error)),
+        };
+        if let Some(staging) = staged.staging_path().cloned()
+            && let Err(error) = self.req.journal.append(JournalRecord::StagingCreated {
+                operation: op.id().clone(),
+                staging,
+            })
+        {
+            self.abort(staged, op);
+            return Err(self.journal_failure(op, &error));
+        }
+        if let Err(mismatch) = check_transfer(source.metadata(), staged.bytes(), staged.hash()) {
+            self.abort(staged, op);
+            return Err(Interrupt::Refused(Refusal::SourceChangedDuringTransfer {
+                mismatch,
+            }));
+        }
+        // La source a-t-elle changé pendant la lecture ?
+        if let Err(interrupt) = self.verify_source(op) {
+            self.abort(staged, op);
+            return Err(match interrupt {
+                Interrupt::Refused(Refusal::SourceChanged { mismatch }) => {
+                    Interrupt::Refused(Refusal::SourceChangedDuringTransfer { mismatch })
+                }
+                other => other,
+            });
+        }
+        if self.req.options.verify == VerifyMode::Content
+            && let Some(staging) = staged.staging_path().cloned()
+            && let Err(error) = verify_content(
+                self.req.destination,
+                &staging,
+                staged.hash(),
+                staged.bytes(),
+                self.req.options.buffer_size,
+                self.req.cancel,
+            )
+        {
+            self.abort(staged, op);
+            return Err(match error {
+                VerifyError::Mismatch(mismatch) => {
+                    self.fail(op, &Fault::StagedContent(mismatch), None)
+                }
+                VerifyError::Storage(error) => self.storage(op, &error, PlanSide::Destination),
+                other => self.fail(op, &other, None),
+            });
+        }
+        Ok(staged)
+    }
+
+    /// Valide un dépôt et contrôle l'entrée publiée.
+    fn publish(
+        &mut self,
+        op: &Operation,
+        staged: StagedCopy,
+        mode: CommitMode,
+    ) -> Result<u64, Interrupt> {
+        let bytes = staged.bytes();
+        let hash = staged.hash().clone();
+        let had_staging = staged.staging_path().is_some();
+        let entry = match staged.commit(mode) {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == StorageErrorKind::Conflict => {
+                return Err(Interrupt::Refused(match mode {
+                    CommitMode::CreateNew => Refusal::DestinationAppeared,
+                    _ => Refusal::DestinationVanished,
+                }));
+            }
+            Err(error) => return Err(self.storage(op, &error, PlanSide::Destination)),
+        };
+        check_written(&entry, bytes)
+            .map_err(|mismatch| self.fail(op, &Fault::PublishedEntry(mismatch), None))?;
+        // Sans dépôt relisible, la relecture se fait après publication.
+        if self.req.options.verify == VerifyMode::Content && !had_staging {
+            match verify_content(
+                self.req.destination,
+                op.path(),
+                &hash,
+                bytes,
+                self.req.options.buffer_size,
+                self.req.cancel,
+            ) {
+                Ok(()) => {}
+                Err(VerifyError::Mismatch(mismatch)) => {
+                    return Err(self.fail(op, &Fault::PublishedEntry(mismatch), None));
+                }
+                Err(error) => return Err(self.fail(op, &error, None)),
+            }
+        }
+        Ok(bytes)
+    }
+
+    // --- Actions ---------------------------------------------------------------
+
+    fn copy(&mut self, op: &Operation) -> Result<Done, Interrupt> {
+        match op.kind() {
+            EntryKind::Directory => {
+                self.verify_source(op)?;
+                self.verify_destination_absent(op)?;
+                match self
+                    .req
+                    .destination
+                    .create_directory(op.path(), self.req.cancel)
+                {
+                    Ok(_) => Ok((0, None)),
+                    Err(error) if error.kind() == StorageErrorKind::Conflict => {
+                        Err(Interrupt::Refused(Refusal::DestinationAppeared))
+                    }
+                    Err(error) => Err(self.storage(op, &error, PlanSide::Destination)),
+                }
+            }
+            EntryKind::File => {
+                let source = self.snapshot(op, op.source())?;
+                self.verify_source(op)?;
+                self.verify_destination_absent(op)?;
+                let staged = self.transfer(op, source)?;
+                // Juste avant la publication.
+                if let Err(interrupt) = self.verify_destination_absent(op) {
+                    self.abort(staged, op);
+                    return Err(interrupt);
+                }
+                let bytes = self.publish(op, staged, CommitMode::CreateNew)?;
+                Ok((bytes, None))
+            }
+            other => Err(self.fail(op, &Fault::UnsupportedKind(other), None)),
+        }
+    }
+
+    fn replace(&mut self, op: &Operation) -> Result<Done, Interrupt> {
+        if op.kind() != EntryKind::File {
+            return Err(self.fail(op, &Fault::UnsupportedKind(op.kind()), None));
+        }
+        let source = self.snapshot(op, op.source())?;
+        let destination = self.snapshot(op, op.destination())?;
+        self.verify_source(op)?;
+        self.verify_destination_unchanged(op)?;
+        let staged = self.transfer(op, source)?;
+        let version = match self.preserve(op, destination) {
+            Ok(version) => version,
+            Err(interrupt) => {
+                self.abort(staged, op);
+                return Err(interrupt);
+            }
+        };
+        // Juste avant la publication.
+        if let Err(interrupt) = self.verify_destination_unchanged(op) {
+            self.abort(staged, op);
+            return Err(interrupt);
+        }
+        let bytes = self.publish(op, staged, CommitMode::ReplaceExisting)?;
+        Ok((bytes, version))
+    }
+
+    fn delete(&mut self, op: &Operation) -> Result<Done, Interrupt> {
+        if self.deletions_blocked {
+            return Err(Interrupt::Refused(Refusal::DeletionsBlocked));
+        }
+        let destination = self.snapshot(op, op.destination())?;
+        // `source_absent` : jamais déduit d'une erreur.
+        match self.req.source.stat(op.path(), self.req.cancel) {
+            Err(error) if error.kind() == StorageErrorKind::NotFound => {}
+            Ok(_) => return Err(Interrupt::Refused(Refusal::SourceReappeared)),
+            Err(error) => {
+                self.deletions_blocked = true;
+                if matches!(
+                    error.kind(),
+                    StorageErrorKind::Disconnected | StorageErrorKind::Cancelled
+                ) {
+                    return Err(self.storage(op, &error, PlanSide::Source));
+                }
+                return Err(Interrupt::Refused(Refusal::SourceUnverifiable {
+                    class: error.kind().class(),
+                }));
+            }
+        }
+        self.verify_destination_unchanged(op)?;
+        let version = if op.kind() == EntryKind::File {
+            let version = self.preserve(op, destination)?;
+            if version.is_some() {
+                self.verify_destination_unchanged(op)?;
+            }
+            version
+        } else {
+            None
+        };
+        match self
+            .req
+            .destination
+            .delete(op.path(), op.kind(), self.req.cancel)
+        {
+            Ok(()) => Ok((0, version)),
+            Err(error) if error.kind() == StorageErrorKind::Conflict => {
+                Err(Interrupt::Refused(if op.kind() == EntryKind::Directory {
+                    Refusal::DirectoryNotEmpty
+                } else {
+                    Refusal::DestinationChanged {
+                        mismatch: Mismatch::Unverifiable,
+                    }
+                }))
+            }
+            Err(error) if error.kind() == StorageErrorKind::NotFound => {
+                Err(Interrupt::Refused(Refusal::DestinationVanished))
+            }
+            Err(error) => Err(self.storage(op, &error, PlanSide::Destination)),
+        }
+    }
+
+    /// Conserve la version actuelle de la destination, si demandé.
+    fn preserve(
+        &mut self,
+        op: &Operation,
+        destination: &EntrySnapshot,
+    ) -> Result<Option<ResourcePath>, Interrupt> {
+        let Some(store) = self.req.versions else {
+            return Ok(None);
+        };
+        match store.preserve(
+            self.req.destination,
+            op.path(),
+            destination.metadata(),
+            self.req.cancel,
+        ) {
+            Ok(version) => {
+                let location = version.location().clone();
+                if let Err(error) = self.req.journal.append(JournalRecord::VersionPreserved {
+                    operation: op.id().clone(),
+                    location: location.clone(),
+                }) {
+                    return Err(self.journal_failure(op, &error));
+                }
+                Ok(Some(location))
+            }
+            Err(VersioningError::Changed(mismatch)) => {
+                Err(Interrupt::Refused(Refusal::DestinationChanged { mismatch }))
+            }
+            Err(error) => {
+                let kind = match &error {
+                    VersioningError::Store(error) => Some(error.kind()),
+                    VersioningError::Copy(error) => Some(error.kind()),
+                    _ => None,
+                };
+                if kind == Some(StorageErrorKind::Cancelled) {
+                    return Err(Interrupt::Cancelled);
+                }
+                // Magasin plein ou déconnecté : rien ne peut plus être
+                // remplacé ni supprimé en sécurité.
+                let stop = match kind {
+                    Some(StorageErrorKind::InsufficientSpace) => Some(StopCause::InsufficientSpace),
+                    Some(StorageErrorKind::Disconnected) => Some(StopCause::DestinationUnavailable),
+                    _ => None,
+                };
+                Err(self.fail(op, &error, stop))
+            }
+        }
+    }
+
+    // --- Fin -------------------------------------------------------------------
+
+    fn finish(mut self) -> ExecutionReport {
+        let plan = self.req.plan;
+        let mut totals = JournalTotals::default();
+        let mut outcomes = Vec::with_capacity(plan.operations().len());
+        for (op, status) in plan.operations().iter().zip(self.outcomes.drain(..)) {
+            let status = status.unwrap_or(OutcomeStatus::NotStarted);
+            match &status {
+                OutcomeStatus::Done { bytes, .. } => {
+                    totals.done += 1;
+                    totals.bytes = totals.bytes.saturating_add(*bytes);
+                }
+                OutcomeStatus::NoAction => totals.no_action += 1,
+                OutcomeStatus::Refused { .. } => totals.refused += 1,
+                OutcomeStatus::Failed { .. } => totals.failed += 1,
+                OutcomeStatus::Cancelled => totals.cancelled += 1,
+                _ => totals.not_started += 1,
+            }
+            outcomes.push(OperationOutcome {
+                operation: op.id().clone(),
+                path: op.path().clone(),
+                action: op.action(),
+                status,
+            });
+        }
+        let mut status = if self.stop == Some(StopCause::Cancelled) {
+            ExecutionStatus::Cancelled
+        } else if self.stop.is_some() || totals.failed > 0 {
+            ExecutionStatus::Failed
+        } else if totals.refused > 0 || plan.needs_attention() || !self.leftovers.is_empty() {
+            ExecutionStatus::SucceededWithWarnings
+        } else {
+            ExecutionStatus::Succeeded
+        };
+        if let Err(error) = self
+            .req
+            .journal
+            .append(JournalRecord::ExecutionFinished { status, totals })
+        {
+            emit(
+                self.req.events,
+                EventKind::Diagnostic(ErrorReport::capture(&error, Severity::Fatal, &self.context)),
+            );
+            if self.stop.is_none() {
+                self.stop = Some(StopCause::JournalFailure);
+            }
+            if status != ExecutionStatus::Cancelled {
+                status = ExecutionStatus::Failed;
+            }
+        }
+        emit(
+            self.req.events,
+            EventKind::Progress(self.progress.snapshot()),
+        );
+        emit(self.req.events, EventKind::StatusChanged { status });
+        ExecutionReport {
+            execution: self.req.execution_id.clone(),
+            plan: plan.id().clone(),
+            profile: plan.profile().cloned(),
+            status,
+            stop: self.stop,
+            totals,
+            outcomes,
+            leftovers: self.leftovers,
+        }
+    }
+}

@@ -320,6 +320,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync-copy"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "connector-api",
+ "connector-memory",
+ "sync-core",
+ "sync-errors",
+ "thiserror",
+]
+
+[[package]]
 name = "sync-core"
 version = "0.1.0"
 dependencies = [
@@ -364,6 +376,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync-executor"
+version = "0.1.0"
+dependencies = [
+ "connector-api",
+ "connector-local",
+ "connector-memory",
+ "serde",
+ "serde_json",
+ "sync-backup",
+ "sync-compare",
+ "sync-copy",
+ "sync-core",
+ "sync-decisions",
+ "sync-errors",
+ "sync-events",
+ "sync-filter",
+ "sync-journal",
+ "sync-mirror",
+ "sync-plan",
+ "sync-scanner",
+ "sync-verify",
+ "sync-versioning",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "sync-filter"
 version = "0.1.0"
 dependencies = [
@@ -371,6 +410,19 @@ dependencies = [
  "serde",
  "serde_json",
  "sync-core",
+ "thiserror",
+]
+
+[[package]]
+name = "sync-journal"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sync-core",
+ "sync-errors",
+ "sync-plan",
+ "tempfile",
  "thiserror",
 ]
 
@@ -413,6 +465,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync-verify"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "connector-api",
+ "connector-memory",
+ "serde",
+ "serde_json",
+ "sync-core",
+ "sync-errors",
+ "thiserror",
+]
+
+[[package]]
+name = "sync-versioning"
+version = "0.1.0"
+dependencies = [
+ "connector-api",
+ "connector-memory",
+ "sync-copy",
+ "sync-core",
+ "sync-errors",
+ "sync-verify",
+ "thiserror",
+]
+
+[[package]]
 name = "syncengine-architecture-tests"
 version = "0.1.0"
 dependencies = [
@@ -430,10 +509,15 @@ dependencies = [
  "sync-compare",
  "sync-core",
  "sync-decisions",
+ "sync-events",
+ "sync-executor",
  "sync-filter",
+ "sync-journal",
  "sync-mirror",
  "sync-plan",
  "sync-scanner",
+ "sync-verify",
+ "sync-versioning",
  "tempfile",
 ]
 

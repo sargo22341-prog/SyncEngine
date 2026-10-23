@@ -13,6 +13,11 @@ members = [
     "crates/strategy/sync-decisions",
     "crates/strategy/sync-backup",
     "crates/strategy/sync-mirror",
+    "crates/execution/sync-copy",
+    "crates/execution/sync-verify",
+    "crates/execution/sync-versioning",
+    "crates/execution/sync-journal",
+    "crates/execution/sync-executor",
     "tests/support/connector-memory",
     "apps/cli",
     "tests/architecture",
@@ -38,6 +43,11 @@ sync-compare = { path = "crates/discovery/sync-compare" }
 sync-decisions = { path = "crates/strategy/sync-decisions" }
 sync-backup = { path = "crates/strategy/sync-backup" }
 sync-mirror = { path = "crates/strategy/sync-mirror" }
+sync-copy = { path = "crates/execution/sync-copy" }
+sync-verify = { path = "crates/execution/sync-verify" }
+sync-versioning = { path = "crates/execution/sync-versioning" }
+sync-journal = { path = "crates/execution/sync-journal" }
+sync-executor = { path = "crates/execution/sync-executor" }
 # Double de test (stockage mémoire avec injection de pannes) : dev-dependency uniquement.
 connector-memory = { path = "tests/support/connector-memory" }
 

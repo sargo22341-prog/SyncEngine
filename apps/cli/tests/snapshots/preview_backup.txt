@@ -11,4 +11,4 @@ COPIER     nouveau/a.txt  (absent de la destination, 1 o)
 CONFLIT    recent.txt  (destination plus récente ; rien n'est écrit)
 Résumé : 2 à copier, 1 à remplacer, 0 à supprimer, 3 conservé(s), 1 conflit(s), 0 ignoré(s) ; 15 o à transférer
 ATTENTION : 1 conflit(s) non résolu(s) : rien n'y sera écrit.
-SIMULATION : rien n'a été modifié ; aucune commande n'exécute encore ce plan.
+SIMULATION : rien n'a été modifié ; « syncengine execute … --confirm » exécuterait ce plan.

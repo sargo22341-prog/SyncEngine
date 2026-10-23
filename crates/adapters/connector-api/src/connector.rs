@@ -1,10 +1,11 @@
 //! Trait des connecteurs de stockage.
 
-use sync_core::{CancellationToken, ConnectorId, FileEntry, ResourcePath};
+use sync_core::{CancellationToken, ConnectorId, EntryKind, FileEntry, ResourcePath};
 
 use crate::capabilities::{StorageCapabilities, StorageFeature};
 use crate::error::{StorageError, StorageOperation};
 use crate::listing::{ListPage, PageToken};
+use crate::write::{ContentWriter, WriteOptions};
 
 /// Flux de lecture du contenu d'un fichier.
 ///
@@ -42,9 +43,15 @@ pub trait ContentReader: Send {
 /// entre deux étapes bornées, jamais au milieu d'un appel système.
 ///
 /// # Périmètre
-/// La phase 02 n'ajoute que des opérations **sans mutation** (`list`, `stat`,
-/// `open_read`). Écritures, créations, déplacements et suppressions seront
-/// ajoutés par une évolution d'API soumise à revue (phase 04).
+/// Phase 02 : opérations **sans mutation** (`list`, `stat`, `open_read`).
+/// Phase 04 : mutations élémentaires ([`create_directory`](Self::create_directory),
+/// [`open_write`](Self::open_write) en deux temps, [`delete`](Self::delete)
+/// non récursive). Elles ont une implémentation par défaut qui répond
+/// [`NotSupported`](crate::StorageErrorKind::NotSupported) : un connecteur
+/// en lecture seule n'a rien à écrire et ne peut pas muter par mégarde.
+/// Le connecteur exécute une mutation demandée ; il ne décide jamais qu'elle
+/// doit avoir lieu (c'est l'exécuteur qui revérifie les préconditions juste
+/// avant).
 pub trait StorageConnector: Send + Sync {
     /// Identifiant du type de connecteur (`local`, `sftp`…).
     fn connector_id(&self) -> &ConnectorId;
@@ -98,6 +105,72 @@ pub trait StorageConnector: Send + Sync {
         path: &ResourcePath,
         cancel: &CancellationToken,
     ) -> Result<Box<dyn ContentReader>, StorageError>;
+
+    /// Crée **un** répertoire ; son parent doit exister (pas de création
+    /// implicite des ancêtres).
+    ///
+    /// # Errors
+    /// [`Conflict`](crate::StorageErrorKind::Conflict) si une entrée existe
+    /// déjà à ce chemin ; [`NotFound`](crate::StorageErrorKind::NotFound) si
+    /// le parent manque ; [`NotSupported`](crate::StorageErrorKind::NotSupported)
+    /// si la capacité [`StorageFeature::CreateDirectory`] n'est pas déclarée
+    /// (implémentation par défaut).
+    fn create_directory(
+        &self,
+        path: &ResourcePath,
+        cancel: &CancellationToken,
+    ) -> Result<FileEntry, StorageError> {
+        let _ = cancel;
+        Err(
+            StorageError::not_supported(StorageOperation::CreateDirectory)
+                .with_connector(self.connector_id().clone())
+                .with_path(path.clone()),
+        )
+    }
+
+    /// Ouvre l'écriture en deux temps du fichier `path` (voir
+    /// [`ContentWriter`]) ; le parent doit exister. Rien n'est visible à
+    /// `path` avant [`ContentWriter::commit`].
+    ///
+    /// # Errors
+    /// [`NotSupported`](crate::StorageErrorKind::NotSupported) si la capacité
+    /// [`StorageFeature::Write`] n'est pas déclarée (implémentation par
+    /// défaut) ; [`NotFound`](crate::StorageErrorKind::NotFound) si le
+    /// parent manque ; autres catégories selon la cause.
+    fn open_write(
+        &self,
+        path: &ResourcePath,
+        options: &WriteOptions,
+        cancel: &CancellationToken,
+    ) -> Result<Box<dyn ContentWriter>, StorageError> {
+        let _ = (options, cancel);
+        Err(StorageError::not_supported(StorageOperation::Write)
+            .with_connector(self.connector_id().clone())
+            .with_path(path.clone()))
+    }
+
+    /// Supprime l'entrée `path`, qui doit être de nature `expected` : un
+    /// fichier ordinaire, ou un répertoire **vide** (jamais de suppression
+    /// récursive). Un lien symbolique n'est ni supprimé ni suivi.
+    ///
+    /// # Errors
+    /// [`Conflict`](crate::StorageErrorKind::Conflict) si la nature diffère
+    /// de `expected` ou si le répertoire n'est pas vide ;
+    /// [`NotFound`](crate::StorageErrorKind::NotFound) si l'entrée n'existe
+    /// pas ; [`NotSupported`](crate::StorageErrorKind::NotSupported) si la
+    /// capacité [`StorageFeature::Delete`] n'est pas déclarée (implémentation
+    /// par défaut) ou pour une autre nature qu'un fichier ou un répertoire.
+    fn delete(
+        &self,
+        path: &ResourcePath,
+        expected: EntryKind,
+        cancel: &CancellationToken,
+    ) -> Result<(), StorageError> {
+        let _ = (expected, cancel);
+        Err(StorageError::not_supported(StorageOperation::Delete)
+            .with_connector(self.connector_id().clone())
+            .with_path(path.clone()))
+    }
 }
 
 /// Vérifie qu'un connecteur déclare `feature` avant d'exécuter `operation`.
@@ -219,10 +292,33 @@ mod tests {
     }
 
     #[test]
+    fn mutations_are_not_supported_by_default() {
+        let connector = fake();
+        let cancel = CancellationToken::new();
+        let path = ResourcePath::parse("a").unwrap();
+        let error = connector.create_directory(&path, &cancel).unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::NotSupported);
+        assert_eq!(error.operation(), StorageOperation::CreateDirectory);
+        let error = connector
+            .open_write(&path, &WriteOptions::new(), &cancel)
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), StorageErrorKind::NotSupported);
+        assert_eq!(error.operation(), StorageOperation::Write);
+        let error = connector
+            .delete(&path, EntryKind::File, &cancel)
+            .unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::NotSupported);
+        assert_eq!(error.operation(), StorageOperation::Delete);
+        assert_eq!(error.path(), Some(&path));
+    }
+
+    #[test]
     fn trait_objects_are_send_and_sync() {
         fn assert_send_sync<T: Send + Sync + ?Sized>() {}
         fn assert_send<T: Send + ?Sized>() {}
         assert_send_sync::<dyn StorageConnector>();
         assert_send::<dyn ContentReader>();
+        assert_send::<dyn ContentWriter>();
     }
 }

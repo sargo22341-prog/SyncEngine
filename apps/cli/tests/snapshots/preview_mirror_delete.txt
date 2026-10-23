@@ -12,4 +12,4 @@ COPIER     nouveau/  (absent de la destination, dossier)
 COPIER     nouveau/a.txt  (absent de la destination, 1 o)
 REMPLACER  recent.txt  (destination plus récente, ÉCRASÉE par la source, 6 o)
 Résumé : 2 à copier, 2 à remplacer, 1 à supprimer, 2 conservé(s), 0 conflit(s), 0 ignoré(s) ; 21 o à transférer
-SIMULATION : rien n'a été modifié ; aucune commande n'exécute encore ce plan.
+SIMULATION : rien n'a été modifié ; « syncengine execute … --confirm » exécuterait ce plan.
