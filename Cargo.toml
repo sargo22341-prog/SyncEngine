@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/services/sync-scheduler",
+    "crates/adapters/platform-api",
+    "crates/adapters/platform-windows",
+    "crates/adapters/platform-linux",
+    "apps/agent",
+
     "apps/desktop/src-tauri",
     "crates/services/sync-profiles",
     "crates/application/sync-orchestrator",
@@ -36,6 +42,11 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
+sync-scheduler = { path = "crates/services/sync-scheduler" }
+platform-api = { path = "crates/adapters/platform-api" }
+platform-windows = { path = "crates/adapters/platform-windows" }
+platform-linux = { path = "crates/adapters/platform-linux" }
+
 sync-profiles = { path = "crates/services/sync-profiles" }
 sync-orchestrator = { path = "crates/application/sync-orchestrator" }
 sync-bidirectional = { path = "crates/strategy/sync-bidirectional" }

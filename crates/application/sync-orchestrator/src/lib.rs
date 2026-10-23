@@ -1,9 +1,10 @@
 //! Blocking local application facade. Call on a dedicated worker, never the UI
-//! thread. One job per instance, plus an exclusive process lock on its state
-//! directory. Other programs/state directories are outside this lock's scope.
+//! thread. One job per instance, an exclusive process lock on its state directory,
+//! and a shared per-user execution lock across facade state directories.
 //! Engines own every comparison, policy decision and file mutation.
 
 mod runs;
+mod scheduled;
 
 use connector_local::{LocalConnector, LocalOptions};
 pub use runs::Run;
@@ -102,6 +103,7 @@ struct Cached {
 /// connector implementation from TypeScript. Store paths are application owned.
 pub struct Application {
     state: PathBuf,
+    lock_root: PathBuf,
     _owner: File,
     gate: Mutex<()>,
     cache: Mutex<Option<Cached>>,
@@ -113,7 +115,26 @@ impl Application {
     /// # Errors
     /// State path/lock/persistence error; second desktop process is refused.
     pub fn open(state: impl AsRef<Path>) -> Result<Self, AppError> {
+        Self::open_with_lock_root(state, scheduled::default_lock_root()?)
+    }
+
+    /// Opens with an explicit common lock directory. Every client on the same
+    /// user account MUST use the same directory. Tests use isolated temporary roots.
+    /// # Errors
+    /// Same as `open`, or invalid/unavailable lock directory.
+    pub fn open_with_lock_root(
+        state: impl AsRef<Path>,
+        lock_root: impl AsRef<Path>,
+    ) -> Result<Self, AppError> {
         let state = state.as_ref().canonicalize().map_err(io)?;
+        std::fs::create_dir_all(lock_root.as_ref()).map_err(io)?;
+        let lock_root = lock_root.as_ref().canonicalize().map_err(io)?;
+        if lock_root.starts_with(&state) {
+            return Err(error(
+                "invalid_input",
+                "verrous communs hors de l’état requis",
+            ));
+        }
         let owner = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -129,6 +150,7 @@ impl Application {
         History::open(state.join("state.sqlite")).map_err(io)?;
         Ok(Self {
             state,
+            lock_root,
             _owner: owner,
             gate: Mutex::new(()),
             cache: Mutex::new(None),
@@ -203,6 +225,8 @@ impl Application {
             (&source, &destination),
             (&source, &self.state),
             (&destination, &self.state),
+            (&source, &self.lock_root),
+            (&destination, &self.lock_root),
         ] {
             if a.starts_with(b) || b.starts_with(a) {
                 return Err(error(
@@ -219,8 +243,13 @@ impl Application {
         }
         Ok((source, destination))
     }
-    fn begin(&self, id: &ProfileId, phase: JobPhase) -> Result<CancellationToken, AppError> {
-        let cancel = CancellationToken::new();
+    fn begin(
+        &self,
+        id: &ProfileId,
+        phase: JobPhase,
+        token: Option<&CancellationToken>,
+    ) -> Result<CancellationToken, AppError> {
+        let cancel = token.cloned().unwrap_or_default();
         *lock(&self.cancel)? = cancel.clone();
         *lock(&self.snapshot)? = JobSnapshot {
             active: true,
@@ -250,8 +279,15 @@ impl Application {
     /// Busy, unavailable root, scan/planning/persistence failure or cancellation.
     pub fn preview(&self, id: ProfileId) -> Result<serde_json::Value, AppError> {
         let _gate = self.gate()?;
+        self.preview_locked(id, None)
+    }
+    fn preview_locked(
+        &self,
+        id: ProfileId,
+        token: Option<&CancellationToken>,
+    ) -> Result<serde_json::Value, AppError> {
         *lock(&self.cache)? = None;
-        let cancel = self.begin(&id, JobPhase::Scanning)?;
+        let cancel = self.begin(&id, JobPhase::Scanning, token)?;
         let result = (|| {
             let profile = self.profile(&id)?;
             let (source, destination) = self.roots(&profile)?;
@@ -334,6 +370,16 @@ impl Application {
         confirm_delete: bool,
     ) -> Result<serde_json::Value, AppError> {
         let _gate = self.gate()?;
+        self.execute_locked(id, plan_id, confirm, confirm_delete, None)
+    }
+    fn execute_locked(
+        &self,
+        id: ProfileId,
+        plan_id: String,
+        confirm: bool,
+        confirm_delete: bool,
+        token: Option<&CancellationToken>,
+    ) -> Result<serde_json::Value, AppError> {
         if !confirm {
             return Err(error(
                 "confirmation_required",
@@ -355,7 +401,7 @@ impl Application {
                 "confirmer les suppressions affichées",
             ));
         }
-        let cancel = self.begin(&id, JobPhase::Executing)?;
+        let cancel = self.begin(&id, JobPhase::Executing, token)?;
         let result = self.execute_cached(cached, &cancel, confirm_delete);
         self.end(result, &id)
     }
@@ -365,6 +411,7 @@ impl Application {
         cancel: &CancellationToken,
         confirm_delete: bool,
     ) -> Result<serde_json::Value, AppError> {
+        let _job_lock = scheduled::job_lock(&self.lock_root)?;
         let (source, destination) = self.roots(&cached.profile)?;
         if source.to_str() != Some(cached.plan.source().location())
             || destination.to_str() != Some(cached.plan.destination().location())

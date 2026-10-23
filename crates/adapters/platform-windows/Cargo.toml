@@ -1,0 +1,16 @@
+[package]
+name = "platform-windows"
+description = "Windows Task Scheduler XML adapter without shell execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+platform-api.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

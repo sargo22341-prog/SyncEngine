@@ -1,8 +1,9 @@
 # SyncEngine — Kit de contexte pour sessions IA
 
 SyncEngine fournit une CLI Rust et une interface Tauri 2/TypeScript pour les
-sauvegardes, miroirs et synchronisations bidirectionnelles locales. L’agent
-et les connecteurs réseau/cloud restent à implémenter.
+sauvegardes, miroirs et synchronisations bidirectionnelles locales. Un agent
+sans GUI exécute les profils programmés ; les connecteurs réseau/cloud restent
+à implémenter.
 
 Phase 06 : profils persistants, assistant, simulation, exécution confirmée,
 annulation, progression agrégée, historique et paramètres d’affichage.
@@ -91,3 +92,9 @@ l'annulation coopérative ; après interruption, lire le journal puis refaire
 une preview. Un temporaire `.syncengine-….partial` peut rester sans être
 consigné si l'arrêt survient pendant le transfert. Linux et CI non validés
 dans cette session ; détails des tests et limites dans l'état du projet.
+
+## Phase 07 — scheduler et agent
+
+Agent local sans GUI, programmations UTC et adaptateurs Windows/Linux :
+[utilisation, installation et reprise](apps/agent/README.md).
+Contrats et limites : [ADR 0007](docs/adr/0007-scheduler-agent.md).

@@ -13,7 +13,8 @@ fn fixture(
     for directory in ["source", "destination", "state"] {
         fs::create_dir(temp.path().join(directory))?;
     }
-    let app = Application::open(temp.path().join("state"))?;
+    let app =
+        Application::open_with_lock_root(temp.path().join("state"), temp.path().join("locks"))?;
     let profile = Profile {
         id: ProfileId::new("p")?,
         name: "Photos été".into(),
@@ -51,7 +52,8 @@ fn preview_is_read_only_exact_plan_consumed_once_and_history_survives()
     assert_eq!(rows[0].plan, preview["plan"]);
     assert!(app.snapshot()?.bytes_done >= 4);
     drop(app);
-    let app = Application::open(temp.path().join("state"))?;
+    let app =
+        Application::open_with_lock_root(temp.path().join("state"), temp.path().join("locks"))?;
     assert_eq!(app.history(p.id)?.len(), 1);
     Ok(())
 }
@@ -86,7 +88,10 @@ fn changed_profile_wrong_plan_and_failed_preview_invalidate_execution()
 #[test]
 fn nested_state_and_second_desktop_are_refused() -> Result<(), Box<dyn std::error::Error>> {
     let (temp, app, mut p) = fixture(SyncMode::Backup)?;
-    assert!(Application::open(temp.path().join("state")).is_err());
+    assert!(
+        Application::open_with_lock_root(temp.path().join("state"), temp.path().join("locks"))
+            .is_err()
+    );
     p.destination = p.source.join("nested");
     fs::create_dir(&p.destination)?;
     assert!(app.profile_save(p.clone()).is_err());
@@ -249,10 +254,102 @@ fn unfinished_intent_remains_visible_after_restart() -> Result<(), Box<dyn std::
     )?;
     drop(db);
     drop(app);
-    let app = Application::open(state)?;
+    let app = Application::open_with_lock_root(state, temp.path().join("locks"))?;
     let rows = app.history(p.id)?;
     assert_eq!(rows[0].state, "running");
     assert!(rows[0].report.is_none());
     assert_eq!(rows[0].plan, preview["plan"]);
+    Ok(())
+}
+
+#[test]
+fn scheduled_authorization_checks_profile_deletions_and_report_status()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_core::CancellationToken;
+    let (_temp, app, mut p) = fixture(SyncMode::Mirror)?;
+    p.allow_delete = true;
+    app.profile_save(p.clone())?;
+    fs::write(p.source.join("keep"), b"keep")?;
+    fs::write(p.destination.join("keep"), b"keep")?;
+    fs::write(p.destination.join("old"), b"old")?;
+    let cancel = CancellationToken::new();
+    // Given an explicitly destructive profile, When unattended deletion approval
+    // is missing, Then old content remains and no application intent is begun.
+    assert!(app.execute_scheduled(&p, false, &cancel).is_err());
+    assert_eq!(fs::read(p.destination.join("old"))?, b"old");
+    assert!(app.history(p.id.clone())?.is_empty());
+    let mut stale = p.clone();
+    stale.name = "stale authorization".into();
+    assert_eq!(
+        app.execute_scheduled(&stale, true, &cancel)
+            .err()
+            .ok_or("error")?
+            .code,
+        "stale"
+    );
+    let report = app.execute_scheduled(&p, true, &cancel)?;
+    assert_eq!(report["status"], "succeeded");
+    assert!(!p.destination.join("old").exists());
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert_eq!(
+        app.execute_scheduled(&p, true, &cancelled)
+            .err()
+            .ok_or("error")?
+            .code,
+        "cancelled"
+    );
+    Ok(())
+}
+#[test]
+fn scheduled_conflicts_are_attention_and_do_not_advance_baseline()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_scheduler::{JobStatus, MissedJobs, Schedule, ScheduledApplication, Trigger};
+    let (_temp, app, p) = fixture(SyncMode::Bidirectional)?;
+    fs::write(p.source.join("conflict"), b"source")?;
+    fs::write(p.destination.join("conflict"), b"target")?;
+    let schedule = Schedule {
+        approved: p.clone(),
+        trigger: Trigger::Interval { seconds: 60 },
+        created_at: 0,
+        enabled: true,
+        allow_deletions: false,
+        missed: MissedJobs::RunOnce,
+    };
+    let result = app.run(&schedule, &sync_core::CancellationToken::new());
+    assert_eq!(result.status, JobStatus::Attention);
+    assert_eq!(fs::read(p.source.join("conflict"))?, b"source");
+    assert_eq!(fs::read(p.destination.join("conflict"))?, b"target");
+    assert_eq!(
+        app.history(p.id)?[0].report.as_ref().ok_or("report")?["baseline_updated"],
+        false
+    );
+    Ok(())
+}
+#[test]
+fn interrupted_scheduled_intent_requires_explicit_diagnosis_before_rescan()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (temp, app, p) = fixture(SyncMode::Backup)?;
+    fs::write(p.source.join("file"), b"data")?;
+    let preview = app.preview(p.id.clone())?;
+    rusqlite::Connection::open(temp.path().join("state/desktop-runs.sqlite"))?.execute(
+        "INSERT INTO runs VALUES('lost',?1,'0','running',?2,NULL)",
+        rusqlite::params![p.id.as_str(), preview["plan"].to_string()],
+    )?;
+    let cancel = sync_core::CancellationToken::new();
+    assert_eq!(
+        app.execute_scheduled(&p, false, &cancel)
+            .err()
+            .ok_or("error")?
+            .code,
+        "interrupted"
+    );
+    assert!(!p.destination.join("file").exists());
+    assert!(app.acknowledge_interrupted(&p.id, false).is_err());
+    app.acknowledge_interrupted(&p.id, true)?;
+    assert_eq!(app.history(p.id.clone())?[0].state, "error");
+    let report = app.execute_scheduled(&p, false, &cancel)?;
+    assert_eq!(report["status"], "succeeded");
+    assert_eq!(fs::read(p.destination.join("file"))?, b"data");
     Ok(())
 }

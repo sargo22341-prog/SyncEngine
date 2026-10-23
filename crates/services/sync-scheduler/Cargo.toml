@@ -1,0 +1,22 @@
+[package]
+name = "sync-scheduler"
+description = "Durable UTC scheduling and application dispatch without GUI or storage engines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+sync-core.workspace = true
+sync-profiles.workspace = true
+platform-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

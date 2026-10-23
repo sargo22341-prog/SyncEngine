@@ -1,0 +1,16 @@
+[package]
+name = "platform-linux"
+description = "Linux systemd user timer and session unit adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+platform-api.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -2289,6 +2289,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "platform-api"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "platform-linux"
+version = "0.1.0"
+dependencies = [
+ "platform-api",
+ "tempfile",
+]
+
+[[package]]
+name = "platform-windows"
+version = "0.1.0"
+dependencies = [
+ "platform-api",
+ "tempfile",
+]
+
+[[package]]
 name = "plist"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3250,6 +3273,7 @@ dependencies = [
  "sync-plan",
  "sync-profiles",
  "sync-scanner",
+ "sync-scheduler",
  "sync-session",
  "sync-versioning",
  "tempfile",
@@ -3291,6 +3315,20 @@ dependencies = [
  "sync-core",
  "sync-errors",
  "sync-filter",
+]
+
+[[package]]
+name = "sync-scheduler"
+version = "0.1.0"
+dependencies = [
+ "platform-api",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sync-core",
+ "sync-profiles",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3351,6 +3389,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263"
 dependencies = [
  "futures-core",
+]
+
+[[package]]
+name = "syncengine-agent"
+version = "0.1.0"
+dependencies = [
+ "platform-api",
+ "platform-linux",
+ "platform-windows",
+ "serde_json",
+ "sync-core",
+ "sync-orchestrator",
+ "sync-profiles",
+ "sync-scheduler",
+ "tempfile",
 ]
 
 [[package]]

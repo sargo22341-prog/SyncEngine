@@ -11,10 +11,30 @@ use serde_json::Value;
 /// Tout nouveau paquet doit être ajouté ici : un paquet absent fait échouer
 /// le test, ce qui force à décider explicitement de sa place dans le graphe.
 const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
+    ("platform-api", &[]),
+    ("platform-windows", &["platform-api"]),
+    ("platform-linux", &["platform-api"]),
+    (
+        "sync-scheduler",
+        &["sync-core", "sync-profiles", "platform-api"],
+    ),
+    (
+        "syncengine-agent",
+        &[
+            "sync-scheduler",
+            "sync-orchestrator",
+            "sync-core",
+            "sync-profiles",
+            "platform-api",
+            "platform-windows",
+            "platform-linux",
+        ],
+    ),
     ("sync-profiles", &["sync-core", "sync-plan", "sync-filter"]),
     (
         "sync-orchestrator",
         &[
+            "sync-scheduler",
             "sync-profiles",
             "sync-core",
             "sync-errors",

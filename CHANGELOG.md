@@ -2,6 +2,16 @@
 
 ## [0.1.0] — non publié
 
+### Ajouté (phase 07 — scheduler et agent)
+- Agent Rust sans fenêtre ni dépendance GUI, réutilisant la façade et les moteurs
+  locaux ; autorisation explicite liée au profil, suppressions séparément approuvées.
+- Scheduler SQLite v1 : intervalles/horaires UTC, événements de session selon OS,
+  échéances manquées regroupées ou ignorées, claims durables et diagnostic de reprise.
+- Adaptateurs Windows Task Scheduler et Linux systemd utilisateur : export natif
+  inspectable, installation explicite, sans promesse d'achèvement au logoff.
+- Verrou OS commun aux exécutions de la façade, annulation persistante et
+  reconnaissance explicite des interruptions avec conservation de la baseline.
+
 ### Ajouté (phase 06 — interface locale)
 - Desktop Tauri 2/TypeScript : profils/groupes, assistant, différences filtrées
   et paginées, simulation distincte des écritures, confirmations destructives,

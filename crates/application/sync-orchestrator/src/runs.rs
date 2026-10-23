@@ -132,3 +132,14 @@ pub(super) fn list(root: &Path, id: &ProfileId) -> Result<Vec<Run>, AppError> {
     })
     .collect()
 }
+
+pub(super) fn acknowledge(root: &Path, id: &ProfileId) -> Result<(), AppError> {
+    let report = serde_json::json!({"code":"interruption_acknowledged", "profile":id});
+    open(root)?
+        .execute(
+            "UPDATE runs SET state='error',report=?2 WHERE profile=?1 AND state='running'",
+            params![id.as_str(), report.to_string()],
+        )
+        .map_err(io)?;
+    Ok(())
+}
