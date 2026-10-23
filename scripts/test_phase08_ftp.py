@@ -59,7 +59,14 @@ def run(mode, workspace):
         try:
             env = os.environ.copy()
             env.update(SYNCENGINE_FTP_ADDR=f"127.0.0.1:{server.socket.getsockname()[1]}",SYNCENGINE_FTP_CERT=str(folder / "cert.pem"))
-            return subprocess.run(["cargo","test","-p",f"connector-{mode}","--features",mode,"--test","wire","--","--ignored"],
+            result = subprocess.run(["cargo","test","-p",f"connector-{mode}","--features",mode,"--locked","--test","wire","--","--ignored"],
+                                    cwd=workspace,env=env,timeout=180).returncode
+            if result:
+                return result
+            (data / "file").write_bytes(b"abc")  # independent application fixture
+            env["SYNCENGINE_SECRET_FTP_FIXTURE"] = "fixture-only"
+            return subprocess.run(["cargo","test","-p","sync-orchestrator","--features",mode,"--locked",
+                                   "--test","wire_profiles",f"isolated_{mode}_profile","--","--ignored"],
                                   cwd=workspace,env=env,timeout=180).returncode
         finally:
             server.close_all()

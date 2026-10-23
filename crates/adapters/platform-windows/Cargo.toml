@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "platform-windows"
 description = "Windows Task Scheduler XML adapter without shell execution"
 version.workspace = true

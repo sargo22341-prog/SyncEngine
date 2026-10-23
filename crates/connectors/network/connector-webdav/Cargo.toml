@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "connector-webdav"
 description = "Accès WebDAV HTTPS en lecture, sans politique de synchronisation"
 version.workspace = true

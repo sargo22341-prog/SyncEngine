@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "connector-api"
 description = "Contrat commun des connecteurs de stockage SyncEngine : capacités détaillées, erreurs catégorisées et trait StorageConnector. Ne contient aucune règle de synchronisation ni implémentation concrète."
 version.workspace = true

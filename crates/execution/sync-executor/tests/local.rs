@@ -226,7 +226,12 @@ fn missing_source_root_at_execution_mutates_nothing() {
         &Filter::include_all(),
     );
     assert_eq!(plan.summary().delete, 1);
+    // Windows directory handles now pin the granted root against replacement.
+    // Model disconnection between preview and reopening for execution, as the
+    // facade does; the unavailable-source deletion safeguard remains exercised.
+    drop(source);
     fs::remove_dir_all(&source_root).unwrap();
+    let source = read_only(&source_root);
     let result = Executor::new().execute(
         ExecutionRequest::new(
             &plan,
@@ -244,6 +249,66 @@ fn missing_source_root_at_execution_mutates_nothing() {
         Err(sync_executor::ExecutionError::EndpointUnavailable { .. })
     ));
     assert_eq!(tree(destination_dir.path()), ["obsolete.txt=o"]);
+}
+
+#[test]
+fn interrupted_stages_are_neither_copied_nor_deleted_by_mirror() {
+    let source_dir = TempDir::new().unwrap();
+    let destination_dir = TempDir::new().unwrap();
+    write(source_dir.path(), "data", b"valid");
+    write(
+        source_dir.path(),
+        ".syncengine-source.partial",
+        b"incomplete source",
+    );
+    write(
+        destination_dir.path(),
+        ".syncengine-recovery.partial/previous",
+        b"recoverable original",
+    );
+    let source = read_only(source_dir.path());
+    let destination = writable(destination_dir.path());
+    let plan = plan_now(
+        &source,
+        &destination,
+        SyncMode::Mirror,
+        &Filter::include_all(),
+    );
+    assert_eq!(plan.summary().delete, 0);
+    let report = Executor::new()
+        .execute(
+            ExecutionRequest::new(
+                &plan,
+                &source,
+                &destination,
+                ExecutionId::new("recovery-stage").unwrap(),
+                &mut MemoryJournal::new(),
+                &CancellationToken::new(),
+            )
+            .with_options(confirmed())
+            .at(now()),
+        )
+        .unwrap();
+    assert_eq!(report.status(), ExecutionStatus::Succeeded);
+    assert!(
+        !destination_dir
+            .path()
+            .join(".syncengine-source.partial")
+            .exists()
+    );
+    assert_eq!(
+        fs::read(
+            destination_dir
+                .path()
+                .join(".syncengine-recovery.partial/previous")
+        )
+        .unwrap(),
+        b"recoverable original"
+    );
+    assert_eq!(
+        fs::read(destination_dir.path().join("data")).unwrap(),
+        b"valid"
+    );
 }
 
 #[test]

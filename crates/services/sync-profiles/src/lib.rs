@@ -1,6 +1,9 @@
-//! Local profile configuration, separate from observed synchronization state.
-//! SQLite migration v0→v1 is transactional; unknown/corrupt stores are refused.
+//! Local and optional remote profile configuration, separate from observed synchronization state.
+//! SQLite migrations v0→v1→v2 is transactional; unknown/corrupt stores are refused.
 //! No secrets or scheduling configuration are stored here. All I/O is blocking.
+
+mod endpoints;
+pub use endpoints::RemoteEndpoint;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -22,10 +25,17 @@ pub struct Profile {
     pub group: String,
     /// Implemented synchronization strategy.
     pub mode: SyncMode,
-    /// Absolute OS source path, never a logical connector path.
+    /// Absolute OS source path when `remote_source` is absent; otherwise unused.
     pub source: PathBuf,
-    /// Absolute OS destination path.
+    /// Absolute OS destination path when `remote_destination` is absent.
     pub destination: PathBuf,
+    /// Optional remote source. Absent means the original local source path.
+    /// Local path is retained for backward-compatible editing, ignored when remote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_source: Option<RemoteEndpoint>,
+    /// Optional remote destination; OneDrive is forbidden as a receiver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_destination: Option<RemoteEndpoint>,
     /// Identical filters used for both preview and execution.
     pub filter: FilterRules,
     /// Explicit destructive policy; safeguards remain enabled.
@@ -40,12 +50,30 @@ impl Profile {
         if self.name.trim().is_empty() || self.name.len() > 200 || self.group.len() > 200 {
             return Err(ProfileError::Invalid("nom ou groupe invalide"));
         }
-        if !self.source.is_absolute() || !self.destination.is_absolute() {
+        if (self.remote_source.is_none() && !self.source.is_absolute())
+            || (self.remote_destination.is_none() && !self.destination.is_absolute())
+        {
             return Err(ProfileError::Invalid("chemins absolus requis"));
         }
         if self.source.to_str().is_none() || self.destination.to_str().is_none() {
             return Err(ProfileError::Invalid(
                 "racines non UTF-8 non prises en charge",
+            ));
+        }
+        for remote in [&self.remote_source, &self.remote_destination]
+            .into_iter()
+            .flatten()
+        {
+            remote.validate()?;
+        }
+        if matches!(
+            self.remote_destination,
+            Some(RemoteEndpoint::Onedrive { .. })
+        ) || (self.mode == SyncMode::Bidirectional
+            && (self.remote_source.is_some() || self.remote_destination.is_some()))
+        {
+            return Err(ProfileError::Invalid(
+                "OneDrive source seule ; bidirectionnel distant non qualifi?",
             ));
         }
         match self.mode {
@@ -85,7 +113,7 @@ pub enum ProfileError {
 /// Versioned store. The caller places it outside synchronized trees.
 pub struct Profiles(Connection);
 impl Profiles {
-    /// Opens the store and migrates only an empty database.
+    /// Opens an identified store, migrating empty v0 or additive v1 to v2.
     /// # Errors
     /// Unreadable, corrupt, foreign or future database; migration failure.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ProfileError> {
@@ -108,9 +136,12 @@ impl Profiles {
                 return Err(ProfileError::Invalid("base étrangère"));
             }
             tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
-        } else if version != 1 || app != 1_398_361_680 {
+        } else if !matches!(version, 1 | 2) || app != 1_398_361_680 {
             return Err(ProfileError::Invalid("version ou application inconnue"));
         }
+        // Additive JSON fields: legacy configurations remain byte-for-byte intact.
+        // Version 2 prevents old applications silently opening new remote profiles.
+        tx.execute_batch("PRAGMA user_version=2;")?;
         tx.commit()?;
         connection.execute_batch("PRAGMA synchronous=FULL;")?;
         Ok(Self(connection))

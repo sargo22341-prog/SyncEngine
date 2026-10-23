@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-scanner"
 description = "Scanner d'inventaire SyncEngine : parcourt une extrémité via le contrat StorageConnector, applique les filtres, calcule facultativement les empreintes BLAKE3 et modélise explicitement les zones incomplètes. Ne modifie jamais rien."
 version.workspace = true

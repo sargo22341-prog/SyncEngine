@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-backup"
 description = "Stratégie de sauvegarde SyncEngine : plan source → destination qui copie et remplace selon la politique, conserve les entrées présentes seulement à la destination et ne supprime jamais. Produit un plan, aucune mutation."
 version.workspace = true

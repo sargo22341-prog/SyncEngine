@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use connector_api::{CommitMode, StorageError, StorageErrorKind, WriteOptions};
-use sync_copy::{CopyError, CopyRequest, CopyStage, StagedCopy, stage_copy};
+use sync_copy::{CopyError, CopyRequest, CopyStage, StagedCopy, stage_copy_observed};
 use sync_core::{EntryKind, ExecutionStatus, OperationId, ResourcePath};
 use sync_errors::{ClassifiedError, ErrorContext, ErrorReport, Severity};
 use sync_events::{EmitOutcome, EventEmitter, EventKind, ProgressSnapshot};
@@ -485,23 +485,39 @@ impl<'a> Run<'a> {
         let events = self.req.events;
         let interval = self.req.options.progress_interval_bytes;
         let progress = &mut self.progress;
-        let staged = match stage_copy(
+        let mut journal_error = None;
+        let journal = &mut self.req.journal;
+        let result = stage_copy_observed(
             &request,
             &mut |bytes| advance(progress, events, interval, bytes),
+            &mut |staging| {
+                if let Some(staging) = staging
+                    && let Err(error) = journal.append(JournalRecord::StagingCreated {
+                        operation: op.id().clone(),
+                        staging: staging.clone(),
+                    })
+                {
+                    journal_error = Some(error);
+                    return Err(StorageError::new(
+                        StorageErrorKind::Permanent,
+                        connector_api::StorageOperation::Write,
+                    )
+                    .with_message("staging journal unavailable"));
+                }
+                Ok(())
+            },
             self.req.cancel,
-        ) {
+        );
+        let staged = match result {
             Ok(staged) => staged,
-            Err(error) => return Err(self.copy_failure(op, &error)),
+            Err(error) => {
+                let failure = self.copy_failure(op, &error);
+                return Err(match journal_error {
+                    Some(error) => self.journal_failure(op, &error),
+                    None => failure,
+                });
+            }
         };
-        if let Some(staging) = staged.staging_path().cloned()
-            && let Err(error) = self.req.journal.append(JournalRecord::StagingCreated {
-                operation: op.id().clone(),
-                staging,
-            })
-        {
-            self.abort(staged, op);
-            return Err(self.journal_failure(op, &error));
-        }
         if let Err(mismatch) = check_transfer(source.metadata(), staged.bytes(), staged.hash()) {
             self.abort(staged, op);
             return Err(Interrupt::Refused(Refusal::SourceChangedDuringTransfer {

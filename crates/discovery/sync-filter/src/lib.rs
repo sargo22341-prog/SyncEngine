@@ -180,6 +180,9 @@ impl FilterRules {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Exclusion {
+    /// Reserved recovery staging/lock namespace, never synchronized or deleted
+    /// by ordinary plans. Cleanup requires a separate explicit recovery policy.
+    EngineInternal,
     /// Répertoire correspondant au motif `exclude_directories[rule]`.
     ExcludedDirectory {
         /// Position du premier motif correspondant.
@@ -369,6 +372,13 @@ impl Filter {
         if path.is_root() {
             return FilterDecision::Include;
         }
+        if path.segments().any(|segment| {
+            let name = segment.to_ascii_lowercase();
+            name == ".syncengine-lock"
+                || (name.starts_with(".syncengine-") && name.ends_with(".partial"))
+        }) {
+            return FilterDecision::Exclude(Exclusion::EngineInternal);
+        }
         let ci = self.rules.case_insensitive;
         let full = fold(path.as_str(), ci);
         let name = fold(path.file_name().unwrap_or_default(), ci);
@@ -408,6 +418,23 @@ mod tests {
         assert!(filter.rules().is_empty());
         let all = Filter::include_all();
         assert!(eval(&all, "x/y", EntryKind::Symlink).is_included());
+    }
+
+    #[test]
+    fn recovery_artifacts_cannot_be_reincluded_by_user_patterns() {
+        let filter = Filter::new(FilterRules::new().include_file("**")).unwrap();
+        for name in [
+            ".syncengine-1.partial",
+            "parent/.SYNCENGINE-2.PARTIAL/file",
+            ".syncengine-lock/owner",
+        ] {
+            assert_eq!(
+                eval(&filter, name, EntryKind::File),
+                FilterDecision::Exclude(Exclusion::EngineInternal)
+            );
+        }
+        assert!(eval(&filter, "user.partial", EntryKind::File).is_included());
+        assert!(eval(&filter, ".syncengine-notes.txt", EntryKind::File).is_included());
     }
 
     #[test]

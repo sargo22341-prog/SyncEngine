@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "platform-api"
 description = "Typed native scheduling capabilities and installation artifact contract"
 version.workspace = true

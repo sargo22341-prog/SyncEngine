@@ -8,6 +8,34 @@
 
 mod common;
 
+#[test]
+fn facade_lock_blocks_direct_cli_before_journal_or_mutation() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let destination = temp.path().join("destination");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&destination).unwrap();
+    std::fs::write(source.join("precious"), b"fixture").unwrap();
+    let root = temp.path().join("SyncEngine/job-locks");
+    let _owner = sync_executor::execution_lock(&root).unwrap();
+    let journal = temp.path().join("blocked.jsonl");
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_syncengine"))
+        .env("LOCALAPPDATA", temp.path())
+        .env("XDG_STATE_HOME", temp.path())
+        .arg("execute")
+        .arg(&source)
+        .arg(&destination)
+        .arg("--confirm")
+        .arg("--journal")
+        .arg(&journal)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("another SyncEngine execution"));
+    assert!(!journal.exists());
+    assert_eq!(std::fs::read_dir(destination).unwrap().count(), 0);
+}
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;

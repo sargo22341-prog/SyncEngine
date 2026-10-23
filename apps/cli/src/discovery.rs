@@ -14,7 +14,7 @@ use sync_compare::{
     CompareOptions, ComparisonOutcome, ComparisonReport, Difference, EquivalenceBasis,
     PathComparison, Side, Uncertainty, compare,
 };
-use sync_core::{CancellationToken, EntryKind, FileEntry, HashAlgorithm, Timestamp};
+use sync_core::{EntryKind, FileEntry, HashAlgorithm, Timestamp};
 use sync_filter::{Filter, FilterRules};
 use sync_scanner::{
     IncompleteReason, Inventory, ScanError, ScanIssueKind, ScanOptions, UnknownReason, scan,
@@ -150,7 +150,7 @@ pub(crate) fn run_scan(
     let connector = connector_for(root)?;
     // Pas de gestion de Ctrl+C en phase 02 : l'interruption tue le
     // processus, ce qui est sans risque puisque rien n'est modifié.
-    scan(&connector, filter, options, &CancellationToken::new()).map_err(|error| {
+    scan(&connector, filter, options, &crate::cancellation()).map_err(|error| {
         DiscoveryError::Scan {
             root: root.to_path_buf(),
             error,

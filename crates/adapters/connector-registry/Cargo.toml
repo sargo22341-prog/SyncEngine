@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "connector-registry"
 description = "Factories réseau statiques, filtrées par features à la compilation"
 version.workspace = true

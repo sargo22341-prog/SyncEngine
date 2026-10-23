@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-filter"
 description = "Filtres d'inclusion et d'exclusion de SyncEngine : règles sérialisables (motifs glob sur chemins logiques) compilées en un filtre pur, sans E/S, identique en simulation et en exécution."
 version.workspace = true

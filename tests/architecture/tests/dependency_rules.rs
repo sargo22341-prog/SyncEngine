@@ -84,6 +84,9 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
     (
         "sync-orchestrator",
         &[
+            "connector-api",
+            "connector-registry",
+            "sync-credentials",
             "sync-scheduler",
             "sync-profiles",
             "sync-core",
@@ -105,7 +108,12 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
     ),
     (
         "syncengine-desktop",
-        &["sync-orchestrator", "sync-profiles", "sync-core"],
+        &[
+            "sync-orchestrator",
+            "sync-profiles",
+            "sync-core",
+            "sync-scheduler",
+        ],
     ),
     (
         "sync-bidirectional",
@@ -271,6 +279,7 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
     (
         "syncengine-cli",
         &[
+            "sync-orchestrator",
             "sync-core",
             "sync-errors",
             "sync-events",

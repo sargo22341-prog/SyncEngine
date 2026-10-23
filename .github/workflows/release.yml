@@ -42,7 +42,10 @@ jobs:
           sudo apt-get install -y build-essential pkg-config libssl-dev zlib1g-dev libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2t64
       - run: rustup toolchain install
       - name: Release tooling tests
-        run: python scripts/test_release.py
+        run: |
+          python scripts/test_release.py
+          python scripts/test_state_maintenance.py
+          python scripts/verify_vendor.py
       - name: Frontend
         working-directory: apps/desktop
         run: |
@@ -57,6 +60,24 @@ jobs:
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           cargo test --workspace --all-features --locked
           cargo check --workspace --all-targets --all-features --locked
+          RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
+          cargo test -p connector-registry --no-default-features --locked
+          cargo check -p sync-orchestrator --no-default-features --locked
+      - name: Cooperative SIGTERM on a real CLI process
+        if: runner.os == 'Linux'
+        run: python scripts/test_signals.py --binary target/debug/syncengine
+      - name: Isolated provider contracts
+        run: |
+          python -m pip install paramiko==5.1.0 pyftpdlib==2.2.0 pyopenssl==26.4.0
+          python scripts/test_phase08_sftp.py
+          python scripts/test_phase08_webdav.py
+          python scripts/test_phase08_ftp.py
+          python scripts/test_phase09_onedrive.py
+      - name: Dependency audits
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --deny warnings
+          npm --prefix apps/desktop audit
       - name: Prepare native CLI and agent
         run: python scripts/release.py prepare
       - name: Bundle
@@ -67,7 +88,13 @@ jobs:
         run: |
           formats="$BASE_FORMAT"
           if [[ "$RUNNER_OS" == Linux && "$OPTIONAL_APPIMAGE" == true ]]; then formats="deb,appimage"; fi
-          npm run tauri -- build --config src-tauri/tauri.release.conf.json --bundles "$formats" -- --locked
+          npm run tauri -- build --config src-tauri/tauri.release.conf.json --bundles "$formats" --features network,onedrive -- --locked
+      - name: Windows disposable install/reinstall/uninstall
+        if: runner.os == 'Windows'
+        run: |
+          installers=(target/release/bundle/nsis/*-setup.exe)
+          test "${#installers[@]}" -eq 1
+          python scripts/smoke_install_windows.py "${installers[0]}"
       - name: Inspect Debian package and installed CLI
         if: runner.os == 'Linux'
         run: |
@@ -79,6 +106,8 @@ jobs:
           /usr/bin/syncengine --help
           test -x /usr/bin/syncengine-agent
           package_name=$(dpkg-deb --field "${deb[0]}" Package)
+          # Reinstall the same candidate to exercise package replacement.
+          sudo dpkg -i "${deb[0]}"
           sudo apt-get remove -y "$package_name"
       - name: Collect checksums and provenance
         env:

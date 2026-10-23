@@ -30,6 +30,15 @@ pub enum DeletionBlock {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum PlanError {
+    /// Persisted filter rules cannot be compiled safely.
+    #[error("invalid filter rules in execution plan")]
+    InvalidFilter,
+    /// A mutation targets a filtered or reserved recovery path.
+    #[error("operation {id} targets an excluded or reserved path")]
+    FilteredMutation {
+        /// Refused operation.
+        id: OperationId,
+    },
     /// Bidirectional mutation lacks reliable baseline/content evidence.
     #[error("bidirectional mutation lacks reliable baseline evidence")]
     BaselineEvidence,
@@ -291,6 +300,8 @@ pub(crate) fn validate(plan: &ExecutionPlan) -> Result<(), PlanError> {
         }
     }
     let operations = &plan.operations;
+    let filter =
+        sync_filter::Filter::new(plan.filter.clone()).map_err(|_| PlanError::InvalidFilter)?;
     for pair in operations.windows(2) {
         match pair[0].path.cmp(&pair[1].path) {
             std::cmp::Ordering::Less => {}
@@ -313,6 +324,9 @@ pub(crate) fn validate(plan: &ExecutionPlan) -> Result<(), PlanError> {
         }
     }
     for (index, op) in operations.iter().enumerate() {
+        if op.action.is_mutation() && !filter.evaluate(&op.path, op.kind).is_included() {
+            return Err(PlanError::FilteredMutation { id: op.id.clone() });
+        }
         validate_operation(plan, index, op)?;
     }
     validate_entry_counts(plan)?;

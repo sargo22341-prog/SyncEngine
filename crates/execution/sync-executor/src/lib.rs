@@ -48,6 +48,7 @@
 
 mod error;
 mod options;
+mod ownership;
 mod preflight;
 mod report;
 mod run;
@@ -63,6 +64,7 @@ use sync_versioning::VersionStore;
 
 pub use error::ExecutionError;
 pub use options::{DEFAULT_MAX_CLOCK_SKEW, DEFAULT_MAX_PLAN_AGE, ExecutionOptions};
+pub use ownership::{default_lock_root, execution_lock};
 pub use report::{ExecutionReport, OperationOutcome, OutcomeStatus, Refusal, StopCause};
 pub use sync_journal::JournalTotals as ExecutionTotals;
 

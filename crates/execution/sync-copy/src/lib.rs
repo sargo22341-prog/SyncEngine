@@ -278,6 +278,21 @@ pub fn stage_copy(
     on_progress: &mut dyn FnMut(u64),
     cancel: &CancellationToken,
 ) -> Result<StagedCopy, CopyError> {
+    stage_copy_observed(request, on_progress, &mut |_| Ok(()), cancel)
+}
+
+/// Transfers like [`stage_copy`], recording the staging identity immediately
+/// after reservation and before the first content write. A failed observer
+/// aborts the writer and reports cleanup failure. The reservation itself may
+/// precede observation; durable operation intent must already exist.
+/// # Errors
+/// Transfer or observer failure, with explicit cleanup diagnostics.
+pub fn stage_copy_observed(
+    request: &CopyRequest<'_>,
+    on_progress: &mut dyn FnMut(u64),
+    on_staging: &mut dyn FnMut(Option<&ResourcePath>) -> Result<(), StorageError>,
+    cancel: &CancellationToken,
+) -> Result<StagedCopy, CopyError> {
     if cancel.is_cancelled() {
         return Err(CopyError::new(
             CopyStage::OpenSource,
@@ -305,6 +320,12 @@ pub fn stage_copy(
         )
         .map_err(|error| CopyError::new(CopyStage::OpenDestination, error))?;
 
+    if let Err(error) = on_staging(writer.staging_path()) {
+        return Err(abandon(
+            writer,
+            CopyError::new(CopyStage::OpenDestination, error),
+        ));
+    }
     let mut buffer = vec![0u8; request.buffer_size];
     let mut hasher = blake3::Hasher::new();
     let mut bytes: u64 = 0;

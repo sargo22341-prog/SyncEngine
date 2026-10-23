@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-decisions"
 description = "Décisions SyncEngine : traduit les constats de comparaison en opérations d'un plan selon une politique (écrasement, suppression), applique les garde-fous (parents indisponibles, répertoires non vidés, suppressions refusées) et définit le contrat PlanStrategy. Aucune E/S, aucune mutation."
 version.workspace = true

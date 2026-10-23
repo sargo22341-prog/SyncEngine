@@ -1,10 +1,13 @@
-//! Blocking local application facade. Call on a dedicated worker, never the UI
-//! thread. One job per instance, an exclusive process lock on its state directory,
+//! Blocking application facade. Call on a dedicated worker, never the UI
+//! thread. One job per instance, an exclusive command lock on its state directory,
 //! and a shared per-user execution lock across facade state directories.
 //! Engines own every comparison, policy decision and file mutation.
 
+mod endpoints;
+mod pages;
 mod runs;
 mod scheduled;
+mod schedules;
 
 use connector_local::{LocalConnector, LocalOptions};
 pub use runs::Run;
@@ -53,6 +56,12 @@ fn error(code: &str, message: impl std::fmt::Display) -> AppError {
 }
 fn io(error_value: impl std::fmt::Display) -> AppError {
     error("unavailable", error_value)
+}
+fn state_lock_error(cause: std::fs::TryLockError) -> AppError {
+    match cause {
+        std::fs::TryLockError::WouldBlock => error("busy", "une autre commande utilise cet état"),
+        std::fs::TryLockError::Error(cause) => io(cause),
+    }
 }
 fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>, AppError> {
     value
@@ -104,16 +113,16 @@ struct Cached {
 pub struct Application {
     state: PathBuf,
     lock_root: PathBuf,
-    _owner: File,
     gate: Mutex<()>,
     cache: Mutex<Option<Cached>>,
     cancel: Mutex<CancellationToken>,
     snapshot: Mutex<JobSnapshot>,
 }
 impl Application {
-    /// Opens an existing state directory, locks it and initializes versioned stores.
+    /// Opens an existing state directory under an initialization lock and
+    /// initializes versioned stores. Idle instances do not retain that lock.
     /// # Errors
-    /// State path/lock/persistence error; second desktop process is refused.
+    /// State path/lock/persistence error; concurrent commands are refused.
     pub fn open(state: impl AsRef<Path>) -> Result<Self, AppError> {
         Self::open_with_lock_root(state, scheduled::default_lock_root()?)
     }
@@ -142,16 +151,13 @@ impl Application {
             .write(true)
             .open(state.join("desktop.lock"))
             .map_err(io)?;
-        owner
-            .try_lock()
-            .map_err(|_| error("busy", "un autre desktop utilise ce répertoire d’état"))?;
+        owner.try_lock().map_err(state_lock_error)?;
         Profiles::open(state.join("profiles.sqlite")).map_err(io)?;
         runs::open(&state)?;
         History::open(state.join("state.sqlite")).map_err(io)?;
         Ok(Self {
             state,
             lock_root,
-            _owner: owner,
             gate: Mutex::new(()),
             cache: Mutex::new(None),
             cancel: Mutex::new(CancellationToken::new()),
@@ -159,10 +165,23 @@ impl Application {
         })
     }
 
-    fn gate(&self) -> Result<MutexGuard<'_, ()>, AppError> {
-        self.gate
-            .try_lock()
-            .map_err(|_| error("busy", "une commande est déjà en cours"))
+    fn gate(&self) -> Result<(MutexGuard<'_, ()>, File), AppError> {
+        let gate = self.gate.try_lock().map_err(|cause| match cause {
+            std::sync::TryLockError::WouldBlock => error("busy", "une commande est déjà en cours"),
+            std::sync::TryLockError::Poisoned(_) => error(
+                "internal",
+                "commande interrompue par une panne ; redémarrer",
+            ),
+        })?;
+        let owner = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.state.join("desktop.lock"))
+            .map_err(io)?;
+        owner.try_lock().map_err(state_lock_error)?;
+        Ok((gate, owner))
     }
     fn profiles(&self) -> Result<Profiles, AppError> {
         Profiles::open(self.state.join("profiles.sqlite")).map_err(io)
@@ -206,8 +225,9 @@ impl Application {
 
     /// Saves presentation settings, without changing synchronization policies.
     /// # Errors
-    /// Persistence/format error.
+    /// Busy, persistence or format error.
     pub fn preferences_save(&self, preferences: Preferences) -> Result<(), AppError> {
+        let _gate = self.gate()?;
         self.profiles()?.save_preferences(&preferences).map_err(io)
     }
 
@@ -217,32 +237,60 @@ impl Application {
             .find(|p| &p.id == id)
             .ok_or_else(|| error("not_found", "profil absent"))
     }
-    fn roots(&self, profile: &Profile) -> Result<(PathBuf, PathBuf), AppError> {
+    fn roots(&self, profile: &Profile) -> Result<(String, String), AppError> {
         profile.validate().map_err(|e| error("invalid_input", e))?;
-        let source = profile.source.canonicalize().map_err(io)?;
-        let destination = profile.destination.canonicalize().map_err(io)?;
-        for (a, b) in [
-            (&source, &destination),
-            (&source, &self.state),
-            (&destination, &self.state),
-            (&source, &self.lock_root),
-            (&destination, &self.lock_root),
+        let mut locals = Vec::new();
+        let mut locations = Vec::new();
+        for (path, remote) in [
+            (&profile.source, &profile.remote_source),
+            (&profile.destination, &profile.remote_destination),
         ] {
-            if a.starts_with(b) || b.starts_with(a) {
-                return Err(error(
-                    "invalid_input",
-                    "source, destination et état doivent être disjoints",
-                ));
+            if let Some(remote) = remote {
+                endpoints::supported(remote)?;
+                if let sync_profiles::RemoteEndpoint::Smb { root } = remote {
+                    locals.push(root.canonicalize().map_err(io)?);
+                }
+                locations.push(remote.location().map_err(io)?);
+            } else {
+                let root = path.canonicalize().map_err(io)?;
+                if !root.is_dir() {
+                    return Err(error("invalid_input", "racine dossier existant requise"));
+                }
+                locations.push(
+                    root.to_str()
+                        .ok_or_else(|| error("invalid_input", "racine non UTF-8"))?
+                        .into(),
+                );
+                locals.push(root);
             }
         }
-        if !source.is_dir() || !destination.is_dir() {
-            return Err(error(
-                "invalid_input",
-                "les racines doivent être des dossiers existants",
-            ));
+        for (index, root) in locals.iter().enumerate() {
+            for other in locals
+                .iter()
+                .skip(index + 1)
+                .chain([&self.state, &self.lock_root])
+            {
+                if root.starts_with(other) || other.starts_with(root) {
+                    return Err(error(
+                        "invalid_input",
+                        "source, destination, ?tat et verrous doivent ?tre disjoints",
+                    ));
+                }
+            }
         }
-        Ok((source, destination))
+        if profile.remote_source.is_some() && profile.remote_destination.is_some() {
+            return Err(error("not_supported", "une extr?mit? locale est requise"));
+        }
+        Ok((locations.remove(0), locations.remove(0)))
     }
+
+    /// Providers compiled into this application; optional features never imply
+    /// successful authentication or provider certification.
+    #[must_use]
+    pub fn providers(&self) -> Vec<&'static str> {
+        endpoints::available()
+    }
+
     fn begin(
         &self,
         id: &ProfileId,
@@ -279,33 +327,38 @@ impl Application {
     /// Busy, unavailable root, scan/planning/persistence failure or cancellation.
     pub fn preview(&self, id: ProfileId) -> Result<serde_json::Value, AppError> {
         let _gate = self.gate()?;
-        self.preview_locked(id, None)
+        self.preview_locked(id, None, false)
     }
     fn preview_locked(
         &self,
         id: ProfileId,
         token: Option<&CancellationToken>,
+        paged: bool,
     ) -> Result<serde_json::Value, AppError> {
         *lock(&self.cache)? = None;
         let cancel = self.begin(&id, JobPhase::Scanning, token)?;
         let result = (|| {
             let profile = self.profile(&id)?;
             let (source, destination) = self.roots(&profile)?;
-            let left = LocalConnector::new(&source, LocalOptions::new()).map_err(io)?;
-            let right = LocalConnector::new(&destination, LocalOptions::new()).map_err(io)?;
+            let left = endpoints::build(
+                Path::new(&source),
+                profile.remote_source.as_ref(),
+                false,
+                &cancel,
+            )?;
+            let right = endpoints::build(
+                Path::new(&destination),
+                profile.remote_destination.as_ref(),
+                false,
+                &cancel,
+            )?;
             let now = Timestamp::now().map_err(io)?;
             let context = PlanContext {
                 plan_id: PlanId::new(unique("plan")?).map_err(io)?,
                 profile: Some(id.clone()),
                 created_at: now,
-                source_location: source
-                    .to_str()
-                    .ok_or_else(|| error("invalid_input", "racine non UTF-8"))?
-                    .into(),
-                destination_location: destination
-                    .to_str()
-                    .ok_or_else(|| error("invalid_input", "racine non UTF-8"))?
-                    .into(),
+                source_location: source,
+                destination_location: destination,
             };
             let policy = PlanPolicy::new(
                 OverwritePolicy::SourceWins,
@@ -319,8 +372,8 @@ impl Application {
             let plan = if profile.mode == SyncMode::Bidirectional {
                 sync_session::preview(
                     &History::open(self.state.join("state.sqlite")).map_err(io)?,
-                    &left,
-                    &right,
+                    left.as_ref(),
+                    right.as_ref(),
                     &context,
                     &filter,
                     &policy,
@@ -329,8 +382,8 @@ impl Application {
                 .map_err(io)?
             } else {
                 let options = ScanOptions::new().with_hash(HashAlgorithm::Blake3);
-                let a = scan(&left, &filter, &options, &cancel).map_err(io)?;
-                let b = scan(&right, &filter, &options, &cancel).map_err(io)?;
+                let a = scan(left.as_ref(), &filter, &options, &cancel).map_err(io)?;
+                let b = scan(right.as_ref(), &filter, &options, &cancel).map_err(io)?;
                 let comparison =
                     sync_compare::compare(&a, &b, &sync_compare::CompareOptions::new())
                         .map_err(io)?;
@@ -347,8 +400,11 @@ impl Application {
                 .map_err(io)?
             };
             let summary = plan.summary();
-            let value: serde_json::Value =
-                serde_json::from_str(&plan.to_json().map_err(io)?).map_err(io)?;
+            let value: serde_json::Value = if paged {
+                serde_json::json!({"id":plan.id(), "profile":plan.profile(), "mode":plan.mode(), "source":plan.source(), "destination":plan.destination(), "operations":plan.operations().iter().take(100).collect::<Vec<_>>()})
+            } else {
+                serde_json::to_value(&plan).map_err(io)?
+            };
             let view = serde_json::json!({"plan":value,"summary":{"copy":summary.copy,"replace":summary.replace,"delete":summary.delete,"keep":summary.keep,"conflict":summary.conflict,"skip":summary.skip,"bytes":summary.bytes_to_transfer,"deletions_refused":summary.deletions_refused}});
             *lock(&self.cache)? = Some(Cached { profile, plan });
             Ok(view)
@@ -412,23 +468,30 @@ impl Application {
         confirm_delete: bool,
     ) -> Result<serde_json::Value, AppError> {
         let _job_lock = scheduled::job_lock(&self.lock_root)?;
+        if runs::unfinished(&self.state, &cached.profile.id)? {
+            return Err(error(
+                "interrupted",
+                "unfinished execution: explicit diagnosis required",
+            ));
+        }
         let (source, destination) = self.roots(&cached.profile)?;
-        if source.to_str() != Some(cached.plan.source().location())
-            || destination.to_str() != Some(cached.plan.destination().location())
+        if source != cached.plan.source().location()
+            || destination != cached.plan.destination().location()
         {
             return Err(error("stale", "racines modifiées"));
         }
-        let left = LocalConnector::new(
-            &source,
-            if cached.profile.mode == SyncMode::Bidirectional {
-                LocalOptions::new().with_mutations()
-            } else {
-                LocalOptions::new()
-            },
-        )
-        .map_err(io)?;
-        let right =
-            LocalConnector::new(&destination, LocalOptions::new().with_mutations()).map_err(io)?;
+        let left = endpoints::build(
+            Path::new(&source),
+            cached.profile.remote_source.as_ref(),
+            cached.profile.mode == SyncMode::Bidirectional,
+            cancel,
+        )?;
+        let right = endpoints::build(
+            Path::new(&destination),
+            cached.profile.remote_destination.as_ref(),
+            true,
+            cancel,
+        )?;
         let execution = ExecutionId::new(unique("run")?).map_err(io)?;
         lock(&self.snapshot)?.execution = Some(execution.clone());
         let file =
@@ -450,8 +513,8 @@ impl Application {
             let mut history = History::open(self.state.join("state.sqlite")).map_err(io)?;
             let request = sync_session::SessionRequest {
                 plan: &cached.plan,
-                source: &left,
-                destination: &right,
+                source: left.as_ref(),
+                destination: right.as_ref(),
                 execution: execution.clone(),
                 journal: &mut journal,
                 cancel,
@@ -472,8 +535,8 @@ impl Application {
                 .execute(
                     ExecutionRequest::new(
                         &cached.plan,
-                        &left,
-                        &right,
+                        left.as_ref(),
+                        right.as_ref(),
                         execution.clone(),
                         &mut journal,
                         cancel,

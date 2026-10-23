@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-session"
 description = "Application lifecycle for durable bidirectional executions and verified state publication."
 version.workspace = true
@@ -24,6 +25,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+ctrlc = { version = "3.5.2", features = ["termination"] }
 connector-memory.workspace = true
 connector-local.workspace = true
 tempfile.workspace = true

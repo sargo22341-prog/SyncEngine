@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "connector-staging"
 description = "Dépôt disque borné en mémoire et publication distante explicite"
 version.workspace = true

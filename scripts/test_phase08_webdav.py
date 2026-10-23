@@ -157,7 +157,7 @@ def main():
             env = os.environ.copy()
             env.update(SYNCENGINE_WEBDAV_URL=f"https://127.0.0.1:{server.server_port}/dav/",
                        SYNCENGINE_WEBDAV_CERT=str(cert_path))
-            return subprocess.run(["cargo", "test", "-p", "connector-webdav", "--features", "webdav",
+            return subprocess.run(["cargo", "test", "--locked", "-p", "connector-webdav", "--features", "webdav",
                                    "isolated_https_contract", "--", "--ignored"],
                                   cwd=workspace, env=env, timeout=120).returncode
         finally:

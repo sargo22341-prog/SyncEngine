@@ -52,7 +52,19 @@ fn preview(
     app: State<'_, App>,
     id: ProfileId,
 ) -> impl Future<Output = Result<serde_json::Value, AppError>> + Send + use<> {
-    worker(app.inner().clone(), move |a| a.preview(id))
+    worker(app.inner().clone(), move |a| a.preview_paged(id))
+}
+#[tauri::command(async)]
+fn plan_page(
+    app: State<'_, App>,
+    id: String,
+    offset: usize,
+    query: String,
+    action: String,
+) -> impl Future<Output = Result<serde_json::Value, AppError>> + Send + use<> {
+    worker(app.inner().clone(), move |a| {
+        a.plan_page(&id, offset, &query, &action)
+    })
 }
 #[tauri::command(async)]
 fn execute(
@@ -63,7 +75,14 @@ fn execute(
     confirm_delete: bool,
 ) -> impl Future<Output = Result<serde_json::Value, AppError>> + Send + use<> {
     worker(app.inner().clone(), move |a| {
-        a.execute(id, plan_id, confirm, confirm_delete)
+        let value = a.execute(id, plan_id, confirm, confirm_delete)?;
+        let report = value
+            .get("execution")
+            .filter(|v| v.is_object())
+            .unwrap_or(&value);
+        Ok(
+            serde_json::json!({"status":report["status"],"totals":report["totals"],"baseline_updated":value.get("baseline_updated"),"verification_error":value.get("verification_error")}),
+        )
     })
 }
 #[tauri::command]
@@ -79,7 +98,18 @@ fn history(
     app: State<'_, App>,
     id: ProfileId,
 ) -> impl Future<Output = Result<Vec<Run>, AppError>> + Send + use<> {
-    worker(app.inner().clone(), move |a| a.history(id))
+    worker(app.inner().clone(), move |a| a.history_overview(id))
+}
+#[tauri::command(async)]
+fn history_page(
+    app: State<'_, App>,
+    id: ProfileId,
+    execution: String,
+    offset: usize,
+) -> impl Future<Output = Result<serde_json::Value, AppError>> + Send + use<> {
+    worker(app.inner().clone(), move |a| {
+        a.history_page(id, &execution, offset)
+    })
 }
 #[tauri::command(async)]
 fn preferences(
@@ -95,6 +125,42 @@ fn preferences_save(
     worker(app.inner().clone(), move |a| {
         a.preferences_save(preferences)
     })
+}
+#[tauri::command]
+fn providers(app: State<'_, App>) -> Result<Vec<&'static str>, AppError> {
+    Ok(service(app.inner())?.providers())
+}
+#[tauri::command(async)]
+fn schedules(
+    app: State<'_, App>,
+) -> impl Future<Output = Result<serde_json::Value, AppError>> + Send + use<> {
+    worker(app.inner().clone(), |a| {
+        let state = a
+            .state_directory()
+            .to_str()
+            .ok_or_else(|| transport("chemin d’état non UTF-8 : export GUI indisponible"))?;
+        Ok(serde_json::json!({"schedules": a.schedules()?, "state":state}))
+    })
+}
+#[tauri::command(async)]
+fn schedule_save(
+    app: State<'_, App>,
+    id: ProfileId,
+    trigger: sync_scheduler::Trigger,
+    missed: sync_scheduler::MissedJobs,
+    approve_writes: bool,
+    approve_deletions: bool,
+) -> impl Future<Output = Result<(), AppError>> + Send + use<> {
+    worker(app.inner().clone(), move |a| {
+        a.schedule_save(id, trigger, missed, approve_writes, approve_deletions)
+    })
+}
+#[tauri::command(async)]
+fn schedule_remove(
+    app: State<'_, App>,
+    id: ProfileId,
+) -> impl Future<Output = Result<(), AppError>> + Send + use<> {
+    worker(app.inner().clone(), move |a| a.schedule_remove(id))
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tauri::Builder::default()
@@ -143,12 +209,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             profile_save,
             profile_remove,
             preview,
+            plan_page,
             execute,
             cancel,
             snapshot,
             history,
+            history_page,
             preferences,
-            preferences_save
+            preferences_save,
+            providers,
+            schedules,
+            schedule_save,
+            schedule_remove
         ])
         .run(tauri::generate_context!())?;
     Ok(())

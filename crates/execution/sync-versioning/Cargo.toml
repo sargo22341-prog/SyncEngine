@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-versioning"
 description = "Conservation des versions SyncEngine : avant qu'un fichier de la destination soit remplacé ou supprimé, en dépose une copie vérifiée dans un magasin de versions séparé (sous-dossier par exécution, jamais d'écrasement). Ne décide d'aucune action."
 version.workspace = true

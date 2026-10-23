@@ -23,10 +23,31 @@ fn fixture(
         source: temp.path().join("source"),
         destination: temp.path().join("destination"),
         filter: FilterRules::new().exclude_file("*.tmp"),
+        remote_source: None,
+        remote_destination: None,
         allow_delete: false,
     };
     app.profile_save(profile.clone())?;
     Ok((temp, app, profile))
+}
+
+#[test]
+fn maintenance_ownership_blocks_preferences_and_scheduler_initialization()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (temp, app, _) = fixture(SyncMode::Backup)?;
+    let preferences = app.preferences()?;
+    let owner = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(temp.path().join("state/desktop.lock"))?;
+    owner.try_lock()?;
+    assert!(app.preferences_save(preferences.clone()).is_err());
+    assert!(app.schedules().is_err());
+    assert!(!temp.path().join("state/scheduler.sqlite").exists());
+    drop(owner);
+    app.preferences_save(preferences)?;
+    assert!(app.schedules()?.is_empty());
+    Ok(())
 }
 
 #[test]
@@ -86,12 +107,14 @@ fn changed_profile_wrong_plan_and_failed_preview_invalidate_execution()
 }
 
 #[test]
-fn nested_state_and_second_desktop_are_refused() -> Result<(), Box<dyn std::error::Error>> {
+fn nested_state_is_refused_and_idle_desktop_allows_agent() -> Result<(), Box<dyn std::error::Error>>
+{
     let (temp, app, mut p) = fixture(SyncMode::Backup)?;
-    assert!(
-        Application::open_with_lock_root(temp.path().join("state"), temp.path().join("locks"))
-            .is_err()
-    );
+    let other =
+        Application::open_with_lock_root(temp.path().join("state"), temp.path().join("locks"))?;
+    fs::write(p.source.join("agent-file"), b"agent")?;
+    other.execute_scheduled(&p, false, &sync_core::CancellationToken::new())?;
+    assert_eq!(fs::read(p.destination.join("agent-file"))?, b"agent");
     p.destination = p.source.join("nested");
     fs::create_dir(&p.destination)?;
     assert!(app.profile_save(p.clone()).is_err());
@@ -337,6 +360,14 @@ fn interrupted_scheduled_intent_requires_explicit_diagnosis_before_rescan()
         rusqlite::params![p.id.as_str(), preview["plan"].to_string()],
     )?;
     let cancel = sync_core::CancellationToken::new();
+    let plan_id = preview["plan"]["id"].as_str().ok_or("id")?.to_owned();
+    assert_eq!(
+        app.execute(p.id.clone(), plan_id, true, false)
+            .err()
+            .ok_or("manual interruption refusal")?
+            .code,
+        "interrupted"
+    );
     assert_eq!(
         app.execute_scheduled(&p, false, &cancel)
             .err()
@@ -351,5 +382,93 @@ fn interrupted_scheduled_intent_requires_explicit_diagnosis_before_rescan()
     let report = app.execute_scheduled(&p, false, &cancel)?;
     assert_eq!(report["status"], "succeeded");
     assert_eq!(fs::read(p.destination.join("file"))?, b"data");
+    Ok(())
+}
+
+#[test]
+fn gui_schedule_approval_is_bound_to_current_profile_and_idle_window_allows_dispatch()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_scheduler::{MissedJobs, Scheduler, Trigger, Wake};
+    let (temp, app, mut p) = fixture(SyncMode::Backup)?;
+    let trigger = Trigger::Interval { seconds: 60 };
+    assert!(
+        app.schedule_save(
+            p.id.clone(),
+            trigger.clone(),
+            MissedJobs::RunOnce,
+            false,
+            false
+        )
+        .is_err()
+    );
+    assert!(
+        app.schedule_save(
+            p.id.clone(),
+            trigger.clone(),
+            MissedJobs::RunOnce,
+            true,
+            true
+        )
+        .is_err()
+    );
+    app.schedule_save(p.id.clone(), trigger, MissedJobs::RunOnce, true, false)?;
+    let states = app.schedules()?;
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0].schedule.approved, p);
+    p.name = "changed".into();
+    app.profile_save(p.clone())?;
+    let mut scheduler = Scheduler::open(temp.path().join("state/scheduler.sqlite"))?;
+    let agent =
+        Application::open_with_lock_root(temp.path().join("state"), temp.path().join("locks"))?;
+    let receipts = scheduler.dispatch(
+        sync_core::Timestamp::now()?.secs(),
+        Wake::Clock,
+        &agent,
+        &sync_core::CancellationToken::new(),
+    )?;
+    assert_eq!(receipts[0].completion.code, "stale");
+    app.schedule_remove(p.id)?;
+    assert!(app.schedules()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn paged_preview_transports_only_the_inspected_slice_and_executes_the_whole_plan()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_temp, app, p) = fixture(SyncMode::Backup)?;
+    for n in 0..205 {
+        fs::write(p.source.join(format!("file-{n:03}")), b"x")?;
+    }
+    let preview = app.preview_paged(p.id.clone())?;
+    assert_eq!(
+        preview["plan"]["operations"]
+            .as_array()
+            .ok_or("operations")?
+            .len(),
+        100
+    );
+    let id = preview["plan"]["id"].as_str().ok_or("id")?;
+    let page = app.plan_page(id, 200, "", "copy")?;
+    assert_eq!(page["total"], 205);
+    assert_eq!(page["operations"].as_array().ok_or("page")?.len(), 5);
+    assert!(app.plan_page("stale", 0, "", "").is_err());
+    app.execute(p.id.clone(), id.into(), true, false)?;
+    assert_eq!(fs::read_dir(&p.destination)?.count(), 205);
+    let overview = app.history_overview(p.id.clone())?;
+    assert!(overview[0].plan.is_null());
+    assert_eq!(
+        overview[0].report.as_ref().ok_or("summary")?["status"],
+        "succeeded"
+    );
+    let historical = app.history_page(p.id.clone(), &overview[0].execution, 200)?;
+    assert_eq!(historical["total"], 205);
+    assert_eq!(
+        historical["operations"]
+            .as_array()
+            .ok_or("history page")?
+            .len(),
+        5
+    );
+    assert!(!historical["operations"][0]["outcome"].is_null());
     Ok(())
 }

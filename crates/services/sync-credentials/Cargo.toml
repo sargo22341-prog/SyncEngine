@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-credentials"
 description = "Port de jetons runtime, sans stockage de secrets ni logique de transfert"
 version.workspace = true

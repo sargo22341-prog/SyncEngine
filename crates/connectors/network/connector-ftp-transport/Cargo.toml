@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "connector-ftp-transport"
 description = "Transport privé partagé FTP et FTPS, sans règles de synchronisation"
 version.workspace = true

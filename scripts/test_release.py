@@ -30,12 +30,17 @@ class ReleaseTests(unittest.TestCase):
             root = Path(tmp)
             (root / "deb").mkdir()
             (root / "deb/fixture.deb").write_bytes(b"isolated fixture")
-            with patch.object(release, "run", return_value="fixture"):
+            notices = root / "notices"
+            notices.mkdir()
+            (notices / "license-inventory.json").write_text('{"fixture":true}')
+            (notices / "THIRD_PARTY_NOTICES.txt").write_text("synthetic notice")
+            with patch.object(release, "NOTICES", notices), patch.object(release, "run", return_value="fixture"), patch.object(release, "source_inventory", return_value=[{"path": "fixture.rs", "sha256": "fixture"}]):
                 release.collect(root, root / "out", "x86_64-unknown-linux-gnu", ["deb"])
             output = root / "out"
             manifest = json.loads((output / "manifest.json").read_text())
             self.assertEqual(manifest["artifacts"][0]["sha256"],
                              hashlib.sha256(b"isolated fixture").hexdigest())
+            self.assertEqual(release.digest(output / "source-inventory.json"),manifest["source_inventory_sha256"])
             for line in (output / "SHA256SUMS").read_text().splitlines():
                 expected, name = line.split("  ", 1)
                 self.assertEqual(release.digest(output / name), expected)

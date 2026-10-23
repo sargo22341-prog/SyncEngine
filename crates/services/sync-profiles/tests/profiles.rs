@@ -17,6 +17,8 @@ fn migration_round_trip_edit_remove_and_preferences() -> Result<(), Box<dyn std:
         source: temp.path().join("source"),
         destination: temp.path().join("destination"),
         filter: FilterRules::new().exclude_file("*.tmp"),
+        remote_source: None,
+        remote_destination: None,
         allow_delete: false,
     };
     store.save(&profile)?;
@@ -45,6 +47,8 @@ fn invalid_edits_keep_previous_row() -> Result<(), Box<dyn std::error::Error>> {
         source: temp.path().join("a"),
         destination: temp.path().join("b"),
         filter: FilterRules::new(),
+        remote_source: None,
+        remote_destination: None,
         allow_delete: false,
     };
     store.save(&profile)?;
@@ -74,5 +78,48 @@ fn future_foreign_corrupt_stores_are_not_reset() -> Result<(), Box<dyn std::erro
     std::fs::write(&corrupt, b"not sqlite")?;
     assert!(Profiles::open(&corrupt).is_err());
     assert_eq!(std::fs::read(corrupt)?, b"not sqlite");
+    Ok(())
+}
+
+#[test]
+fn migrates_v1_without_rewriting_local_configuration_and_rejects_secret_urls()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("profiles.sqlite");
+    let db = rusqlite::Connection::open(&path)?;
+    db.execute_batch(include_str!("../migrations/001_initial.sql"))?;
+    let legacy = serde_json::json!({"id":"old","name":"Legacy","group":"","mode":"backup",
+        "source":temp.path().join("a"),"destination":temp.path().join("b"),"filter":FilterRules::new(),"allow_delete":false}).to_string();
+    db.execute("INSERT INTO profiles VALUES('old',?1)", [&legacy])?;
+    drop(db);
+    let store = Profiles::open(&path)?;
+    let mut p = store.list()?.remove(0);
+    assert!(p.remote_source.is_none());
+    let db = rusqlite::Connection::open(&path)?;
+    assert_eq!(
+        db.query_row("SELECT config FROM profiles", [], |r| r.get::<_, String>(0))?,
+        legacy
+    );
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
+        2
+    );
+    p.remote_source = Some(sync_profiles::RemoteEndpoint::Webdav {
+        root: "https://user:secret@example.org/".into(),
+        credential_ref: "DAV".into(),
+    });
+    assert!(store.save(&p).is_err());
+    p.remote_source = Some(sync_profiles::RemoteEndpoint::Onedrive {
+        drive_id: "fixture-drive".into(),
+        download_hosts: vec![],
+        credential_ref: "DRIVE".into(),
+    });
+    store.save(&p)?;
+    assert_eq!(store.list()?, vec![p.clone()]);
+    p.remote_destination = p.remote_source.clone();
+    assert!(store.save(&p).is_err());
+    p.remote_destination = None;
+    p.mode = SyncMode::Bidirectional;
+    assert!(store.save(&p).is_err());
     Ok(())
 }

@@ -5,13 +5,12 @@
 //! refuse de traverser un lien symbolique (ou une jonction Windows) situé
 //! sous la racine.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use connector_api::{StorageError, StorageErrorKind, StorageOperation};
 use sync_core::ResourcePath;
 
-use crate::errors::{io_error, local_error};
+use crate::errors::local_error;
 
 /// Noms de périphériques réservés par Win32, avec ou sans extension.
 const WINDOWS_RESERVED: &[&str] = &[
@@ -71,62 +70,6 @@ pub(crate) fn to_os_path(
         os_path.push(segment);
     }
     Ok(os_path)
-}
-
-/// Résout `path` en vérifiant que chaque **ancêtre** sous la racine est un
-/// vrai répertoire (ni lien symbolique, ni jonction), puis retourne le chemin
-/// OS et les métadonnées de l'entrée finale, lues sans suivre de lien.
-///
-/// # Limite
-/// Le contrôle et l'accès qui suit ne sont pas atomiques : un lien créé
-/// entre les deux par un tiers n'est pas détecté (TOCTOU, voir ADR 0002).
-///
-/// # Errors
-/// Erreur d'E/S catégorisée, ou `Permanent` si un ancêtre est un lien ou
-/// n'est pas un répertoire.
-pub(crate) fn resolve(
-    root: &Path,
-    path: &ResourcePath,
-    operation: StorageOperation,
-) -> Result<(PathBuf, fs::Metadata), StorageError> {
-    let os_path = to_os_path(root, path, operation)?;
-    let mut current = root.to_path_buf();
-    let mut logical = ResourcePath::root();
-    let depth = path.depth();
-    for (index, segment) in path.segments().enumerate() {
-        current.push(segment);
-        logical = logical.join(segment).map_err(|_| {
-            local_error(
-                StorageErrorKind::Permanent,
-                operation,
-                path,
-                "chemin invalide",
-            )
-        })?;
-        if index + 1 == depth {
-            break;
-        }
-        let metadata =
-            fs::symlink_metadata(&current).map_err(|e| io_error(e, operation, &logical))?;
-        if metadata.file_type().is_symlink() {
-            return Err(local_error(
-                StorageErrorKind::Permanent,
-                operation,
-                &logical,
-                "lien symbolique ou jonction dans le chemin : non suivi",
-            ));
-        }
-        if !metadata.is_dir() {
-            return Err(local_error(
-                StorageErrorKind::NotFound,
-                operation,
-                path,
-                "un ancêtre n'est pas un répertoire",
-            ));
-        }
-    }
-    let metadata = fs::symlink_metadata(&os_path).map_err(|e| io_error(e, operation, path))?;
-    Ok((os_path, metadata))
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-scheduler"
 description = "Durable UTC scheduling and application dispatch without GUI or storage engines"
 version.workspace = true

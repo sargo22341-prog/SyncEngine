@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-journal"
 description = "Journal durable d'exécution SyncEngine : enregistrements versionnés (JSON Lines) écrits et synchronisés sur disque avant et après chaque mutation, relecture tolérante à une fin tronquée et diagnostic de reprise d'une exécution interrompue. N'effectue aucune mutation de données utilisateur."
 version.workspace = true

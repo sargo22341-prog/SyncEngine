@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-copy"
 description = "Moteur de transfert SyncEngine : copie un fichier en flux d'un connecteur vers un autre, dans un dépôt temporaire, en calculant son empreinte BLAKE3. Ne décide d'aucune action, ne supprime rien ; la validation du dépôt revient à l'exécuteur."
 version.workspace = true

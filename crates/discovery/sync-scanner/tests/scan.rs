@@ -23,6 +23,18 @@ fn scan_all(connector: &MemoryConnector) -> Result<sync_scanner::Inventory, Scan
     )
 }
 
+#[test]
+fn exhausted_entry_budget_never_becomes_an_empty_complete_inventory() {
+    let connector = sample();
+    let result = scan(
+        &connector,
+        &Filter::include_all(),
+        &ScanOptions::new().with_entry_limit(std::num::NonZeroUsize::MIN),
+        &CancellationToken::new(),
+    );
+    assert!(matches!(result, Err(ScanError::RootUnavailable(_))));
+}
+
 fn sample() -> MemoryConnector {
     MemoryConnector::new("mem")
         .file("a.txt", b"alpha", ts(100))

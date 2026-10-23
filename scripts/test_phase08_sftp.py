@@ -205,7 +205,7 @@ def main():
             env = os.environ.copy()
             env.update(SYNCENGINE_SFTP_ADDR=f"127.0.0.1:{port}",
                        SYNCENGINE_SFTP_HOSTS=str(known), SYNCENGINE_SFTP_BAD_HOSTS=str(wrong))
-            result = subprocess.run(["cargo", "test", "-p", "connector-sftp", "--features", "sftp",
+            result = subprocess.run(["cargo", "test", "--locked", "-p", "connector-sftp", "--features", "sftp",
                                      "--test", "contract", "--", "--ignored"], cwd=workspace, env=env,
                                     timeout=120)
             return result.returncode

@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use connector_local::LocalOptions;
-use sync_core::{CancellationToken, ExecutionId, ExecutionStatus, ResourcePath, Timestamp};
+use sync_core::{ExecutionId, ExecutionStatus, ResourcePath, Timestamp};
 use sync_events::{EventEmitter, EventKind, bounded_channel};
 use sync_executor::{
     ExecutionOptions, ExecutionReport, ExecutionRequest, Executor, OutcomeStatus, PlanExecutor,
@@ -36,6 +36,10 @@ pub(crate) fn execute_command(
     execute: &ExecuteArgs,
 ) -> Result<u8, DiscoveryError> {
     ensure_not_nested(source_root, destination_root)?;
+    let lock_root =
+        sync_executor::default_lock_root().map_err(|e| DiscoveryError::Execution(e.to_string()))?;
+    let _owner = sync_executor::execution_lock(&lock_root)
+        .map_err(|e| DiscoveryError::Execution(e.to_string()))?;
     let journal_path = execute
         .journal
         .as_deref()
@@ -98,7 +102,7 @@ pub(crate) fn execute_command(
     let options = ExecutionOptions::new()
         .with_verify(execute.verify)
         .with_deletions_confirmed(execute.confirm_delete);
-    let cancel = CancellationToken::new();
+    let cancel = crate::cancellation();
     let mut request = ExecutionRequest::new(
         &plan,
         &source,

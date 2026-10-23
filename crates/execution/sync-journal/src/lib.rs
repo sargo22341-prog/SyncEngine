@@ -286,6 +286,11 @@ impl FileJournal {
                     JournalError::Io(error)
                 }
             })?;
+        file.sync_all().map_err(JournalError::Io)?;
+        #[cfg(unix)]
+        File::open(path.parent().unwrap_or_else(|| Path::new(".")))
+            .and_then(|parent| parent.sync_all())
+            .map_err(JournalError::Io)?;
         Ok(Self {
             file,
             path,

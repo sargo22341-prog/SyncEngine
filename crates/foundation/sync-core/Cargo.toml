@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-core"
 description = "Types partagés stables de SyncEngine : identifiants typés, chemins logiques, horodatages, entrées de fichiers et statut d'exécution. Aucune E/S, aucune dépendance d'interface."
 version.workspace = true

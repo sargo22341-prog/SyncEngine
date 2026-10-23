@@ -1,5 +1,11 @@
 # SyncEngine — Kit de contexte pour sessions IA
 
+État vérifié : [audit des phases 01 à 10](docs/AUDIT_PHASES_01_10.md).
+Branche locale unique `main`, historique des phases conservé. Corrections,
+contrats, procédures et preuves : [durcissement 01–10](docs/DURCISSEMENT_01_10.md).
+Les documents `CONTEXTE.md`, `prompts/` et `visuels/` restent volontairement privés
+et ignorés par Git ; ils ne sont pas nécessaires au binaire distribué.
+
 SyncEngine fournit une CLI Rust et une interface Tauri 2/TypeScript pour les
 sauvegardes, miroirs et synchronisations bidirectionnelles locales. Un agent
 sans GUI exécute les profils programmés. La phase 08 fournit cinq connecteurs
@@ -13,7 +19,10 @@ Sources/destinations selon capacités documentées, SMB Linux lecture seule.
 Factories Rust : [registre statique](crates/adapters/connector-registry/README.md).
 La phase 09 ajoute une [source OneDrive expérimentale en lecture seule](crates/connectors/cloud/connector-onedrive/README.md),
 avec jetons fournis par un service externe et tests HTTPS isolés ; aucun compte
-Microsoft réel validé. Les profils/GUI restent locaux.
+Microsoft réel validé. Les profils, la façade, la CLI et l’agent utilisent les
+connecteurs compilés (`--features network,onedrive`). Le build par défaut reste
+local seul. La GUI propose aussi la programmation des profils avec autorisation
+explicite ; l’installation des tâches natives reste une étape distincte.
 
 Phase 06 : profils persistants, assistant, simulation, exécution confirmée,
 annulation, progression agrégée, historique et paramètres d’affichage.
@@ -30,7 +39,7 @@ La CLI historique conserve ses commandes backup/mirror.
 ## Entrée rapide
 1. Lire `CONTEXTE.md`, puis `AGENTS.md`, puis `docs/CONTRATS.md`.
 2. Choisir **un seul** fichier `prompts/PHASE_XX_*.md` et le transmettre à une session IA avec les trois documents précédents.
-3. Faire travailler chaque session dans sa branche Git ou son répertoire isolé ; ne pas fusionner deux modifications concurrentes du même contrat.
+3. Conserver `main`, conformément au choix du propriétaire ; ne pas modifier simultanément le même contrat dans plusieurs sessions.
 4. Demander à l'IA de générer du code réel, des tests et un compte rendu, sans prétendre avoir testé ce qu'elle n'a pas exécuté.
 5. En fin de phase, exécuter les contrôles et compléter `docs/ETAT_PROJET.md`.
 
@@ -95,13 +104,14 @@ détecte pas une corruption de même taille. `--json` produit le rapport.
 Codes `execute` : 0 succès, 2 usage, 3 réserves/refus, 4 échec/annulation ;
 `journal` : 0 succès, 3 réserves ou interruption, 4 échec.
 
-Limites : pas de verrou contre deux exécutions concurrentes sur les mêmes
-arbres, fenêtre résiduelle entre contrôle des chemins et mutation, repli FAT
-non atomique, pas de rétention des versions. Ctrl+C ne déclenche pas encore
-l'annulation coopérative ; après interruption, lire le journal puis refaire
-une preview. Un temporaire `.syncengine-….partial` peut rester sans être
-consigné si l'arrêt survient pendant le transfert. Linux et CI non validés
-dans cette session ; détails des tests et limites dans l'état du projet.
+Les clients natifs du meme compte partagent desormais un verrou d'execution.
+Les parents locaux sont ouverts par handles confines, sans suivi des liens ;
+CreateNew n'utilise plus de repli rename pouvant ecraser une cible concurrente.
+Ctrl+C/signaux supportes demandent l'annulation cooperative. Le journal indique
+le temporaire avant le premier octet transfere (une reservation vide peut
+preceder cet enregistrement). Retention explicite et sauvegarde/restauration :
+[guide de durcissement](docs/DURCISSEMENT_01_10.md). Les ecrivains externes et
+l'atomicite distante restent soumis aux capacites reelles des serveurs.
 
 ## Phase 07 — scheduler et agent
 
@@ -110,3 +120,10 @@ Agent local sans GUI, programmations UTC et adaptateurs Windows/Linux :
 Contrats et limites : [ADR 0007](docs/adr/0007-scheduler-agent.md).
 
 Phase 10 : [livraison, installation et risques](docs/RELEASE.md). Candidats 0.1.0 internes ; publication encore bloquée par les validations documentées.
+
+## Licence
+
+SyncEngine est distribué sous **GPL-3.0-only** ; voir [LICENSE](LICENSE).
+Les dépendances conservent leurs licences et notices propres. Les candidats
+incluent leur inventaire ; une redistribution doit également fournir le code
+source correspondant selon la GPL.

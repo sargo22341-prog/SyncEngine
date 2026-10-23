@@ -36,8 +36,10 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod confined;
 mod connector;
 mod errors;
+mod paging;
 mod paths;
 mod write;
 

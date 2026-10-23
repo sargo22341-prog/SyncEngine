@@ -57,6 +57,8 @@ pub(crate) fn classify(error: &io::Error) -> StorageErrorKind {
     }
     match error.kind() {
         io::ErrorKind::NotFound => StorageErrorKind::NotFound,
+        io::ErrorKind::AlreadyExists => StorageErrorKind::Conflict,
+        io::ErrorKind::Unsupported => StorageErrorKind::NotSupported,
         io::ErrorKind::PermissionDenied => StorageErrorKind::PermissionDenied,
         io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => {
             StorageErrorKind::InsufficientSpace

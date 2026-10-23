@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-mirror"
 description = "Stratégie miroir SyncEngine : plan qui rend la destination conforme à la source ; les suppressions exigent une politique explicite et restent soumises aux garde-fous (inventaires complets, source non vide, plafonds). Produit un plan, aucune mutation."
 version.workspace = true

@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "connector-memory"
 description = "Double de test : stockage en mémoire implémentant StorageConnector avec injection de pannes (accès refusé, déconnexion, pagination, annulation). Réservé aux dev-dependencies ; jamais enregistré comme connecteur utilisable."
 version.workspace = true

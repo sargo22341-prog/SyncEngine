@@ -2,6 +2,31 @@
 
 ## [0.1.0] — non publié
 
+### Finalisation et durcissement des phases 01 à 10
+- Profils distants typés et migration SQLite v1→v2 sans réécriture des profils
+  locaux ; features des fournisseurs existants propagées à CLI, GUI et agent.
+  OneDrive reste une source expérimentale en lecture seule, à jeton externe.
+- Planification accessible depuis la GUI ; autorisation liée au profil complet,
+  fenêtre inactive compatible avec l’agent, diagnostic des intentions inachevées.
+- Verrou OS commun également pris par CLI directe et exemple ; annulation par
+  signaux supportés, confinement local par handles, pagination et budgets de scan.
+- Journalisation du temporaire avant transfert et synchronisation des journaux ;
+  création locale sans fallback de renommage pouvant écraser une cible concurrente.
+- IPC paginé pour simulation et historique ; plan complet exécuté côté Rust.
+- Maintenance explicite des journaux/versions, sauvegarde SQLite cohérente et
+  restauration vérifiée dans un état neuf ; tests sur fixtures uniquement.
+- Tauri 2.12.5, retrait de `unic-*`, backport GLib vérifiable et macros maintenues ;
+  aucun ignore d’audit ni désactivation de lint. Notices et provenance incluses
+  dans les candidats ; licence du produit et signature non inventées.
+- Workflows complétés et recette NSIS réservée aux runners jetables. Exclusions
+  Git des documents préparatoires conservées comme décision du propriétaire.
+
+### Documentation (audit des phases 01 à 10)
+- Rapport de couverture des prompts, intégrations et contrôles Windows ;
+  distinction entre backends livrés, raccordements applicatifs et recette manquante.
+- Registre actualisé après consolidation de toutes les branches intégrées sur
+  `main` ; historique conservé, aucun changement de comportement applicatif.
+
 ### Ajouté (phase 09 — source OneDrive expérimentale)
 - Connecteur Microsoft Graph en lecture seule, pagination serveur, métadonnées
   et téléchargement en flux avec contrôle taille/ETag à EOF.
@@ -152,3 +177,9 @@ Première livraison de cette phase (complétée ci-dessus) :
 - Workflow manuel de candidats, contrôles préalables, manifeste de provenance et SHA256 sans publication automatique.
 - Scripts testés de préparation/collecte et mesure synthétique du scanner ; guide installation, migrations, récupération et risques.
 - Aucun changement d'API métier, schéma SQLite ou moteur ; publication encore non validée.
+
+## Licence du produit
+
+- Licence GPL-3.0-only choisie par le propriétaire, texte officiel inclus et
+  métadonnées Cargo, frontend et paquets renseignées. Les licences tierces
+  restent distinctes.

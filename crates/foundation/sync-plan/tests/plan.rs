@@ -54,6 +54,40 @@ fn mirror_policy() -> PlanPolicy {
     )
 }
 
+#[test]
+fn excluded_and_recovery_paths_cannot_be_injected_into_mutating_plans() {
+    let policy = PlanPolicy::new(OverwritePolicy::SourceWins, DeletionPolicy::Disabled);
+    for path in ["scratch.tmp", ".syncengine-interrupted.partial"] {
+        let result = ExecutionPlan::new(
+            header(SyncMode::Backup, policy, (true, true)),
+            vec![spec(
+                path,
+                Action::Copy,
+                Reason::MissingAtDestination,
+                Some(file(3, 100)),
+                None,
+            )],
+        );
+        assert!(matches!(result, Err(PlanError::FilteredMutation { .. })));
+    }
+    let plan = ExecutionPlan::new(
+        header(SyncMode::Backup, policy, (true, true)),
+        vec![spec(
+            "ok.txt",
+            Action::Copy,
+            Reason::MissingAtDestination,
+            Some(file(3, 100)),
+            None,
+        )],
+    )
+    .unwrap();
+    let forged = plan
+        .to_json()
+        .unwrap()
+        .replace("ok.txt", ".syncengine-interrupted.partial");
+    assert!(ExecutionPlan::from_json(&forged).is_err());
+}
+
 fn spec(
     path: &str,
     action: Action,

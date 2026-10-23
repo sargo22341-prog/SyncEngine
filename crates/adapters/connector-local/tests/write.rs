@@ -324,3 +324,38 @@ fn mutations_never_go_through_a_link() {
         b"hors racine"
     );
 }
+
+#[test]
+fn reserved_parent_cannot_redirect_publication_or_cleanup_outside_root() {
+    // Given a reserved writer, When an adversary replaces its logical parent,
+    // Then publication stays in the granted directory and outside data survives.
+    let root = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    fs::write(outside.path().join("new.txt"), b"precious").unwrap();
+    fs::create_dir(root.path().join("parent")).unwrap();
+    let connector = writable(root.path());
+    let mut writer = connector
+        .open_write(
+            &p("parent/new.txt"),
+            &WriteOptions::new(),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+    writer.write(b"verified").unwrap();
+    let moved = fs::rename(root.path().join("parent"), root.path().join("moved"));
+    #[cfg(unix)]
+    assert!(moved.is_ok());
+    if moved.is_ok() {
+        link_dir(outside.path(), &root.path().join("parent"));
+    }
+    writer.commit(CommitMode::CreateNew).unwrap();
+    assert_eq!(
+        fs::read(outside.path().join("new.txt")).unwrap(),
+        b"precious"
+    );
+    let parent = if moved.is_ok() { "moved" } else { "parent" };
+    assert_eq!(
+        fs::read(root.path().join(parent).join("new.txt")).unwrap(),
+        b"verified"
+    );
+}

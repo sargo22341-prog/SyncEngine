@@ -12,6 +12,8 @@ fn schedule(temp: &tempfile::TempDir) -> Result<Schedule, Box<dyn std::error::Er
         source: temp.path().join("source"),
         destination: temp.path().join("destination"),
         filter: Default::default(),
+        remote_source: None,
+        remote_destination: None,
         allow_delete: false,
     };
     Ok(Schedule {

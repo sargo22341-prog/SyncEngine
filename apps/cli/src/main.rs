@@ -11,6 +11,7 @@ mod cli;
 mod discovery;
 mod execute;
 mod preview;
+mod profiles;
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -21,7 +22,30 @@ use discovery::exit;
 /// Code de sortie pour une erreur d'utilisation.
 const EXIT_USAGE: u8 = 2;
 
+static CANCELLATION: std::sync::LazyLock<sync_core::CancellationToken> =
+    std::sync::LazyLock::new(sync_core::CancellationToken::new);
+fn cancellation() -> sync_core::CancellationToken {
+    CANCELLATION.clone()
+}
 fn main() -> ExitCode {
+    if let Err(e) = ctrlc::set_handler(|| CANCELLATION.cancel()) {
+        return write_or_fail(
+            &mut io::stderr().lock(),
+            &format!("signal handler: {e}\n"),
+            ExitCode::FAILURE,
+        );
+    }
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|s| s == "profile") {
+        return match profiles::run(&args[1..]) {
+            Ok(code) => ExitCode::from(code),
+            Err(e) => write_or_fail(
+                &mut io::stderr().lock(),
+                &format!("syncengine: {e}\n"),
+                ExitCode::FAILURE,
+            ),
+        };
+    }
     match cli::parse(std::env::args_os().skip(1)) {
         Ok(command) => run(command),
         Err(error) => report_usage_error(&error),

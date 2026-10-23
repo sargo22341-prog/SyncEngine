@@ -58,7 +58,10 @@ jobs:
           cargo --version
 
       - name: Version de livraison et tests des scripts
-        run: python scripts/test_release.py
+        run: |
+          python scripts/test_release.py
+          python scripts/test_state_maintenance.py
+          python scripts/verify_vendor.py
 
       - name: Formatage
         run: cargo fmt --all -- --check
@@ -80,6 +83,25 @@ jobs:
           python scripts/test_phase08_webdav.py
           python scripts/test_phase08_ftp.py
           python scripts/test_phase09_onedrive.py
+
+      - name: Native and maintenance lock interoperability
+        run: |
+          binary=target/debug/syncengine
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          python scripts/test_state_lock.py --binary "$binary"
+
+      - name: Cooperative SIGTERM on a real CLI process
+        if: runner.os == 'Linux'
+        run: python scripts/test_signals.py --binary target/debug/syncengine
+
+      - name: Regression GLib optimisee (Linux)
+        if: runner.os == 'Linux'
+        run: cargo test -p syncengine-architecture-tests --test glib_security --release --locked
+
+      - name: Feature flags applicatifs
+        run: |
+          cargo check -p syncengine-cli -p syncengine-agent -p syncengine-desktop --no-default-features --locked
+          cargo check -p sync-orchestrator --no-default-features --features onedrive --locked
 
       - name: Registre sans providers activés
         run: cargo test -p connector-registry --no-default-features --locked
@@ -107,4 +129,15 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Audit RustSec
-        run: cargo audit
+        run: |
+          cargo audit --deny warnings
+          python scripts/verify_vendor.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Audit frontend
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm audit

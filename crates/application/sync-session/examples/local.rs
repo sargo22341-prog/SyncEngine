@@ -50,6 +50,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     if delete && !apply {
         return Err("--allow-delete requires --execute".into());
     }
+    // Cover recovery acknowledgement as well as execution and publication.
+    let _owner = sync_executor::execution_lock(&sync_executor::default_lock_root()?)?;
     let mut history = History::open(state.join("state.sqlite"))?;
     if let Some(execution) = recover {
         if apply {
@@ -88,6 +90,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         DeletionPolicy::enabled(DeletionGuard::new()),
     );
     let cancel = CancellationToken::new();
+    let signal_token = cancel.clone();
+    ctrlc::set_handler(move || signal_token.cancel())?;
     let filter = Filter::include_all();
     let plan = preview(&history, &left, &right, &context, &filter, &policy, &cancel)?;
     let mut out = io::stdout().lock();

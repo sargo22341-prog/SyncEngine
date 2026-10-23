@@ -104,8 +104,19 @@ pub(super) fn finish(
     tx.commit().map_err(io)
 }
 pub(super) fn list(root: &Path, id: &ProfileId) -> Result<Vec<Run>, AppError> {
+    list_view(root, id, false)
+}
+pub(super) fn overview(root: &Path, id: &ProfileId) -> Result<Vec<Run>, AppError> {
+    list_view(root, id, true)
+}
+fn list_view(root: &Path, id: &ProfileId, overview: bool) -> Result<Vec<Run>, AppError> {
     let db = open(root)?;
-    let mut stmt = db.prepare("SELECT execution,started,state,plan,report FROM runs WHERE profile=?1 ORDER BY (state='running') DESC,rowid DESC LIMIT 100").map_err(io)?;
+    let query = if overview {
+        "SELECT execution,started,state,'null',CASE WHEN report IS NULL THEN NULL ELSE json_object('status',COALESCE(json_extract(report,'$.status'),json_extract(report,'$.execution.status')),'verification_error',substr(json_extract(report,'$.verification_error'),1,4096),'baseline_updated',json_extract(report,'$.baseline_updated'),'code',json_extract(report,'$.code'),'message',substr(json_extract(report,'$.message'),1,4096),'totals',COALESCE(json_extract(report,'$.totals'),json_extract(report,'$.execution.totals'))) END FROM runs WHERE profile=?1 ORDER BY (state='running') DESC,rowid DESC LIMIT 100"
+    } else {
+        "SELECT execution,started,state,plan,report FROM runs WHERE profile=?1 ORDER BY (state='running') DESC,rowid DESC LIMIT 100"
+    };
+    let mut stmt = db.prepare(query).map_err(io)?;
     let rows = stmt
         .query_map([id.as_str()], |r| {
             Ok((
@@ -142,4 +153,36 @@ pub(super) fn acknowledge(root: &Path, id: &ProfileId) -> Result<(), AppError> {
         )
         .map_err(io)?;
     Ok(())
+}
+
+pub(super) fn page(
+    root: &Path,
+    id: &ProfileId,
+    execution: &str,
+    offset: usize,
+) -> Result<serde_json::Value, AppError> {
+    let db = open(root)?;
+    let total: i64 = db.query_row("SELECT json_array_length(plan,'$.operations') FROM runs WHERE profile=?1 AND execution=?2",params![id.as_str(),execution],|r|r.get(0)).map_err(io)?;
+    let mut stmt = db.prepare("SELECT op.value,COALESCE(json_extract(r.report,'$.outcomes['||op.key||']'),json_extract(r.report,'$.execution.outcomes['||op.key||']')) FROM runs r,json_each(r.plan,'$.operations') op WHERE r.profile=?1 AND r.execution=?2 LIMIT 100 OFFSET ?3").map_err(io)?;
+    let rows = stmt
+        .query_map(params![id.as_str(), execution, offset as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })
+        .map_err(io)?;
+    let mut values = Vec::new();
+    for row in rows {
+        let (operation, outcome) = row.map_err(io)?;
+        values.push(serde_json::json!({"operation":serde_json::from_str::<serde_json::Value>(&operation).map_err(io)?,"outcome":outcome.map(|s|serde_json::from_str::<serde_json::Value>(&s)).transpose().map_err(io)?}));
+    }
+    Ok(serde_json::json!({"operations":values,"total":total}))
+}
+
+pub(super) fn unfinished(root: &Path, id: &ProfileId) -> Result<bool, AppError> {
+    open(root)?
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runs WHERE profile=?1 AND state='running')",
+            [id.as_str()],
+            |r| r.get(0),
+        )
+        .map_err(io)
 }

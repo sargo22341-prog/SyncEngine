@@ -1,26 +1,24 @@
 //! Implémentation de [`StorageConnector`] pour le système de fichiers local.
 
+use cap_fs_ext::OpenOptionsFollowExt;
+use cap_std::fs::{Dir, OpenOptions};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use connector_api::{
     CaseSensitivity, ClockSource, ContentReader, ContentWriter, ListPage, ListingConsistency,
-    ListingIssue, ListingIssueKind, NameIssue, PageToken, Pagination, StorageCapabilities,
-    StorageConnector, StorageError, StorageErrorKind, StorageFeature, StorageOperation,
-    SymlinkSupport, WriteOptions, ensure_supported,
+    PageToken, Pagination, StorageCapabilities, StorageConnector, StorageError, StorageErrorKind,
+    StorageFeature, StorageOperation, SymlinkSupport, WriteOptions, ensure_supported,
 };
 use sync_core::{
-    CancellationToken, ConnectorId, EntryKind, FileEntry, FileMetadata, ResourcePath, Timestamp,
-    TimestampPrecision,
+    CancellationToken, ConnectorId, EntryKind, FileEntry, ResourcePath, TimestampPrecision,
 };
 
 use crate::errors::{io_error, local_error};
-use crate::paths::{is_ambiguous_here, resolve};
-use crate::write;
 
-/// Nombre d'entrées lues entre deux consultations du jeton d'annulation.
-const CANCEL_CHECK_INTERVAL: usize = 256;
+use crate::write;
 
 /// Options du connecteur local.
 ///
@@ -124,8 +122,10 @@ impl std::error::Error for LocalConfigError {}
 pub struct LocalConnector {
     id: ConnectorId,
     root: PathBuf,
+    anchor: Result<Arc<Dir>, io::Error>,
     capabilities: StorageCapabilities,
     precision: TimestampPrecision,
+    pages: crate::paging::Pages,
 }
 
 impl LocalConnector {
@@ -163,13 +163,17 @@ impl LocalConnector {
         capabilities.timestamp_precision = precision;
         capabilities.clock = ClockSource::LocalSystem;
         capabilities.listing_consistency = ListingConsistency::Strong;
-        capabilities.pagination = Pagination::Unpaginated;
+        capabilities.pagination = Pagination::Paginated {
+            max_page_size: Some(256),
+        };
         capabilities.symlinks = SymlinkSupport::Reported;
         Ok(Self {
             id: crate::connector_id(),
+            anchor: Dir::open_ambient_dir(&root, cap_std::ambient_authority()).map(Arc::new),
             root,
             capabilities,
             precision,
+            pages: crate::paging::Pages::default(),
         })
     }
 
@@ -179,8 +183,14 @@ impl LocalConnector {
         &self.root
     }
 
-    fn entry_from_metadata(&self, path: ResourcePath, metadata: &fs::Metadata) -> FileEntry {
-        entry_of(path, metadata, self.precision)
+    fn anchor(&self, operation: StorageOperation) -> Result<&Arc<Dir>, StorageError> {
+        self.anchor.as_ref().map_err(|e| {
+            io_error(
+                io::Error::new(e.kind(), "root handle unavailable; reconnect"),
+                operation,
+                &ResourcePath::root(),
+            )
+        })
     }
 
     /// Vérifie la racine : son absence est une indisponibilité de
@@ -188,7 +198,26 @@ impl LocalConnector {
     fn check_root(&self, operation: StorageOperation) -> Result<(), StorageError> {
         let root = ResourcePath::root();
         match fs::metadata(&self.root) {
-            Ok(metadata) if metadata.is_dir() => Ok(()),
+            Ok(metadata) if metadata.is_dir() => {
+                use cap_fs_ext::MetadataExt;
+                #[cfg(windows)]
+                let metadata = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
+                    .and_then(|dir| dir.dir_metadata())
+                    .map_err(|e| io_error(e, operation, &root))?;
+                let granted = self
+                    .anchor(operation)?
+                    .dir_metadata()
+                    .map_err(|e| io_error(e, operation, &root))?;
+                if metadata.dev() != granted.dev() || metadata.ino() != granted.ino() {
+                    return Err(local_error(
+                        StorageErrorKind::Disconnected,
+                        operation,
+                        &root,
+                        "root identity changed; reconnect required",
+                    ));
+                }
+                Ok(())
+            }
             Ok(_) => Err(local_error(
                 StorageErrorKind::Permanent,
                 operation,
@@ -233,42 +262,6 @@ impl LocalConnector {
     }
 }
 
-/// Entrée observée à partir de métadonnées lues sans suivre de lien.
-pub(crate) fn entry_of(
-    path: ResourcePath,
-    metadata: &fs::Metadata,
-    precision: TimestampPrecision,
-) -> FileEntry {
-    let file_type = metadata.file_type();
-    let kind = kind_of(&file_type);
-    let mut observed = FileMetadata::unknown();
-    if kind == EntryKind::File {
-        observed = observed.with_size(metadata.len());
-    }
-    // Une date illisible ou hors plage reste inconnue, jamais zéro.
-    if let Some(modified) = metadata
-        .modified()
-        .ok()
-        .and_then(|time| Timestamp::from_system_time(time).ok())
-    {
-        observed = observed.with_modified(modified, precision);
-    }
-    FileEntry::new(path, kind, observed)
-}
-
-fn kind_of(file_type: &fs::FileType) -> EntryKind {
-    // `is_symlink` couvre aussi les jonctions et points de montage Windows.
-    if file_type.is_symlink() {
-        EntryKind::Symlink
-    } else if file_type.is_dir() {
-        EntryKind::Directory
-    } else if file_type.is_file() {
-        EntryKind::File
-    } else {
-        EntryKind::Other
-    }
-}
-
 pub(crate) fn cancelled(operation: StorageOperation, path: &ResourcePath) -> StorageError {
     local_error(StorageErrorKind::Cancelled, operation, path, "annulé")
 }
@@ -289,103 +282,17 @@ impl StorageConnector for LocalConnector {
         cancel: &CancellationToken,
     ) -> Result<ListPage, StorageError> {
         let operation = StorageOperation::List;
-        if page.is_some() {
-            return Err(local_error(
-                StorageErrorKind::NotSupported,
-                operation,
-                directory,
-                "listing non paginé : aucun jeton de page n'est émis",
-            ));
-        }
         if cancel.is_cancelled() {
             return Err(cancelled(operation, directory));
         }
         self.check_root(operation)?;
-        let os_dir = if directory.is_root() {
-            self.root.clone()
-        } else {
-            let (os_dir, metadata) = resolve(&self.root, directory, operation)?;
-            if metadata.file_type().is_symlink() {
-                return Err(local_error(
-                    StorageErrorKind::Permanent,
-                    operation,
-                    directory,
-                    "lien symbolique ou jonction : non suivi",
-                ));
-            }
-            if !metadata.is_dir() {
-                return Err(local_error(
-                    StorageErrorKind::Permanent,
-                    operation,
-                    directory,
-                    "pas un répertoire",
-                ));
-            }
-            os_dir
-        };
-
-        let reader = fs::read_dir(&os_dir).map_err(|e| io_error(e, operation, directory))?;
-        let mut entries = Vec::new();
-        let mut issues = Vec::new();
-        for (index, item) in reader.enumerate() {
-            if index % CANCEL_CHECK_INTERVAL == 0 && cancel.is_cancelled() {
-                return Err(cancelled(operation, directory));
-            }
-            // Une erreur au cours de l'itération rend tout le listing
-            // incertain : elle est propagée, jamais tronquée en silence.
-            let item = item.map_err(|e| io_error(e, operation, directory))?;
-            let os_name = item.file_name();
-            let Some(name) = os_name.to_str() else {
-                issues.push(ListingIssue::new(
-                    os_name.to_string_lossy(),
-                    ListingIssueKind::UnrepresentableName(NameIssue::NonUtf8),
-                ));
-                continue;
-            };
-            if is_ambiguous_here(name) {
-                issues.push(ListingIssue::new(
-                    name,
-                    ListingIssueKind::UnrepresentableName(NameIssue::PlatformAmbiguous),
-                ));
-                continue;
-            }
-            let path = match directory.join(name) {
-                Ok(path) => path,
-                Err(error) => {
-                    issues.push(ListingIssue::new(
-                        name,
-                        ListingIssueKind::UnrepresentableName(NameIssue::Invalid(error)),
-                    ));
-                    continue;
-                }
-            };
-            // `DirEntry::metadata` ne suit pas les liens (lstat sous Unix,
-            // données de l'énumération sous Windows).
-            match item.metadata() {
-                Ok(metadata) => entries.push(self.entry_from_metadata(path, &metadata)),
-                Err(error) => {
-                    let kind = crate::errors::classify(&error);
-                    match item.file_type() {
-                        Ok(file_type) => {
-                            entries.push(FileEntry::new(
-                                path,
-                                kind_of(&file_type),
-                                FileMetadata::unknown(),
-                            ));
-                            issues.push(ListingIssue::new(
-                                name,
-                                ListingIssueKind::MetadataUnavailable(kind),
-                            ));
-                        }
-                        Err(_) => issues.push(ListingIssue::new(
-                            name,
-                            ListingIssueKind::EntryUnreadable(kind),
-                        )),
-                    }
-                }
-            }
-        }
-        Ok(ListPage::new(entries, issues, None))
+        self.pages.list(
+            self.anchor(operation)?,
+            directory,
+            page,
+            self.precision,
+            cancel,
+        )
     }
 
     fn stat(
@@ -398,12 +305,16 @@ impl StorageConnector for LocalConnector {
             return Err(cancelled(operation, path));
         }
         self.check_root(operation)?;
-        if path.is_root() {
-            let metadata = fs::metadata(&self.root).map_err(|e| io_error(e, operation, path))?;
-            return Ok(self.entry_from_metadata(ResourcePath::root(), &metadata));
-        }
-        let (_, metadata) = resolve(&self.root, path, operation)?;
-        Ok(self.entry_from_metadata(path.clone(), &metadata))
+        let root = self.anchor(operation)?;
+        let meta = if path.is_root() {
+            root.dir_metadata()
+                .map_err(|e| io_error(e, operation, path))?
+        } else {
+            crate::confined::parent(root, path, operation)?
+                .symlink_metadata(path.segments().last().unwrap_or(""))
+                .map_err(|e| io_error(e, operation, path))?
+        };
+        Ok(crate::confined::entry(path.clone(), &meta, self.precision))
     }
 
     fn open_read(
@@ -424,16 +335,37 @@ impl StorageConnector for LocalConnector {
                 "la racine n'est pas un fichier",
             ));
         }
-        let (os_path, metadata) = resolve(&self.root, path, operation)?;
-        if !metadata.file_type().is_file() {
+        let parent = crate::confined::parent(self.anchor(operation)?.as_ref(), path, operation)?;
+        let name = path.segments().last().unwrap_or("");
+        let meta = parent
+            .symlink_metadata(name)
+            .map_err(|e| io_error(e, operation, path))?;
+        if !meta.is_file() || meta.file_type().is_symlink() {
             return Err(local_error(
                 StorageErrorKind::Permanent,
                 operation,
                 path,
-                "pas un fichier ordinaire (les liens ne sont pas suivis)",
+                "not an ordinary file",
             ));
         }
-        let file = File::open(&os_path).map_err(|e| io_error(e, operation, path))?;
+        let mut options = OpenOptions::new();
+        options.read(true).follow(cap_fs_ext::FollowSymlinks::No);
+        let file = parent
+            .open_with(name, &options)
+            .map_err(|e| io_error(e, operation, path))?
+            .into_std();
+        if !file
+            .metadata()
+            .map_err(|e| io_error(e, operation, path))?
+            .is_file()
+        {
+            return Err(local_error(
+                StorageErrorKind::Permanent,
+                operation,
+                path,
+                "not an ordinary file",
+            ));
+        }
         Ok(Box::new(LocalReader {
             file,
             path: path.clone(),
@@ -448,7 +380,7 @@ impl StorageConnector for LocalConnector {
     ) -> Result<FileEntry, StorageError> {
         let operation = StorageOperation::CreateDirectory;
         self.before_mutation(StorageFeature::CreateDirectory, operation, path, cancel)?;
-        write::create_directory(&self.root, path, self.precision)
+        write::create_directory(self.anchor(operation)?, path, self.precision)
     }
 
     fn open_write(
@@ -459,7 +391,13 @@ impl StorageConnector for LocalConnector {
     ) -> Result<Box<dyn ContentWriter>, StorageError> {
         let operation = StorageOperation::Write;
         self.before_mutation(StorageFeature::Write, operation, path, cancel)?;
-        let writer = write::LocalWriter::open(&self.root, path, *options, self.precision, cancel)?;
+        let writer = write::LocalWriter::open(
+            self.anchor(operation)?,
+            path,
+            *options,
+            self.precision,
+            cancel,
+        )?;
         Ok(Box::new(writer))
     }
 
@@ -471,7 +409,7 @@ impl StorageConnector for LocalConnector {
     ) -> Result<(), StorageError> {
         let operation = StorageOperation::Delete;
         self.before_mutation(StorageFeature::Delete, operation, path, cancel)?;
-        write::delete(&self.root, path, expected)
+        write::delete(self.anchor(operation)?, path, expected)
     }
 }
 

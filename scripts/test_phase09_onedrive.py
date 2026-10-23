@@ -138,7 +138,7 @@ def main():
             env = os.environ.copy()
             env.update(SYNCENGINE_ONEDRIVE_URL=f"https://localhost:{server.server_port}/v1.0/",
                        SYNCENGINE_ONEDRIVE_CERT=str(cert))
-            result = subprocess.run(["cargo", "test", "-p", "connector-onedrive", "--features", "onedrive",
+            result = subprocess.run(["cargo", "test", "--locked", "-p", "connector-onedrive", "--features", "onedrive",
                 "isolated_https_contract", "--", "--ignored"], cwd=workspace, env=env, timeout=120)
             assert not Handler.failures, Handler.failures
             assert Handler.counts.get(("retry", "/v1.0/drives/retry/root")) == 3

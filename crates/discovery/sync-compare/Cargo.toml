@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-compare"
 description = "Comparaison SyncEngine : confronte deux inventaires et constate, chemin par chemin, présence, équivalence, différences ou incertitude (scan partiel, précision des dates, collisions de casse). Produit des faits, jamais de décisions ; aucune E/S."
 version.workspace = true

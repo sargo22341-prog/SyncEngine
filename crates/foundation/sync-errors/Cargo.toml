@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-errors"
 description = "Classification structurée des erreurs SyncEngine : classes et codes stables pour l'interface, gravité, contexte (profil, exécution, chemin), chaîne de causes et caviardage des secrets."
 version.workspace = true

@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "syncengine-architecture-tests"
 description = "Tests d'architecture du workspace : direction des dépendances internes, absence de dépendance d'interface dans les moteurs, description obligatoire des crates."
 version.workspace = true
@@ -13,6 +14,9 @@ doctest = false
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+glib = "0.18.5"
 
 [lints]
 workspace = true

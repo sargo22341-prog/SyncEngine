@@ -16,12 +16,29 @@ use crate::inventory::{DirectoryState, IncompleteReason, Inventory, ScanIssue, S
 const HASH_CHUNK: usize = 64 * 1024;
 
 /// Options d'un scan.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanOptions {
     hash: Option<HashAlgorithm>,
+    entry_limit: usize,
 }
 
+impl Default for ScanOptions {
+    fn default() -> Self {
+        Self {
+            hash: None,
+            entry_limit: 2_000_000,
+        }
+    }
+}
 impl ScanOptions {
+    /// Bounds all listed entries and anomalies, including excluded/duplicate
+    /// names. Exceeding this budget marks the scan incomplete (never absent).
+    #[must_use]
+    pub fn with_entry_limit(mut self, limit: std::num::NonZeroUsize) -> Self {
+        self.entry_limit = limit.get();
+        self
+    }
+
     /// Scan des métadonnées seules.
     #[must_use]
     pub fn new() -> Self {
@@ -145,13 +162,21 @@ pub fn scan(
         options.hash,
     );
 
+    let mut budget = options.entry_limit;
     let mut pending = vec![ResourcePath::root()];
     while let Some(directory) = pending.pop() {
         if cancel.is_cancelled() {
             pending.push(directory);
             return Err(cancelled(inventory, &pending));
         }
-        match list_directory(connector, filter, &mut inventory, &directory, cancel) {
+        match list_directory(
+            connector,
+            filter,
+            &mut inventory,
+            &directory,
+            cancel,
+            &mut budget,
+        ) {
             Ok(children) => {
                 // Ordre inverse : la pile dépile les enfants dans l'ordre trié.
                 pending.extend(children.into_iter().rev());
@@ -206,6 +231,7 @@ fn list_directory(
     inventory: &mut Inventory,
     directory: &ResourcePath,
     cancel: &CancellationToken,
+    budget: &mut usize,
 ) -> Result<Vec<ResourcePath>, StorageError> {
     let mut state = if connector.capabilities().listing_consistency
         == connector_api::ListingConsistency::Strong
@@ -223,6 +249,15 @@ fn list_directory(
     loop {
         let page = connector.list(directory, token.as_ref(), cancel)?;
         let (entries, issues, next) = page.into_parts();
+        let cost = entries.len().saturating_add(issues.len()).max(1);
+        *budget = budget.checked_sub(cost).ok_or_else(|| {
+            StorageError::new(
+                StorageErrorKind::Permanent,
+                connector_api::StorageOperation::List,
+            )
+            .with_path(directory.clone())
+            .with_message("inventory entry/page budget exceeded; incomplete scan")
+        })?;
         for issue in issues {
             if issue.omits_entry() {
                 state = DirectoryState::Incomplete(IncompleteReason::OmittedEntries);

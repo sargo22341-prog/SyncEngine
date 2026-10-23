@@ -158,6 +158,8 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
                 Err(e) => return Err(e.into()),
             };
             let token = CancellationToken::new();
+            let signal_token = token.clone();
+            ctrlc::set_handler(move || signal_token.cancel())?;
             let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let done_worker = done.clone();
             let worker_token = token.clone();

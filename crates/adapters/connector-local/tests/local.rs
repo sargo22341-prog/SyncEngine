@@ -224,7 +224,7 @@ fn cancellation_is_honoured() {
 }
 
 #[test]
-fn page_tokens_are_refused_for_unpaginated_listing() {
+fn forged_page_tokens_are_refused() {
     let dir = tree();
     let connector = connector(dir.path());
     let error = connector
@@ -234,7 +234,7 @@ fn page_tokens_are_refused_for_unpaginated_listing() {
             &CancellationToken::new(),
         )
         .unwrap_err();
-    assert_eq!(error.kind(), StorageErrorKind::NotSupported);
+    assert_eq!(error.kind(), StorageErrorKind::Conflict);
 }
 
 #[test]
@@ -477,4 +477,27 @@ fn access_denied_is_reported_as_such() {
     assert_eq!(error.kind(), StorageErrorKind::PermissionDenied);
     // Le reste de l'arborescence reste lisible.
     assert!(!list(&connector, "").entries().is_empty());
+}
+
+#[test]
+fn paginates_without_reusing_or_crossing_cursors() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = TempDir::new()?;
+    for n in 0..600 {
+        fs::write(temp.path().join(format!("entry-{n}")), b"fixture")?;
+    }
+    let first = connector(temp.path());
+    let other = connector(temp.path());
+    let cancel = CancellationToken::new();
+    let root = ResourcePath::root();
+    let a = first.list(&root, None, &cancel)?;
+    assert_eq!(a.entries().len(), 256);
+    let token = a.next_page().ok_or("cursor missing")?.clone();
+    assert!(other.list(&root, Some(&token), &cancel).is_err());
+    let b = first.list(&root, Some(&token), &cancel)?;
+    assert_eq!(b.entries().len(), 256);
+    assert!(first.list(&root, Some(&token), &cancel).is_err());
+    let c = first.list(&root, b.next_page(), &cancel)?;
+    assert_eq!(c.entries().len(), 88);
+    assert!(c.next_page().is_none());
+    Ok(())
 }

@@ -12,10 +12,23 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+NOTICES = ROOT / "target/third-party"
 
 
 def run(*args):
-    return subprocess.check_output(args, cwd=ROOT, text=True).strip()
+    return subprocess.check_output(args, cwd=ROOT, text=True, encoding="utf-8").strip()
+
+
+def source_inventory():
+    """Bind a dirty candidate to actual nonignored source bytes, not only HEAD."""
+    names = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=ROOT).decode("utf-8").split("\0")
+    entries = []
+    for name in sorted(set(names) - {""}):
+        path = ROOT / name
+        if path.is_symlink() or path.is_junction() or not path.resolve().is_relative_to(ROOT.resolve()):
+            raise ValueError("source provenance refuses linked/outside files")
+        entries.append({"path": name, "sha256": digest(path) if path.is_file() else None})
+    return entries
 
 
 def version():
@@ -35,12 +48,25 @@ def digest(path):
 def prepare():
     """Use the host triple, never silently package cross-target binaries."""
     version()
+    import third_party
+    if NOTICES.exists():
+        if NOTICES.is_symlink() or NOTICES.is_junction() or not NOTICES.resolve().is_relative_to(ROOT.resolve()):
+            raise ValueError("linked/outside generated notice directory refused")
+        if {p.name for p in NOTICES.iterdir()} - {"license-inventory.json", "THIRD_PARTY_NOTICES.txt"}:
+            raise ValueError("unexpected files in generated notice directory")
+        # Remove only the two known generated files, never a directory tree.
+        for name in ("license-inventory.json", "THIRD_PARTY_NOTICES.txt"):
+            (NOTICES / name).unlink(missing_ok=True)
+        NOTICES.rmdir()
+    result = third_party.generate(NOTICES)
+    # A private candidate includes the inventory even when legal review remains.
+    # No public release is produced by this tool; pending entries remain explicit.
     host = next(line.split(": ", 1)[1] for line in run("rustc", "-vV").splitlines()
                 if line.startswith("host: "))
     if host not in ("x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"):
         raise ValueError(f"unsupported release host: {host}")
     subprocess.run(["cargo", "build", "--release", "--locked", "--target", host,
-                    "-p", "syncengine-cli", "-p", "syncengine-agent"], cwd=ROOT, check=True)
+                    "-p", "syncengine-cli", "-p", "syncengine-agent", "--features", "network,onedrive"], cwd=ROOT, check=True)
     suffix = ".exe" if "windows" in host else ""
     output = ROOT / "apps/desktop/src-tauri/binaries"
     output.mkdir(exist_ok=True)
@@ -65,15 +91,26 @@ def collect(bundle, output, target, formats):
         if len(matches) != 1 or not matches[0].is_file() or matches[0].is_symlink():
             raise ValueError(f"expected exactly one {kind} artifact")
         files.extend(matches)
+    for name in ("license-inventory.json", "THIRD_PARTY_NOTICES.txt"):
+        notice = NOTICES / name
+        if not notice.is_file() or notice.is_symlink():
+            raise ValueError("release notices missing; run prepare")
+        files.append(notice)
+    license_file = ROOT / "LICENSE"
+    if not license_file.is_file() or license_file.is_symlink():
+        raise ValueError("product license missing")
+    files.append(license_file)
     names = [file.name for file in files]
     if len(names) != len(set(names)):
         raise ValueError("duplicate artifact names")
     # Read provenance before creating output, including lock hashes.
+    source = json.dumps(source_inventory(), indent=2, ensure_ascii=False) + "\n"
     manifest = {"schema_version": 1, "version": current, "target": target,
                 "commit": run("git", "rev-parse", "HEAD"),
                 "dirty": bool(run("git", "status", "--porcelain")),
                 "rustc": run("rustc", "--version"), "node": run("node", "--version"),
                 "build_host": platform.platform(), "signed": False,
+                "source_inventory_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
                 "locks": {name: digest(ROOT / name) for name in
                           ("Cargo.lock", "apps/desktop/package-lock.json")},
                 "artifacts": [{"name": p.name, "bytes": p.stat().st_size,
@@ -81,8 +118,9 @@ def collect(bundle, output, target, formats):
     output.mkdir(parents=True)
     for file in files:
         shutil.copy2(file, output / file.name)
+    (output / "source-inventory.json").write_text(source, encoding="utf-8", newline="\n")
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    included = [*names, "manifest.json"]
+    included = [*names, "manifest.json", "source-inventory.json"]
     (output / "SHA256SUMS").write_text("".join(
         f"{digest(output / name)}  {name}\n" for name in sorted(included)), encoding="utf-8")
 

@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-orchestrator"
 description = "Local application facade for profiles, exact preview execution and desktop jobs"
 version.workspace = true
@@ -6,7 +7,20 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+sftp = ["connector-registry/sftp"]
+webdav = ["connector-registry/webdav"]
+ftp = ["connector-registry/ftp"]
+ftps = ["connector-registry/ftps"]
+smb = ["connector-registry/smb"]
+onedrive = ["connector-registry/onedrive"]
+network = ["sftp", "webdav", "ftp", "ftps", "smb"]
+
 [dependencies]
+connector-registry = { path = "../../adapters/connector-registry" }
+connector-api.workspace = true
+sync-credentials.workspace = true
 sync-scheduler.workspace = true
 sync-profiles.workspace = true
 sync-core.workspace = true

@@ -5,6 +5,21 @@
 use connector_api::{StorageConnector, StorageError};
 use std::sync::Arc;
 
+#[cfg(feature = "sftp")]
+pub use connector_sftp::SftpOptions;
+#[cfg(feature = "webdav")]
+pub use connector_webdav::WebDavOptions;
+/// FTP connection types, available only when compiled.
+#[cfg(feature = "ftp")]
+pub mod ftp {
+    pub use connector_ftp::{Credentials, Options};
+}
+/// FTPS connection types, available only when compiled.
+#[cfg(feature = "ftps")]
+pub mod ftps {
+    pub use connector_ftps::{Credentials, Options};
+}
+
 /// Factory cloud additive, sans étendre les enums exhaustifs réseau existants.
 /// Absente à la compilation sans la feature `onedrive`.
 #[cfg(feature = "onedrive")]

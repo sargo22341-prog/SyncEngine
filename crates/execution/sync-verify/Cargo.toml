@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-verify"
 description = "Contrôles d'intégrité SyncEngine : compare une observation enregistrée (nature, taille, date à la précision déclarée, empreinte) à l'état actuel, contrôle un transfert et relit un contenu pour en vérifier l'empreinte BLAKE3. Constate des écarts, ne décide et ne modifie rien."
 version.workspace = true

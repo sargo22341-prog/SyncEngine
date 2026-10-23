@@ -157,3 +157,35 @@ fn empty_file_is_copied() {
     staged.commit(CommitMode::CreateNew).unwrap();
     assert_eq!(destination.content("vide").unwrap(), b"");
 }
+
+#[test]
+fn staging_is_observed_before_content_and_observer_failure_aborts() {
+    let source = source();
+    let destination = MemoryConnector::new("destination").writable();
+    let at = path("petit.txt");
+    let request = CopyRequest::new(&source, &at, &destination, &at);
+    let mut observed = false;
+    let error = sync_copy::stage_copy_observed(
+        &request,
+        &mut |_| {},
+        &mut |staging| {
+            let staging = staging.ok_or_else(|| {
+                connector_api::StorageError::new(
+                    StorageErrorKind::Permanent,
+                    StorageOperation::Write,
+                )
+            })?;
+            assert_eq!(destination.content(staging.as_str()), Some(Vec::new()));
+            observed = true;
+            Err(connector_api::StorageError::new(
+                StorageErrorKind::PermissionDenied,
+                StorageOperation::Write,
+            ))
+        },
+        &CancellationToken::new(),
+    )
+    .unwrap_err();
+    assert!(observed);
+    assert_eq!(error.kind(), StorageErrorKind::PermissionDenied);
+    assert!(destination.paths().is_empty());
+}

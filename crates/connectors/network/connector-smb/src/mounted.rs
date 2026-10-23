@@ -227,7 +227,18 @@ mod tests {
         writer.commit(connector_api::CommitMode::CreateNew)?;
         assert_eq!(connector.stat(&path, &cancel)?.metadata().size(), Some(4));
         connector.delete(&path, EntryKind::File, &cancel)?;
+        // Live directory handles pin Windows roots. Model a disconnected share
+        // between clients, then verify the guard refuses an unavailable root.
+        assert!(std::fs::remove_dir(&root).is_err());
+        drop(connector);
         std::fs::remove_dir(&root)?;
+        let local = LocalConnector::new(&root, LocalOptions::new().with_mutations())?;
+        let connector = SmbConnector {
+            caps: local.capabilities().clone(),
+            local,
+            root: root.clone(),
+            id: ConnectorId::new("smb")?,
+        };
         assert_eq!(
             connector
                 .list(&ResourcePath::root(), None, &cancel)

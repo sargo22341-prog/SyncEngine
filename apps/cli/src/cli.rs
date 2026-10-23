@@ -519,7 +519,7 @@ pub(crate) fn version_text() -> String {
 /// Texte d'aide.
 pub(crate) fn help_text() -> String {
     format!(
-        "syncengine {} — phase 04 : inventaire, comparaison, plans et exécution locale sûre\n\
+        "syncengine {} — inventaire, profils, simulation et exécution protégée\n\
          \n\
          UTILISATION :\n\
          \x20   syncengine scan <DOSSIER> [OPTIONS]\n\
@@ -528,6 +528,10 @@ pub(crate) fn help_text() -> String {
          \x20   syncengine execute <SOURCE> <DESTINATION> --confirm --journal <FICHIER>\n\
          \x20                      [OPTIONS] [OPTIONS DE PLAN] [OPTIONS D'EXÉCUTION]\n\
          \x20   syncengine journal <FICHIER>\n\
+         \x20   syncengine profile list|providers <ETAT>\n\
+         \x20   syncengine profile save <ETAT> <PROFIL.json>\n\
+         \x20   syncengine profile preview <ETAT> <ID>\n\
+         \x20   syncengine profile run <ETAT> <ID> --confirm [--confirm-delete]\n\
          \x20   syncengine help | version\n\
          \n\
          COMMANDES :\n\

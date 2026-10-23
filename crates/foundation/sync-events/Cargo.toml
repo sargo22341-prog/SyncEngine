@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-events"
 description = "Événements informatifs SyncEngine (cycle de vie, progression agrégée, diagnostics) et diffusion bornée non bloquante. Les événements ne sont jamais une source de vérité."
 version.workspace = true

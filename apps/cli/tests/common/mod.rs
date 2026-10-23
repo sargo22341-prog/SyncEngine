@@ -10,7 +10,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    // Each synthetic invocation has its own account state, avoiding unrelated
+    // test jobs contending with each other or a real application instance.
+    let account = tempfile::tempdir().unwrap();
     Command::new(env!("CARGO_BIN_EXE_syncengine"))
+        .env("LOCALAPPDATA", account.path())
+        .env("XDG_STATE_HOME", account.path())
         .args(args)
         .output()
         .unwrap()

@@ -19,6 +19,8 @@ fn fixture() -> Result<(tempfile::TempDir, Profile), Error> {
         destination: temp.path().join("destination"),
         mode: serde_json::from_str("\"backup\"")?,
         filter: Default::default(),
+        remote_source: None,
+        remote_destination: None,
         allow_delete: false,
     };
     Application::open_with_lock_root(

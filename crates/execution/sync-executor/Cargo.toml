@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-executor"
 description = "Exécuteur de plans SyncEngine : applique un ExecutionPlan validé en revérifiant chaque précondition juste avant chaque mutation, coordonne copie, vérification, conservation des versions et suppressions non récursives, consigne un journal durable, diffuse une progression agrégée et s'arrête proprement sur annulation, disque plein ou déconnexion."
 version.workspace = true

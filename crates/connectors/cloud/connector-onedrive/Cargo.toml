@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "connector-onedrive"
 description = "Source Microsoft Graph OneDrive en lecture seule, sans stratégie de synchronisation"
 version.workspace = true

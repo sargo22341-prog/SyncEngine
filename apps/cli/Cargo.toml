@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "syncengine-cli"
 description = "Interface en ligne de commande de SyncEngine (phase 04 : inventaire, comparaison, prévisualisation de plans de sauvegarde ou de miroir sur dossiers locaux, puis exécution réelle confirmée et journalisée de ces plans ; diagnostic des journaux)."
 version.workspace = true
@@ -10,7 +11,19 @@ publish.workspace = true
 name = "syncengine"
 path = "src/main.rs"
 
+[features]
+default = []
+sftp = ["sync-orchestrator/sftp"]
+webdav = ["sync-orchestrator/webdav"]
+ftp = ["sync-orchestrator/ftp"]
+ftps = ["sync-orchestrator/ftps"]
+smb = ["sync-orchestrator/smb"]
+onedrive = ["sync-orchestrator/onedrive"]
+network = ["sync-orchestrator/network"]
+
 [dependencies]
+sync-orchestrator.workspace = true
+ctrlc = { version = "3.5.2", features = ["termination"] }
 connector-local.workspace = true
 serde_json.workspace = true
 sync-backup.workspace = true

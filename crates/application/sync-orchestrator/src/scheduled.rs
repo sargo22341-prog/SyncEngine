@@ -1,53 +1,22 @@
 //! Non-interactive authorization and conservative cross-state exclusion.
 use super::{AppError, Application, error, io};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use sync_core::CancellationToken;
 use sync_profiles::Profile;
 use sync_scheduler::{Completion, JobStatus, Schedule, ScheduledApplication};
 
 pub(super) fn default_lock_root() -> Result<PathBuf, AppError> {
-    let root = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-    } else {
-        std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/state")))
-    }
-    .ok_or_else(|| {
-        error(
-            "unavailable",
-            "répertoire de verrous utilisateur indisponible",
-        )
-    })?;
-    if !root.is_absolute() {
-        return Err(error(
-            "invalid_input",
-            "répertoire de verrous absolu requis",
-        ));
-    }
-    Ok(root.join("SyncEngine/job-locks"))
+    sync_executor::default_lock_root().map_err(io)
 }
 pub(super) fn job_lock(root: &Path) -> Result<File, AppError> {
-    // Never truncate/unlink: deleting a locked file would permit a second owner.
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.join("execution.lock"))
-        .map_err(io)?;
-    match file.try_lock() {
-        Ok(()) => (),
-        Err(std::fs::TryLockError::WouldBlock) => {
-            return Err(error(
-                "busy",
-                "une autre exécution utilise les destinations",
-            ));
+    sync_executor::execution_lock(root).map_err(|cause| {
+        if cause.kind() == std::io::ErrorKind::WouldBlock {
+            error("busy", cause)
+        } else {
+            io(cause)
         }
-        Err(std::fs::TryLockError::Error(cause)) => return Err(io(cause)),
-    }
-    Ok(file)
+    })
 }
 impl Application {
     /// Acknowledges stopped executions AFTER manual inspection of journals and
@@ -114,7 +83,7 @@ impl Application {
                     "intention inachevée : diagnostic requis",
                 ));
             }
-            let view = self.preview_locked(approved.id.clone(), Some(cancel))?;
+            let view = self.preview_locked(approved.id.clone(), Some(cancel), true)?;
             let id = view["plan"]["id"]
                 .as_str()
                 .ok_or_else(|| error("internal", "identifiant de plan absent"))?

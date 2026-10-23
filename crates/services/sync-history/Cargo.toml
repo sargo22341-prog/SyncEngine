@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "sync-history"
 description = "Transactional SQLite baseline, tombstones and bounded execution history."
 version.workspace = true
