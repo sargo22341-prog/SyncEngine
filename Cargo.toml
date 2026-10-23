@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
+    "apps/desktop/src-tauri",
+    "crates/services/sync-profiles",
+    "crates/application/sync-orchestrator",
     "crates/strategy/sync-bidirectional",
     "crates/services/sync-history",
     "crates/application/sync-session",
@@ -33,6 +36,8 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
+sync-profiles = { path = "crates/services/sync-profiles" }
+sync-orchestrator = { path = "crates/application/sync-orchestrator" }
 sync-bidirectional = { path = "crates/strategy/sync-bidirectional" }
 sync-history = { path = "crates/services/sync-history" }
 sync-session = { path = "crates/application/sync-session" }

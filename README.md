@@ -1,6 +1,12 @@
 # SyncEngine — Kit de contexte pour sessions IA
 
-SyncEngine fournit une CLI Rust pour inventorier, comparer, prévisualiser et exécuter des sauvegardes ou miroirs locaux. L'interface graphique, l'agent et les connecteurs réseau/cloud ne sont pas encore implémentés.
+SyncEngine fournit une CLI Rust et une interface Tauri 2/TypeScript pour les
+sauvegardes, miroirs et synchronisations bidirectionnelles locales. L’agent
+et les connecteurs réseau/cloud restent à implémenter.
+
+Phase 06 : profils persistants, assistant, simulation, exécution confirmée,
+annulation, progression agrégée, historique et paramètres d’affichage.
+Construction et exemple : [README desktop](apps/desktop/README.md).
 
 La phase 05 ajoute la synchronisation bidirectionnelle locale : baseline
 SQLite, historique, tombstones et conflits conservés en place. Entrée réelle :

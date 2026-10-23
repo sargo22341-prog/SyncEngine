@@ -1,0 +1,140 @@
+import { openProfileWizard } from "./wizard";
+import { api } from "./api";
+import type { Profile, Preview, Run, Operation, Observation } from "./api";
+import { escape as e, actions, modes, errorMessage, timestamp, runStatus } from "./presentation";
+import "./style.css";
+
+const root = document.querySelector<HTMLDivElement>("#app")!;
+root.innerHTML = `<header><div class="brand">S<span>SyncEngine</span></div><span class="tag">LOCAL · 0.1.0</span></header>
+<div class="layout"><nav aria-label="Navigation principale"><button data-view="profiles" class="selected">Profils</button><button data-view="differences">Simulation</button><button data-view="history">Historique</button><button data-view="settings">Paramètres</button><p>Vos fichiers.<br>Des décisions visibles.</p><small>Planification et agent :<br>phase ultérieure.</small></nav>
+<main><div id="error" role="alert" hidden></div><div id="notice" role="status" aria-live="polite"></div><section id="content"></section></main></div>
+<footer><div id="progress" role="status" aria-live="polite">Prêt · Simulation avant toute exécution</div><button id="cancel" disabled>Annuler la tâche</button></footer><dialog id="wizard"></dialog><dialog id="confirmation"></dialog>`;
+const content = document.querySelector<HTMLElement>("#content")!;
+const errorBox = document.querySelector<HTMLElement>("#error")!;
+const notice = document.querySelector<HTMLElement>("#notice")!;
+const wizard = document.querySelector<HTMLDialogElement>("#wizard")!;
+const confirmation = document.querySelector<HTMLDialogElement>("#confirmation")!;
+let profiles: Profile[] = [], selected = "", view = "profiles", busy = false;
+let preview: Preview | undefined;
+let search = "", actionFilter = "", page = 0;
+let histories: Record<string, Run[]> = {};
+function fail(error: unknown) { errorBox.textContent = errorMessage(error); errorBox.hidden = false; }
+function clearError() { errorBox.hidden = true; }
+function profile() { return profiles.find(p => p.id === selected); }
+function selectView(next: string) {
+  view = next;
+  document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach(b => b.classList.toggle("selected", b.dataset.view === next));
+  render();
+}
+async function refresh() {
+  profiles = await api.profiles();
+  if (!profiles.some(p => p.id === selected)) selected = profiles[0]?.id ?? "";
+  // Fetch actual persisted last results; errors are explicit, never invented.
+  const values = await Promise.all(profiles.map(async p => [p.id, await api.history(p.id)] as const));
+  histories = Object.fromEntries(values);
+}
+async function task<T>(label: string, fn: () => Promise<T>): Promise<T | undefined> {
+  if (busy) return;
+  busy = true; clearError(); notice.textContent = label; render();
+  try { return await fn(); } catch (error) { fail(error); return undefined; }
+  finally { busy = false; notice.textContent = ""; render(); }
+}
+function render() {
+  const p = profile();
+  if (view === "profiles") {
+    content.innerHTML = `<div class="heading"><div><p class="eyebrow">ESPACE DE TRAVAIL</p><h1>Vos profils</h1><p>Préparez, inspectez, puis exécutez.</p></div><button id="new" class="primary" ${busy ? "disabled" : ""}>+ Nouveau profil</button></div>
+    <div class="toolbar"><button id="edit" ${!p || busy ? "disabled" : ""}>Modifier</button><button id="simulate" ${!p || busy ? "disabled" : ""}>Simuler</button><button id="remove" ${!p || busy ? "disabled" : ""}>Retirer le profil</button><label class="search">Rechercher <input id="profiles-search" type="search" placeholder="Nom ou groupe"></label></div>
+    <div class="table-wrap"><table><caption>Profils locaux · sélectionnez un profil</caption><thead><tr><th>Profil / groupe</th><th>Mode</th><th>Dernier lancement</th><th>Résultat</th></tr></thead><tbody>${profiles.map(row => {
+      const last = histories[row.id]?.[0];
+      return `<tr data-profile="${e(row.id)}" ${selected === row.id ? 'class="current"' : ""}><td><button class="profile-select" data-id="${e(row.id)}" aria-pressed="${selected === row.id}">${e(row.name)}</button><small>${e(row.group || "Sans groupe")}</small></td><td>${e(modes[row.mode])}</td><td>${last ? e(timestamp(JSON.parse(last.started))) : "Jamais"}</td><td>${last ? e(runStatus(last)) : "Non exécuté"}</td></tr>`;
+    }).join("")}</tbody></table>${!profiles.length ? '<div class="empty"><h2>Aucun profil</h2><p>Créez un profil avec deux dossiers locaux existants pour commencer.</p></div>' : ""}</div>
+    ${p ? `<aside class="endpoints"><div><small>SOURCE · DOSSIER LOCAL</small><code>${e(p.source)}</code></div><span>→</span><div><small>DESTINATION · DOSSIER LOCAL</small><code>${e(p.destination)}</code></div></aside>` : ""}`;
+    on("new", () => editProfile()); on("edit", () => p && editProfile(p)); on("simulate", () => void simulate());
+    on("remove", () => p && ask(`Retirer « ${p.name} » de la liste ?`, "Les fichiers, versions et historiques seront conservés.", false, () => task("Suppression du profil…", async () => { await api.remove(p.id); preview = undefined; await refresh(); })));
+    content.querySelectorAll<HTMLButtonElement>("[data-id]").forEach(b => { b.disabled = busy; b.onclick = () => { if (busy) return; selected = b.dataset.id!; preview = undefined; render(); }; });
+    document.querySelector<HTMLInputElement>("#profiles-search")!.oninput = event => {
+      const query = (event.target as HTMLInputElement).value.toLocaleLowerCase();
+      content.querySelectorAll<HTMLTableRowElement>("[data-profile]").forEach(row => row.hidden = !row.textContent!.toLocaleLowerCase().includes(query));
+    };
+  } else if (view === "differences") renderDifferences();
+  else if (view === "history") {
+    content.innerHTML = `<h1>Historique</h1><label>Profil <select id="history-profile">${profiles.map(p => `<option value="${e(p.id)}" ${p.id === selected ? "selected" : ""}>${e(p.name)}</option>`).join("")}</select></label><button id="reload-history" ${busy ? "disabled" : ""}>Actualiser</button><p>Les états partiels et erreurs restent visibles. Un état en cours après redémarrage exige un diagnostic.</p>${(histories[selected] ?? []).map(run => `<details><summary>${e(timestamp(JSON.parse(run.started)))} · ${e(runStatus(run))}</summary><p>Exécution : ${e(run.execution)}</p><pre>${e(JSON.stringify(run.report ?? { state: run.state }, null, 2))}</pre><details><summary>Plan exact exécuté</summary><pre>${e(JSON.stringify(run.plan, null, 2))}</pre></details></details>`).join("") || '<div class="empty">Aucune exécution enregistrée pour ce profil.</div>'}`;
+    document.querySelector<HTMLSelectElement>("#history-profile")!.disabled = busy;
+    document.querySelector<HTMLSelectElement>("#history-profile")!.onchange = event => { if (busy) return; selected = (event.target as HTMLSelectElement).value; preview = undefined; render(); };
+    on("reload-history", () => void task("Lecture de l’historique…", refresh));
+  } else {
+    content.innerHTML = `<h1>Paramètres</h1><section class="card"><h2>Affichage</h2><label class="check"><input id="compact" type="checkbox" ${document.body.classList.contains("compact") ? "checked" : ""}> Tableaux compacts</label></section><section class="card"><h2>Garanties d’exécution</h2><p>Empreintes BLAKE3 et vérification du contenu. Conservation des versions avant remplacement ou suppression.</p><p>Suppressions désactivées à la création. Si autorisées : source vide refusée et plafond de 50 % conservé. Confirmation distincte à chaque exécution.</p><p>Un seul job desktop à la fois. Les autres outils et répertoires d’état doivent être utilisés séparément.</p><p>Fermer pendant une tâche demande son annulation ; la fenêtre reste ouverte jusqu’à la fin. Fermez-la ensuite.</p></section><section class="card"><h2>Capacités disponibles</h2><p>Dossiers locaux · sauvegarde · miroir · bidirectionnel.</p><p>Pas de planification, pause, restauration guidée ou connecteur distant dans cette phase.</p></section>`;
+    document.querySelector<HTMLInputElement>("#compact")!.onchange = event => {
+      const compact = (event.target as HTMLInputElement).checked;
+      void task("Enregistrement…", async () => { await api.savePreferences(compact); document.body.classList.toggle("compact", compact); });
+    };
+  }
+}
+function on(id: string, fn: () => void) { const button = document.getElementById(id); if (button) button.onclick = fn; }
+function observation(value?: Observation) {
+  return value ? `${e(value.kind)} · ${e(value.metadata.size ?? "?")} o<br><small>${e(timestamp(value.metadata.modified))}</small>` : "Absence observée / non observé (voir motif)";
+}
+function renderDifferences() {
+  const p = profile();
+  if (!preview) {
+    content.innerHTML = `<h1>Simulation</h1><div class="empty"><h2>Inspectez avant d’écrire</h2><p>${p ? e(p.name) : "Sélectionnez ou créez un profil."}</p><button id="simulate" class="primary" ${!p || busy ? "disabled" : ""}>Lancer une simulation</button></div>`;
+    on("simulate", () => void simulate()); return;
+  }
+  const { plan, summary } = preview;
+  content.innerHTML = `<div class="heading"><div><p class="eyebrow">SIMULATION · AUCUN FICHIER MODIFIÉ</p><h1>Différences</h1><p>${e(p?.name)} · ${e(modes[plan.mode])}</p></div><button id="rescan" ${busy ? "disabled" : ""}>Recalculer</button></div>
+  <aside class="endpoints"><div><small>SOURCE LOCALE</small><code>${e(plan.source.location)}</code></div><span>⇄</span><div><small>DESTINATION LOCALE</small><code>${e(plan.destination.location)}</code></div></aside>
+  <div class="metrics">${["copy", "replace", "delete", "conflict", "skip"].map(action => `<div class="metric ${action}"><strong>${e(summary[action])}</strong><span>${e(actions[action])}</span></div>`).join("")}</div>
+  ${!plan.source.complete || !plan.destination.complete ? '<p class="warning">Inventaire incomplet : les chemins incertains sont ignorés et les suppressions refusées.</p>' : ""}
+  ${summary.deletions_refused ? `<p class="warning">${e(summary.deletions_refused)} suppression(s) refusée(s) par les garde-fous.</p>` : ""}
+  <p>Conflits préservés en place. ${e(summary.bytes)} octets à transférer. Les observations source/destination de chaque ligne représentent l’émetteur et le receveur ; la cible physique est indiquée.</p>
+  <div class="toolbar"><label>Rechercher <input id="search" type="search" value="${e(search)}"></label><label>Action <select id="action"><option value="">Toutes</option>${Object.entries(actions).map(([key,label]) => `<option value="${key}" ${key === actionFilter ? "selected" : ""}>${label}</option>`).join("")}</select></label><button id="apply" class="danger" ${busy ? "disabled" : ""}>Exécuter ce plan…</button></div>
+  <div id="operations"></div>`;
+  renderOperations();
+  document.querySelector<HTMLInputElement>("#search")!.oninput = event => { search = (event.target as HTMLInputElement).value; page = 0; renderOperations(); };
+  document.querySelector<HTMLSelectElement>("#action")!.onchange = event => { actionFilter = (event.target as HTMLSelectElement).value; page = 0; renderOperations(); };
+  on("rescan", () => void simulate());
+  on("apply", () => ask(`Exécuter « ${p?.name} » ?`, `${summary.copy} copie(s), ${summary.replace} remplacement(s), ${summary.delete} suppression(s). Source : ${plan.source.location}. Destination : ${plan.destination.location}. Les préconditions seront revérifiées ; un échec peut laisser un état partiel.`, summary.delete > 0, async confirmed => {
+    const exact = preview; preview = undefined;
+    await task("Exécution réelle…", async () => {
+      if (!exact) throw new Error("Nouvelle simulation requise");
+      const result = await api.execute(exact.plan.profile, exact.plan.id, confirmed);
+      await refresh(); selectView("history");
+      // The full result is preserved in history, including failure/warning status.
+      notice.textContent = JSON.stringify(result);
+    });
+  }));
+}
+function renderOperations() {
+  const operations = preview!.plan.operations.filter(op => (!actionFilter || op.action === actionFilter) && op.path.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  const rows = operations.slice(page * 100, (page + 1) * 100);
+  document.getElementById("operations")!.innerHTML = `<div class="table-wrap"><table><caption>${operations.length} ligne(s) · page ${page + 1} · 100 lignes maximum par page</caption><thead><tr><th>Chemin / motif</th><th>Émetteur observé</th><th>Receveur observé</th><th>Action / cible</th></tr></thead><tbody>${rows.map((op: Operation) => `<tr><td><details><summary>${e(op.path)}</summary><pre>${e(JSON.stringify(op, null, 2))}</pre></details><small>${e(op.reason.code)}</small></td><td>${observation(op.source)}</td><td>${observation(op.destination)}</td><td><span class="badge ${e(op.action)}">${e(actions[op.action] ?? op.action)}</span><small>${op.target === "source" ? "Source physique" : "Destination physique"}</small></td></tr>`).join("")}</tbody></table>${!rows.length ? '<p class="empty">Aucune différence pour ce filtre.</p>' : ""}</div><div class="pager"><button id="previous" ${page === 0 ? "disabled" : ""}>Précédent</button><button id="next" ${(page + 1) * 100 >= operations.length ? "disabled" : ""}>Suivant</button></div>`;
+  on("previous", () => { page--; renderOperations(); }); on("next", () => { page++; renderOperations(); });
+}
+async function simulate() {
+  if (!selected || busy) return;
+  preview = undefined; search = ""; actionFilter = ""; page = 0;
+  await task("Simulation : lecture et empreintes…", async () => { preview = await api.preview(selected); selectView("differences"); });
+}
+function ask(title: string, message: string, deletion: boolean, accept: (deletion: boolean) => unknown) {
+  confirmation.innerHTML = `<form method="dialog"><h2>${e(title)}</h2><p>${e(message)}</p>${deletion ? '<label class="check warning"><input id="confirm-delete" type="checkbox" required> Je confirme les suppressions affichées dans ce plan.</label>' : ""}<div class="toolbar"><button value="cancel" formnovalidate>Annuler</button><button value="accept" class="danger">Confirmer</button></div></form>`;
+  confirmation.onclose = () => { if (confirmation.returnValue === "accept") accept(deletion); };
+  confirmation.showModal();
+}
+function editProfile(existing?: Profile) { openProfileWizard(wizard, existing, async () => { preview = undefined; await refresh(); selectView("profiles"); }); }
+document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach(button => button.onclick = () => selectView(button.dataset.view!));
+on("cancel", () => { void api.cancel().catch(fail); notice.textContent = "Annulation demandée ; attente de la fin de l’opération…"; });
+document.addEventListener("keydown", event => {
+  if (event.altKey && event.key.toLowerCase() === "n" && !busy && !wizard.open && !confirmation.open) { event.preventDefault(); editProfile(); }
+  if (event.altKey && event.key.toLowerCase() === "s" && !wizard.open && !confirmation.open) { event.preventDefault(); void simulate(); }
+});
+async function poll() {
+  try {
+    const s = await api.snapshot();
+    document.getElementById("progress")!.textContent = s.active ? `${s.phase === "scanning" ? "Simulation · lecture et empreintes" : "EXÉCUTION RÉELLE"} · ${s.entries_done} opérations observées · ${s.bytes_done} octets validés${s.profile ? ` · ${s.profile}` : ""}` : "Prêt · Alt+N : nouveau profil · Alt+S : simuler";
+    (document.getElementById("cancel") as HTMLButtonElement).disabled = !s.active;
+  } catch (error) { fail(error); }
+  window.setTimeout(() => void poll(), 500);
+}
+render();
+void task("Chargement des profils…", async () => { const prefs = await api.preferences(); document.body.classList.toggle("compact", prefs.compact); await refresh(); });
+void poll();

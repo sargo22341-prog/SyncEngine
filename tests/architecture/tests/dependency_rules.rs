@@ -11,6 +11,32 @@ use serde_json::Value;
 /// Tout nouveau paquet doit être ajouté ici : un paquet absent fait échouer
 /// le test, ce qui force à décider explicitement de sa place dans le graphe.
 const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
+    ("sync-profiles", &["sync-core", "sync-plan", "sync-filter"]),
+    (
+        "sync-orchestrator",
+        &[
+            "sync-profiles",
+            "sync-core",
+            "sync-errors",
+            "sync-plan",
+            "sync-filter",
+            "sync-scanner",
+            "sync-compare",
+            "sync-decisions",
+            "sync-backup",
+            "sync-mirror",
+            "sync-executor",
+            "sync-history",
+            "sync-session",
+            "sync-journal",
+            "sync-versioning",
+            "connector-local",
+        ],
+    ),
+    (
+        "syncengine-desktop",
+        &["sync-orchestrator", "sync-profiles", "sync-core"],
+    ),
     (
         "sync-bidirectional",
         &[
@@ -232,7 +258,7 @@ const DECIDING: &[&str] = &[
 ];
 
 /// Paquets de présentation : seuls autorisés à dépendre de Tauri.
-const PRESENTATION: &[&str] = &[];
+const PRESENTATION: &[&str] = &["syncengine-desktop"];
 
 struct Package {
     name: String,

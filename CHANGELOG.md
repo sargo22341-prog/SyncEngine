@@ -2,6 +2,17 @@
 
 ## [0.1.0] — non publié
 
+### Ajouté (phase 06 — interface locale)
+- Desktop Tauri 2/TypeScript : profils/groupes, assistant, différences filtrées
+  et paginées, simulation distincte des écritures, confirmations destructives,
+  progression agrégée, annulation, historique détaillé et affichage compact.
+- `sync-profiles` : configuration SQLite v1 validée et préférences.
+- `sync-orchestrator` : façade des trois modes locaux, consommation unique du
+  plan prévisualisé, versions systématiques, intentions/résultats durables,
+  exclusion des jobs desktop concurrents et verrou du répertoire d’état.
+- CI préparée pour construire le frontend avant les contrôles Rust et installer
+  les prérequis Tauri Ubuntu. Aucun agent ni connecteur distant ajouté.
+
 ### Ajouté (phase 05 — synchronisation bidirectionnelle)
 - `sync-bidirectional` : décisions par baseline et BLAKE3 dans les deux sens ;
   conflits préservés en place, tombstones sans expiration, aucune suppression

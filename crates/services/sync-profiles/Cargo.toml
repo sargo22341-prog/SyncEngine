@@ -1,0 +1,22 @@
+[package]
+name = "sync-profiles"
+description = "Validated local profiles and desktop preferences in versioned SQLite storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+sync-core.workspace = true
+sync-plan.workspace = true
+sync-filter.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
