@@ -207,7 +207,17 @@ fn list_directory(
     directory: &ResourcePath,
     cancel: &CancellationToken,
 ) -> Result<Vec<ResourcePath>, StorageError> {
-    let mut state = DirectoryState::Complete;
+    let mut state = if connector.capabilities().listing_consistency
+        == connector_api::ListingConsistency::Strong
+    {
+        DirectoryState::Complete
+    } else {
+        inventory.issues.push(ScanIssue::new(
+            directory.clone(),
+            ScanIssueKind::UnreliableConsistency,
+        ));
+        DirectoryState::Incomplete(IncompleteReason::UnreliableConsistency)
+    };
     let mut children = Vec::new();
     let mut token = None;
     loop {

@@ -10,6 +10,8 @@ use sync_core::{HashAlgorithm, TimestampPrecision};
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum StorageFeature {
+    /// Conservation explicite de la date fournie dans WriteOptions.modified.
+    SetModifiedTime,
     /// Lister le contenu d'un répertoire ou préfixe.
     List,
     /// Lire les métadonnées d'une entrée.

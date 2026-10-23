@@ -30,6 +30,8 @@ impl DirectoryState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IncompleteReason {
+    /// Le stockage ne garantit pas qu'un listing reflète les écritures terminées.
+    UnreliableConsistency,
     /// Le listing a échoué (éventuellement après quelques pages).
     ListFailed(StorageErrorKind),
     /// Des entrées existent mais n'ont pas pu être représentées ou lues.
@@ -45,6 +47,8 @@ pub enum IncompleteReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ScanIssueKind {
+    /// Cohérence inconnue ou éventuelle : le listing ne prouve aucune absence.
+    UnreliableConsistency,
     /// Le listing du répertoire a échoué.
     ListFailed(StorageErrorKind),
     /// Anomalie d'entrée signalée par le connecteur.
@@ -95,6 +99,9 @@ impl fmt::Display for ScanIssue {
             self.path.as_str()
         };
         match &self.kind {
+            ScanIssueKind::UnreliableConsistency => {
+                write!(f, "{path} : cohérence du listing non garantie")
+            }
             ScanIssueKind::ListFailed(kind) => write!(f, "{path} : listing impossible ({kind:?})"),
             ScanIssueKind::Listing(issue) => write!(f, "{path} : {issue}"),
             ScanIssueKind::UnexpectedEntry(other) => {

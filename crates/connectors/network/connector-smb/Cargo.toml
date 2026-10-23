@@ -1,0 +1,18 @@
+[package]
+name = "connector-smb"
+description = "Accès SMB via partage UNC ou montage CIFS géré par le système"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+[features]
+default = []
+smb = ["dep:connector-local"]
+[dependencies]
+connector-api.workspace = true
+sync-core.workspace = true
+connector-local = { workspace = true, optional = true }
+[dev-dependencies]
+tempfile.workspace = true
+[lints]
+workspace = true

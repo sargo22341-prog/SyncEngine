@@ -1,6 +1,15 @@
 [workspace]
 resolver = "3"
+exclude = ["vendor/suppaftp"]
 members = [
+    "crates/adapters/connector-registry",
+    "crates/connectors/network/connector-ftp-transport",
+    "crates/connectors/network/connector-ftp",
+    "crates/connectors/network/connector-ftps",
+    "crates/connectors/network/connector-smb",
+    "crates/adapters/connector-staging",
+    "crates/connectors/network/connector-sftp",
+    "crates/connectors/network/connector-webdav",
     "crates/services/sync-scheduler",
     "crates/adapters/platform-api",
     "crates/adapters/platform-windows",
@@ -42,6 +51,13 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
+connector-ftp-transport = { path = "crates/connectors/network/connector-ftp-transport" }
+connector-staging = { path = "crates/adapters/connector-staging" }
+suppaftp = { version = "12.1.1", default-features = false, features = ["native-tls"] }
+ssh2 = "0.9.6"
+reqwest = { version = "=0.13.1", default-features = false, features = ["blocking", "native-tls"] }
+roxmltree = "0.21.1"
+percent-encoding = "2.3.2"
 sync-scheduler = { path = "crates/services/sync-scheduler" }
 platform-api = { path = "crates/adapters/platform-api" }
 platform-windows = { path = "crates/adapters/platform-windows" }
@@ -100,3 +116,7 @@ dbg_macro = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
 let_underscore_must_use = "warn"
+
+[patch.crates-io]
+# SuppaFTP 12.2.1 logs PASS and server replies at TRACE; local minimal redaction.
+suppaftp = { path = "vendor/suppaftp" }

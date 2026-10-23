@@ -1,0 +1,14 @@
+[package]
+name = "connector-ftp-transport"
+description = "Transport privé partagé FTP et FTPS, sans règles de synchronisation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+[dependencies]
+connector-api.workspace = true
+connector-staging.workspace = true
+sync-core.workspace = true
+suppaftp.workspace = true
+[lints]
+workspace = true

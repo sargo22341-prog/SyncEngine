@@ -1,0 +1,13 @@
+[package]
+name = "connector-staging"
+description = "Dépôt disque borné en mémoire et publication distante explicite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+[dependencies]
+connector-api.workspace = true
+sync-core.workspace = true
+tempfile.workspace = true
+[lints]
+workspace = true

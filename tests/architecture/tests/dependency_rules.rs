@@ -11,6 +11,43 @@ use serde_json::Value;
 /// Tout nouveau paquet doit être ajouté ici : un paquet absent fait échouer
 /// le test, ce qui force à décider explicitement de sa place dans le graphe.
 const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
+    (
+        "connector-registry",
+        &[
+            "sync-core",
+            "connector-api",
+            "connector-sftp",
+            "connector-webdav",
+            "connector-ftp",
+            "connector-ftps",
+            "connector-smb",
+        ],
+    ),
+    (
+        "connector-ftp",
+        &["sync-core", "connector-api", "connector-ftp-transport"],
+    ),
+    (
+        "connector-ftps",
+        &["sync-core", "connector-api", "connector-ftp-transport"],
+    ),
+    (
+        "connector-ftp-transport",
+        &["sync-core", "connector-api", "connector-staging"],
+    ),
+    (
+        "connector-smb",
+        &["sync-core", "connector-api", "connector-local"],
+    ),
+    ("connector-staging", &["sync-core", "connector-api"]),
+    (
+        "connector-sftp",
+        &["sync-core", "connector-api", "connector-staging"],
+    ),
+    (
+        "connector-webdav",
+        &["sync-core", "connector-api", "connector-staging"],
+    ),
     ("platform-api", &[]),
     ("platform-windows", &["platform-api"]),
     ("platform-linux", &["platform-api"]),

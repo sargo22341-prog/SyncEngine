@@ -2,6 +2,26 @@
 
 ## [0.1.0] — non publié
 
+### Ajouté (phase 08 — sources réseau expérimentales)
+- Complément de clôture : destinations SFTP/WebDAV, providers FTP/FTPS séparés,
+  adaptateur SMB natif (UNC Windows ; CIFS Linux lecture seule) et registre statique.
+- Dépôt finalisé avant vérification, spool disque borné en mémoire, original
+  préservé avant remplacement non atomique ; erreurs/cleanup/interruption explicites.
+- Cohérence inconnue/éventuelle => inventaire incomplet, aucune absence prouvée
+  ni suppression miroir. Option de cohérence forte soumise à validation du serveur.
+- SuppaFTP 12.2.1 vendored avec correction des traces PASS/réponses ; test de
+  non-divulgation avec capture TRACE, sans désactivation globale de la verbosité.
+- GUI/profils locaux inchangés, pas de cloud ou phase suivante.
+
+Première livraison de cette phase (complétée ci-dessus) :
+- Crates SFTP et WebDAV indépendants, features désactivées par défaut,
+  listing paginé, stat et lecture en flux ; erreurs et annulation explicites.
+- Vérification SSH known_hosts avant authentification injectée ; WebDAV HTTPS
+  TLS >= 1.2 sans redirections, secrets absents des options et diagnostics.
+- Tests transport et contrats SSH/SFTP/HTTPS sur serveurs loopback éphémères,
+  ajoutés au workflow CI. Aucune destination réseau ou mutation distante,
+  aucun profil/GUI réseau ; FTP, FTPS et SMB restent à leurs sous-sessions.
+
 ### Ajouté (phase 07 — scheduler et agent)
 - Agent Rust sans fenêtre ni dépendance GUI, réutilisant la façade et les moteurs
   locaux ; autorisation explicite liée au profil, suppressions séparément approuvées.

@@ -1,0 +1,18 @@
+[package]
+name = "connector-ftp"
+description = "Connecteur FTP explicite, séparé de FTPS et SFTP"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+[features]
+default = []
+ftp = ["dep:connector-ftp-transport"]
+[dependencies]
+connector-api.workspace = true
+sync-core.workspace = true
+connector-ftp-transport = { workspace = true, optional = true }
+[lints]
+workspace = true
+[dev-dependencies]
+log = "0.4"

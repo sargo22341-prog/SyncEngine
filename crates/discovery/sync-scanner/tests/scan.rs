@@ -41,6 +41,30 @@ fn empty_root_is_complete_and_empty() {
 }
 
 #[test]
+fn unknown_or_eventual_consistency_never_proves_absence() -> Result<(), Box<dyn std::error::Error>>
+{
+    use connector_api::{ListingConsistency, StorageConnector};
+    for consistency in [ListingConsistency::Unknown, ListingConsistency::Eventual] {
+        let connector = MemoryConnector::new("network-like").file("present", b"data", ts(1));
+        let mut caps = connector.capabilities().clone();
+        caps.listing_consistency = consistency;
+        let inventory = scan_all(&connector.with_capabilities(caps))?;
+        assert!(!inventory.is_complete());
+        assert!(matches!(
+            inventory.presence(&path("present")),
+            Presence::Present(_)
+        ));
+        assert_eq!(
+            inventory.presence(&path("missing")),
+            Presence::Unknown(UnknownReason::IncompleteDirectory(
+                IncompleteReason::UnreliableConsistency
+            ))
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn inventories_nested_tree_and_empty_directory() {
     let inventory = scan_all(&sample()).unwrap();
     let paths: Vec<&str> = inventory.entries().map(|e| e.path().as_str()).collect();

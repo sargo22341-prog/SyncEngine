@@ -151,6 +151,7 @@ impl LocalConnector {
         if options.mutations {
             capabilities = capabilities.with_features([
                 StorageFeature::Write,
+                StorageFeature::SetModifiedTime,
                 StorageFeature::StreamingWrite,
                 StorageFeature::CreateDirectory,
                 StorageFeature::Delete,

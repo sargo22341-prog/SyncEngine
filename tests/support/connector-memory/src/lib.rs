@@ -149,6 +149,7 @@ impl MemoryConnector {
     pub fn writable(mut self) -> Self {
         self.capabilities = self.capabilities.with_features([
             StorageFeature::Write,
+            StorageFeature::SetModifiedTime,
             StorageFeature::StreamingWrite,
             StorageFeature::CreateDirectory,
             StorageFeature::Delete,

@@ -2,8 +2,16 @@
 
 SyncEngine fournit une CLI Rust et une interface Tauri 2/TypeScript pour les
 sauvegardes, miroirs et synchronisations bidirectionnelles locales. Un agent
-sans GUI exécute les profils programmés ; les connecteurs réseau/cloud restent
-à implémenter.
+sans GUI exécute les profils programmés. La phase 08 fournit cinq connecteurs
+réseau expérimentaux, activés séparément :
+[SFTP](crates/connectors/network/connector-sftp/README.md) et
+[WebDAV HTTPS](crates/connectors/network/connector-webdav/README.md),
+[FTP](crates/connectors/network/connector-ftp/README.md),
+[FTPS](crates/connectors/network/connector-ftps/README.md) et
+[SMB natif](crates/connectors/network/connector-smb/README.md).
+Sources/destinations selon capacités documentées, SMB Linux lecture seule.
+Factories Rust : [registre statique](crates/adapters/connector-registry/README.md).
+Les profils/GUI restent locaux ; aucun cloud implémenté.
 
 Phase 06 : profils persistants, assistant, simulation, exécution confirmée,
 annulation, progression agrégée, historique et paramètres d’affichage.

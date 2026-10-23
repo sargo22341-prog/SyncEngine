@@ -12,6 +12,8 @@ pub struct WriteOptions {
     /// Date de modification à appliquer au fichier validé (en général celle
     /// de la source), afin qu'une comparaison ultérieure ne le voie pas
     /// « plus récent » que la source. `None` : date choisie par le stockage.
+    /// Le connecteur doit déclarer `StorageFeature::SetModifiedTime` pour accepter
+    /// une valeur ; `sync-copy` écarte cette option lorsque la capacité manque.
     pub modified: Option<Timestamp>,
     /// Taille attendue, indicative (préallocation, contrôle de quota).
     pub size_hint: Option<u64>,
@@ -76,6 +78,17 @@ pub trait ContentWriter: Send {
     /// de l'extrémité (pour le relire avant validation et le consigner au
     /// journal, afin qu'une exécution interrompue sache ce qu'elle a laissé).
     fn staging_path(&self) -> Option<&ResourcePath>;
+
+    /// Termine le dépôt sans publier la cible, afin de permettre sa relecture.
+    /// Après succès, `write` ne doit plus être appelé. Idempotent ; les anciens
+    /// connecteurs dont le dépôt est déjà lisible conservent le défaut sans effet.
+    ///
+    /// # Errors
+    /// Échec de finalisation/transfert, annulation ou quota. Seul `abort` suit
+    /// une erreur ; aucune publication de la cible n'est autorisée.
+    fn finish(&mut self) -> Result<(), StorageError> {
+        Ok(())
+    }
 
     /// Rend le contenu durable, puis le publie à la cible selon `mode`.
     ///

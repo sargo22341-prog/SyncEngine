@@ -1,0 +1,22 @@
+[package]
+name = "connector-webdav"
+description = "Accès WebDAV HTTPS en lecture, sans politique de synchronisation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+webdav = ["dep:reqwest", "dep:roxmltree", "dep:percent-encoding"]
+
+[dependencies]
+sync-core.workspace = true
+connector-api.workspace = true
+connector-staging.workspace = true
+reqwest = { workspace = true, optional = true }
+roxmltree = { workspace = true, optional = true }
+percent-encoding = { workspace = true, optional = true }
+
+[lints]
+workspace = true

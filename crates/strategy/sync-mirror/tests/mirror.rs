@@ -162,6 +162,20 @@ fn mirror_plan_identifies_every_action() {
 }
 
 #[test]
+fn unknown_listing_consistency_means_zero_deletions() {
+    use connector_api::{ListingConsistency, StorageConnector};
+    let source = MemoryConnector::new("network-source").file("present", b"data", ts(1));
+    let mut caps = source.capabilities().clone();
+    caps.listing_consistency = ListingConsistency::Unknown;
+    let source = source.with_capabilities(caps);
+    let destination = MemoryConnector::new("destination")
+        .file("present", b"data", ts(1))
+        .file("extra", b"keep", ts(1));
+    let plan = build(&report(&source, &destination), &with_deletions()).unwrap();
+    assert_eq!(plan.summary().delete, 0);
+}
+
+#[test]
 fn deletions_require_an_explicit_policy() {
     let report = report(&source(), &destination());
     let plan = build(&report, &MirrorStrategy::default_policy()).unwrap();

@@ -90,6 +90,8 @@ impl<'a> CopyRequest<'a> {
     }
 
     /// Options transmises à l'ouverture de l'écriture (date à appliquer…).
+    /// La date est omise si le stockage ne déclare pas `SetModifiedTime` ;
+    /// cela n'affecte pas le contenu ni sa vérification.
     #[must_use]
     pub fn with_options(mut self, options: WriteOptions) -> Self {
         self.options = options;
@@ -288,7 +290,19 @@ pub fn stage_copy(
         .map_err(|error| CopyError::new(CopyStage::OpenSource, error))?;
     let mut writer = request
         .destination
-        .open_write(request.destination_path, &request.options, cancel)
+        .open_write(
+            request.destination_path,
+            &if request
+                .destination
+                .capabilities()
+                .supports(connector_api::StorageFeature::SetModifiedTime)
+            {
+                request.options
+            } else {
+                request.options.with_modified(None)
+            },
+            cancel,
+        )
         .map_err(|error| CopyError::new(CopyStage::OpenDestination, error))?;
 
     let mut buffer = vec![0u8; request.buffer_size];
@@ -320,11 +334,14 @@ pub fn stage_copy(
 }
 
 fn finish(
-    writer: Box<dyn ContentWriter>,
+    mut writer: Box<dyn ContentWriter>,
     bytes: u64,
     hasher: &blake3::Hasher,
     request: &CopyRequest<'_>,
 ) -> Result<StagedCopy, CopyError> {
+    if let Err(error) = writer.finish() {
+        return Err(abandon(writer, CopyError::new(CopyStage::Write, error)));
+    }
     match ContentHash::new(HashAlgorithm::Blake3, hasher.finalize().as_bytes().to_vec()) {
         Ok(hash) => Ok(StagedCopy {
             writer,
