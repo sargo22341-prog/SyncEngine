@@ -1,0 +1,23 @@
+[package]
+name = "sync-decisions"
+description = "Décisions SyncEngine : traduit les constats de comparaison en opérations d'un plan selon une politique (écrasement, suppression), applique les garde-fous (parents indisponibles, répertoires non vidés, suppressions refusées) et définit le contrat PlanStrategy. Aucune E/S, aucune mutation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+sync-compare.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+sync-plan.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+connector-api.workspace = true
+connector-memory.workspace = true
+sync-filter.workspace = true
+sync-scanner.workspace = true
+
+[lints]
+workspace = true

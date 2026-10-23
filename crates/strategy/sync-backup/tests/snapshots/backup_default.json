@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "id": "plan-sauvegarde",
+  "profile": "quotidien",
+  "mode": "backup",
+  "created_at": {
+    "secs": 1800000000,
+    "nanos": 0
+  },
+  "source": {
+    "connector": "source",
+    "location": "memoire:source",
+    "complete": true,
+    "entries": 7
+  },
+  "destination": {
+    "connector": "destination",
+    "location": "memoire:destination",
+    "complete": true,
+    "entries": 5
+  },
+  "filter": {
+    "include_files": [],
+    "exclude_files": [
+      "*.tmp"
+    ],
+    "exclude_directories": [],
+    "case_insensitive": false
+  },
+  "policy": {
+    "overwrite": "newer_source_only",
+    "deletion": {
+      "mode": "disabled"
+    }
+  },
+  "operations": [
+    {
+      "id": "op-000001",
+      "path": "cache",
+      "kind": "directory",
+      "action": "copy",
+      "reason": {
+        "code": "missing_at_destination"
+      },
+      "risk": "additive",
+      "preconditions": [
+        "source_unchanged",
+        "destination_absent"
+      ],
+      "depends_on": [],
+      "bytes": 0,
+      "source": {
+        "kind": "directory",
+        "metadata": {
+          "size": null,
+          "modified": null,
+          "modified_precision": null
+        }
+      },
+      "destination": null
+    },
+    {
+      "id": "op-000002",
+      "path": "commun.txt",
+      "kind": "file",
+      "action": "keep",
+      "reason": {
+        "code": "equivalent",
+        "verified": false
+      },
+      "risk": "none",
+      "preconditions": [],
+      "depends_on": [],
+      "bytes": 0,
+      "source": {
+        "kind": "file",
+        "metadata": {
+          "size": 9,
+          "modified": {
+            "secs": 1000,
+            "nanos": 0
+          },
+          "modified_precision": "nanosecond"
+        }
+      },
+      "destination": {
+        "kind": "file",
+        "metadata": {
+          "size": 9,
+          "modified": {
+            "secs": 1000,
+            "nanos": 0
+          },
+          "modified_precision": "nanosecond"
+        }
+      }
+    },
+    {
+      "id": "op-000003",
+      "path": "docs",
+      "kind": "directory",
+      "action": "keep",
+      "reason": {
+        "code": "equivalent",
+        "verified": false
+      },
+      "risk": "none",
+      "preconditions": [],
+      "depends_on": [],
+      "bytes": 0,
+      "source": {
+        "kind": "directory",
+        "metadata": {
+          "size": null,
+          "modified": null,
+          "modified_precision": null
+        }
+      },
+      "destination": {
+        "kind": "directory",
+        "metadata": {
+          "size": null,
+          "modified": null,
+          "modified_precision": null
+        }
+      }
+    },
+    {
+      "id": "op-000004",
+      "path": "docs/notes.txt",
+      "kind": "file",
+      "action": "keep",
+      "reason": {
+        "code": "destination_only"
+      },
+      "risk": "none",
+      "preconditions": [],
+      "depends_on": [],
+      "bytes": 0,
+      "source": null,
+      "destination": {
+        "kind": "file",
+        "metadata": {
+          "size": 1,
+          "modified": {
+            "secs": 3000,
+            "nanos": 0
+          },
+          "modified_precision": "nanosecond"
+        }
+      }
+    },
+    {
+      "id": "op-000005",
+      "path": "docs/rapport.md",
+      "kind": "file",
+      "action": "replace",
+      "reason": {
+        "code": "source_newer"
+      },
+      "risk": "overwrite",
+      "preconditions": [
+        "source_unchanged",
+        "destination_unchanged"
+      ],
+      "depends_on": [],
+      "bytes": 14,
+      "source": {
+        "kind": "file",
+        "metadata": {
+          "size": 14,
+          "modified": {
+            "secs": 2000,
+            "nanos": 0
+          },
+          "modified_precision": "nanosecond"
+        }
+      },
+      "destination": {
+        "kind": "file",
+        "metadata": {
+          "size": 6,
+          "modified": {
+            "secs": 1000,
+            "nanos": 0
+          },
+          "modified_precision": "nanosecond"
+        }
+      }
+    },
+    {
+      "id": "op-000006",
+      "path": "nouveau",
+      "kind": "directory",
+      "action": "copy",
+      "reason": {
+        "code": "missing_at_destination"
+      },
+      "risk": "additive",
+      "preconditions": [
+        "source_unchanged",
+        "destination_absent"
+      ],
+      "depends_on": [],
+      "bytes": 0,
+      "source": {
+        "kind": "directory",
+        "metadata": {
+          "size": null,
+          "modified": null,
+          "modified_precision": null
+        }
+      },
+      "destination": null
+    },
+    {
+      "id": "op-000007",
+      "path": "nouveau/a.txt",
+      "kind": "file",
+      "action": "copy",
+      "reason": {
+        "code": "missing_at_destination"
+      },
+      "risk": "additive",
+      "preconditions": [
+        "source_unchanged",
+        "destination_absent"
+      ],
+      "depends_on": [
+        "op-000006"
+      ],
+      "bytes": 1,
+      "source": {
+        "kind": "file",
+        "metadata": {
+          "size": 1,
+          "modified": {
+            "secs": 1500,
+            "nanos": 0
+          },
+          "modified_precision": "nanosecond"
+        }
+      },
+      "destination": null
+    },
+    {
+      "id": "op-000008",
+      "path": "recent.txt",
+      "kind": "file",
+      "action": "conflict",
+      "reason": {
+        "code": "destination_newer"
+      },
+      "risk": "none",
+      "preconditions": [],
+      "depends_on": [],
+      "bytes": 0,
+      "source": {
+        "kind": "file",
+        "metadata": {
+          "size": 6,
+          "modified": {
+            "secs": 1000,
+            "nanos": 0
+          },
+          "modified_precision": "nanosecond"
+        }
+      },
+      "destination": {
+        "kind": "file",
+        "metadata": {
+          "size": 24,
+          "modified": {
+            "secs": 5000,
+            "nanos": 0
+          },
+          "modified_precision": "nanosecond"
+        }
+      }
+    }
+  ]
+}

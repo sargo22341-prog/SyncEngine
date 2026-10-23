@@ -17,9 +17,12 @@
 //! - empreinte de contenu étiquetée ([`ContentHash`]), portée par [`FileMetadata`] ;
 //! - jeton d'annulation coopérative ([`CancellationToken`]).
 //!
+//! Ajout de la phase 03 : identifiant de plan ([`PlanId`]).
+//!
 //! Le modèle de comparaison est défini par `sync-compare` (crate pur, sans
-//! E/S) ; les types de conflit et de plan (`Conflict`, `ExecutionPlan`…)
-//! arrivent en phase 03.
+//! E/S) ; le modèle de plan (`ExecutionPlan`, opérations, préconditions,
+//! politiques) par `sync-plan`, car il embarque les règles de filtre
+//! (voir ADR 0003).
 
 mod cancel;
 mod entry;
@@ -33,6 +36,8 @@ pub use cancel::CancellationToken;
 pub use entry::{EntryKind, FileEntry, FileMetadata};
 pub use execution::ExecutionStatus;
 pub use hash::{ContentHash, ContentHashError, HashAlgorithm};
-pub use ids::{ConnectorId, EndpointId, ExecutionId, IdError, MAX_ID_LEN, OperationId, ProfileId};
+pub use ids::{
+    ConnectorId, EndpointId, ExecutionId, IdError, MAX_ID_LEN, OperationId, PlanId, ProfileId,
+};
 pub use path::{PathError, ResourcePath};
 pub use time::{Timestamp, TimestampError, TimestampPrecision};

@@ -39,6 +39,50 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "sync-filter",
         ],
     ),
+    // Contrat de plan : ne connaît ni la découverte ni les connecteurs, pour
+    // que l'exécuteur (phase 04) et l'interface n'en dépendent pas.
+    ("sync-plan", &["sync-core", "sync-errors", "sync-filter"]),
+    (
+        "sync-decisions",
+        &[
+            "sync-core",
+            "sync-errors",
+            "sync-plan",
+            "sync-compare",
+            // dev-dependencies (tests sur inventaires en mémoire)
+            "connector-api",
+            "connector-memory",
+            "sync-filter",
+            "sync-scanner",
+        ],
+    ),
+    (
+        "sync-backup",
+        &[
+            "sync-decisions",
+            "sync-plan",
+            // dev-dependencies
+            "connector-memory",
+            "sync-compare",
+            "sync-core",
+            "sync-filter",
+            "sync-scanner",
+        ],
+    ),
+    (
+        "sync-mirror",
+        &[
+            "sync-core",
+            "sync-decisions",
+            "sync-plan",
+            // dev-dependencies
+            "connector-api",
+            "connector-memory",
+            "sync-compare",
+            "sync-filter",
+            "sync-scanner",
+        ],
+    ),
     (
         "syncengine-cli",
         &[
@@ -50,6 +94,10 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "sync-filter",
             "sync-scanner",
             "sync-compare",
+            "sync-plan",
+            "sync-decisions",
+            "sync-backup",
+            "sync-mirror",
         ],
     ),
     ("syncengine-architecture-tests", &[]),
@@ -57,6 +105,11 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
 
 /// Doubles de test : autorisés uniquement en dev-dependency.
 const TEST_DOUBLES: &[&str] = &["connector-memory"];
+
+/// Paquets de planification : purs, sans E/S. Ils ne dépendent d'aucune
+/// implémentation de connecteur (seul le contrat `connector-api` est admis,
+/// et seulement pour les tests).
+const PLANNING: &[&str] = &["sync-plan", "sync-decisions", "sync-backup", "sync-mirror"];
 
 /// Paquets de présentation : seuls autorisés à dépendre de Tauri.
 const PRESENTATION: &[&str] = &[];
@@ -170,6 +223,22 @@ fn test_doubles_are_dev_dependencies_only() {
             assert!(
                 !package.non_dev_dependencies.contains(*double),
                 "{} dépend de {double} hors dev-dependencies : double de test réservé aux tests",
+                package.name
+            );
+        }
+    }
+}
+
+#[test]
+fn planning_crates_never_depend_on_connector_implementations() {
+    for package in workspace_packages() {
+        if !PLANNING.contains(&package.name.as_str()) {
+            continue;
+        }
+        for dep in &package.non_dev_dependencies {
+            assert!(
+                !dep.starts_with("connector-"),
+                "{} dépend de {dep} : la planification ne fait aucune E/S",
                 package.name
             );
         }

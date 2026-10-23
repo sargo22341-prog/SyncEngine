@@ -1,0 +1,15 @@
+SIMULATION — aucun fichier n'est copié, modifié ni supprimé.
+Plan : miroir (destination rendue conforme à la source)
+  source       : <SOURCE>
+  destination  : <DESTINATION>
+  écrasement   : la source l'emporte toujours
+  suppressions : autorisées (au plus 50 % des entrées de la destination, aucune si la source est vide, aucune si un inventaire est incomplet)
+CONSERVER  commun.txt  (taille et date identiques, contenu non vérifié)
+CONSERVER  docs/  (dossier présent des deux côtés)
+SUPPRIMER  docs/notes.txt  (absent de la source)
+REMPLACER  docs/rapport.md  (source plus récente, 14 o)
+COPIER     nouveau/  (absent de la destination, dossier)
+COPIER     nouveau/a.txt  (absent de la destination, 1 o)
+REMPLACER  recent.txt  (destination plus récente, ÉCRASÉE par la source, 6 o)
+Résumé : 2 à copier, 2 à remplacer, 1 à supprimer, 2 conservé(s), 0 conflit(s), 0 ignoré(s) ; 21 o à transférer
+SIMULATION : rien n'a été modifié ; aucune commande n'exécute encore ce plan.

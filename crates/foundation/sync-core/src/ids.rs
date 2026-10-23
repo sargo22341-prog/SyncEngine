@@ -146,6 +146,11 @@ define_id!(
     OperationId
 );
 define_id!(
+    /// Identifiant d'un plan d'exécution (ajout phase 03). Un plan est
+    /// produit avant toute exécution : il n'est pas une [`ExecutionId`].
+    PlanId
+);
+define_id!(
     /// Identifiant d'un type de connecteur (par exemple `local`, `sftp`).
     ConnectorId
 );

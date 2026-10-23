@@ -4,11 +4,15 @@ members = [
     "crates/foundation/sync-core",
     "crates/foundation/sync-errors",
     "crates/foundation/sync-events",
+    "crates/foundation/sync-plan",
     "crates/adapters/connector-api",
     "crates/adapters/connector-local",
     "crates/discovery/sync-filter",
     "crates/discovery/sync-scanner",
     "crates/discovery/sync-compare",
+    "crates/strategy/sync-decisions",
+    "crates/strategy/sync-backup",
+    "crates/strategy/sync-mirror",
     "tests/support/connector-memory",
     "apps/cli",
     "tests/architecture",
@@ -25,11 +29,15 @@ publish = false
 sync-core = { path = "crates/foundation/sync-core" }
 sync-errors = { path = "crates/foundation/sync-errors" }
 sync-events = { path = "crates/foundation/sync-events" }
+sync-plan = { path = "crates/foundation/sync-plan" }
 connector-api = { path = "crates/adapters/connector-api" }
 connector-local = { path = "crates/adapters/connector-local" }
 sync-filter = { path = "crates/discovery/sync-filter" }
 sync-scanner = { path = "crates/discovery/sync-scanner" }
 sync-compare = { path = "crates/discovery/sync-compare" }
+sync-decisions = { path = "crates/strategy/sync-decisions" }
+sync-backup = { path = "crates/strategy/sync-backup" }
+sync-mirror = { path = "crates/strategy/sync-mirror" }
 # Double de test (stockage mémoire avec injection de pannes) : dev-dependency uniquement.
 connector-memory = { path = "tests/support/connector-memory" }
 

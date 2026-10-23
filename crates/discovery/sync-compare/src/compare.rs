@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use connector_api::CaseSensitivity;
-use sync_core::{EntryKind, FileEntry, FileMetadata, ResourcePath, Timestamp};
+use sync_core::{ConnectorId, EntryKind, FileEntry, FileMetadata, ResourcePath, Timestamp};
 use sync_errors::{ClassifiedError, ErrorClass};
+use sync_filter::FilterRules;
 use sync_scanner::{Inventory, Presence};
 use thiserror::Error;
 
@@ -83,6 +84,9 @@ pub struct ComparisonReport {
     left_complete: bool,
     right_complete: bool,
     summary: ComparisonSummary,
+    filter: FilterRules,
+    left_connector: ConnectorId,
+    right_connector: ConnectorId,
 }
 
 impl ComparisonReport {
@@ -124,6 +128,25 @@ impl ComparisonReport {
     #[must_use]
     pub fn summary(&self) -> ComparisonSummary {
         self.summary
+    }
+
+    /// Règles de filtre communes aux deux inventaires (ajout phase 03 : le
+    /// plan les enregistre pour que preview et exécution filtrent pareil).
+    #[must_use]
+    pub fn filter_rules(&self) -> &FilterRules {
+        &self.filter
+    }
+
+    /// Connecteur de l'inventaire de gauche (ajout phase 03).
+    #[must_use]
+    pub fn left_connector(&self) -> &ConnectorId {
+        &self.left_connector
+    }
+
+    /// Connecteur de l'inventaire de droite (ajout phase 03).
+    #[must_use]
+    pub fn right_connector(&self) -> &ConnectorId {
+        &self.right_connector
     }
 }
 
@@ -343,6 +366,9 @@ pub fn compare(
         left_complete: left.is_complete(),
         right_complete: right.is_complete(),
         summary,
+        filter: left.filter_rules().clone(),
+        left_connector: left.connector().clone(),
+        right_connector: right.connector().clone(),
     })
 }
 

@@ -1,0 +1,21 @@
+[package]
+name = "sync-backup"
+description = "Stratégie de sauvegarde SyncEngine : plan source → destination qui copie et remplace selon la politique, conserve les entrées présentes seulement à la destination et ne supprime jamais. Produit un plan, aucune mutation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+sync-decisions.workspace = true
+sync-plan.workspace = true
+
+[dev-dependencies]
+connector-memory.workspace = true
+sync-compare.workspace = true
+sync-core.workspace = true
+sync-filter.workspace = true
+sync-scanner.workspace = true
+
+[lints]
+workspace = true

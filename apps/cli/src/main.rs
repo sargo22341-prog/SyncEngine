@@ -1,12 +1,14 @@
 //! Point d'entrée de la CLI `syncengine`.
 //!
-//! Phase 02 : aide, version, et deux commandes **en lecture seule** —
-//! `scan` (inventaire d'un dossier local) et `compare` (différences entre
-//! deux dossiers locaux). Aucune commande ne copie, ne modifie ni ne
-//! supprime de fichier.
+//! Phase 03 : aide, version, et trois commandes **en lecture seule** —
+//! `scan` (inventaire d'un dossier local), `compare` (différences entre
+//! deux dossiers locaux) et `preview` (plan d'une sauvegarde ou d'un
+//! miroir, simulé). Aucune commande ne copie, ne modifie ni ne supprime de
+//! fichier.
 
 mod cli;
 mod discovery;
+mod preview;
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -41,6 +43,12 @@ fn run(command: Command) -> ExitCode {
             options,
             show_all,
         } => discovery::compare_command(&mut out, &left, &right, &options, show_all),
+        Command::Preview {
+            source,
+            destination,
+            options,
+            preview,
+        } => preview::preview_command(&mut out, &source, &destination, &options, &preview),
     };
     let flushed = out.flush();
     match (result, flushed) {

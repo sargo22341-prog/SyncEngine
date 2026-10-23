@@ -1,0 +1,14 @@
+SIMULATION — aucun fichier n'est copié, modifié ni supprimé.
+Plan : sauvegarde (source → destination, jamais de suppression)
+  source       : <SOURCE>
+  destination  : <DESTINATION>
+  écrasement   : seulement si la source est plus récente, sinon conflit
+  suppressions : non autorisées
+CONSERVER  docs/notes.txt  (présent seulement à la destination ; une sauvegarde ne supprime jamais)
+REMPLACER  docs/rapport.md  (source plus récente, 14 o)
+COPIER     nouveau/  (absent de la destination, dossier)
+COPIER     nouveau/a.txt  (absent de la destination, 1 o)
+CONFLIT    recent.txt  (destination plus récente ; rien n'est écrit)
+Résumé : 2 à copier, 1 à remplacer, 0 à supprimer, 3 conservé(s), 1 conflit(s), 0 ignoré(s) ; 15 o à transférer
+ATTENTION : 1 conflit(s) non résolu(s) : rien n'y sera écrit.
+SIMULATION : rien n'a été modifié ; aucune commande n'exécute encore ce plan.

@@ -10,12 +10,12 @@ publish.workspace = true
 connector-api.workspace = true
 sync-core.workspace = true
 sync-errors.workspace = true
+sync-filter.workspace = true
 sync-scanner.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 connector-memory.workspace = true
-sync-filter.workspace = true
 
 [lints]
 workspace = true

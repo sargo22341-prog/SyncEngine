@@ -1,0 +1,18 @@
+[package]
+name = "sync-plan"
+description = "Modèle du plan d'exécution SyncEngine : opérations typées (copie, remplacement, conservation, suppression, conflit, saut), motifs, préconditions, politiques et garde-fous de suppression, format JSON versionné et validé au chargement. Aucune E/S, aucune mutation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+sync-filter.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

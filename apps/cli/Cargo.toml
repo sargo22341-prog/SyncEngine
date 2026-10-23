@@ -1,6 +1,6 @@
 [package]
 name = "syncengine-cli"
-description = "Interface en ligne de commande de SyncEngine (phase 02 : inventaire et comparaison de dossiers locaux en lecture seule ; aucune copie, modification ni suppression)."
+description = "Interface en ligne de commande de SyncEngine (phase 03 : inventaire, comparaison et prévisualisation de plans de sauvegarde ou de miroir sur dossiers locaux, en lecture seule ; aucune copie, modification ni suppression)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,13 +12,18 @@ path = "src/main.rs"
 
 [dependencies]
 connector-local.workspace = true
+sync-backup.workspace = true
 sync-compare.workspace = true
 sync-core.workspace = true
+sync-decisions.workspace = true
 sync-filter.workspace = true
+sync-mirror.workspace = true
+sync-plan.workspace = true
 sync-scanner.workspace = true
 
 [dev-dependencies]
 blake3.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

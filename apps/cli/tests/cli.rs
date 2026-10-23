@@ -10,26 +10,13 @@
     reason = "aides de test : un échec est un échec de test"
 )]
 
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
 
+use common::{DenyListing, snapshot, stdout, syncengine, write};
 use tempfile::TempDir;
-
-fn syncengine<I, S>(args: I) -> Output
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<std::ffi::OsStr>,
-{
-    Command::new(env!("CARGO_BIN_EXE_syncengine"))
-        .args(args)
-        .output()
-        .unwrap()
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8(output.stdout.clone()).unwrap()
-}
 
 #[test]
 fn version_exits_successfully() {
@@ -55,12 +42,6 @@ fn unknown_command_is_usage_error() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("commande inconnue"));
-}
-
-fn write(root: &Path, relative: &str, content: &[u8]) {
-    let path = root.join(relative);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, content).unwrap();
 }
 
 /// Copie la date de modification de `from` vers `to`.
@@ -217,72 +198,6 @@ fn invalid_filter_is_usage_error() {
     assert_eq!(output.status.code(), Some(2), "{output:?}");
 }
 
-/// Retire le droit de lister `path` le temps du test (rétabli au drop).
-/// `None` si l'OS ne l'applique pas (exécution en root sous Linux).
-struct DenyListing(std::path::PathBuf);
-
-impl DenyListing {
-    fn new(path: &Path) -> Option<Self> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
-            if fs::read_dir(path).is_ok() {
-                fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
-                return None;
-            }
-        }
-        #[cfg(windows)]
-        {
-            let output = Command::new("icacls")
-                .arg(path)
-                .args(["/deny", "*S-1-1-0:(RD)"])
-                .output()
-                .unwrap();
-            assert!(output.status.success(), "icacls /deny : {output:?}");
-        }
-        Some(Self(path.to_path_buf()))
-    }
-}
-
-impl Drop for DenyListing {
-    #[expect(
-        clippy::print_stderr,
-        reason = "un Drop ne peut pas renvoyer d'erreur : l'échec est signalé explicitement"
-    )]
-    fn drop(&mut self) {
-        if let Err(error) = restore_listing(&self.0) {
-            eprintln!(
-                "ATTENTION : droits non rétablis sur {} : {error}",
-                self.0.display()
-            );
-        }
-    }
-}
-
-/// Rétablit le droit de lister `path`.
-fn restore_listing(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
-    }
-    #[cfg(windows)]
-    {
-        let output = Command::new("icacls")
-            .arg(path)
-            .args(["/remove:d", "*S-1-1-0"])
-            .output()?;
-        if !output.status.success() {
-            return Err(std::io::Error::other(format!(
-                "icacls : {:?}",
-                output.status
-            )));
-        }
-    }
-    Ok(())
-}
-
 #[test]
 fn access_denied_source_folder_gives_uncertainty_never_right_only() {
     // Given : la source a un dossier illisible ; la destination a des
@@ -318,29 +233,4 @@ fn access_denied_source_folder_gives_uncertainty_never_right_only() {
     let output = syncengine([Path::new("scan"), left.path()]);
     assert_eq!(output.status.code(), Some(3), "{output:?}");
     assert!(stdout(&output).contains("Inventaire INCOMPLET"));
-}
-
-/// Liste triée des chemins, tailles et dates de fichiers sous `root`.
-fn snapshot(root: &Path) -> String {
-    let mut lines = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for item in fs::read_dir(&dir).unwrap() {
-            let path = item.unwrap().path();
-            let meta = fs::metadata(&path).unwrap();
-            if meta.is_dir() {
-                lines.push(format!("D {}", path.display()));
-                stack.push(path);
-            } else {
-                lines.push(format!(
-                    "F {} {} {:?}",
-                    path.display(),
-                    meta.len(),
-                    meta.modified().unwrap()
-                ));
-            }
-        }
-    }
-    lines.sort();
-    lines.join("\n")
 }

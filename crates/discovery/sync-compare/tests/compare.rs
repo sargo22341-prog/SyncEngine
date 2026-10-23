@@ -492,3 +492,20 @@ fn rows_are_sorted_and_complete() {
     let paths: Vec<&str> = report.rows().iter().map(|r| r.path().as_str()).collect();
     assert_eq!(paths, ["a", "a/c", "b", "z"]);
 }
+
+#[test]
+fn report_records_filter_and_connectors() {
+    let rules = FilterRules::new().exclude_file("*.tmp");
+    let filter = Filter::new(rules.clone()).unwrap();
+    let left = MemoryConnector::new("gauche").file("a", b"a", ts(1));
+    let right = MemoryConnector::new("droite");
+    let report = compare(
+        &inventory_with(&left, &filter, &ScanOptions::new()),
+        &inventory_with(&right, &filter, &ScanOptions::new()),
+        &CompareOptions::new(),
+    )
+    .unwrap();
+    assert_eq!(report.filter_rules(), &rules);
+    assert_eq!(report.left_connector().as_str(), "gauche");
+    assert_eq!(report.right_connector().as_str(), "droite");
+}

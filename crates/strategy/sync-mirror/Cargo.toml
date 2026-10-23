@@ -1,0 +1,22 @@
+[package]
+name = "sync-mirror"
+description = "Stratégie miroir SyncEngine : plan qui rend la destination conforme à la source ; les suppressions exigent une politique explicite et restent soumises aux garde-fous (inventaires complets, source non vide, plafonds). Produit un plan, aucune mutation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+sync-core.workspace = true
+sync-decisions.workspace = true
+sync-plan.workspace = true
+
+[dev-dependencies]
+connector-api.workspace = true
+connector-memory.workspace = true
+sync-compare.workspace = true
+sync-filter.workspace = true
+sync-scanner.workspace = true
+
+[lints]
+workspace = true

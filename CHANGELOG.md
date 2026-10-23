@@ -2,6 +2,27 @@
 
 ## [0.1.0] — non publié
 
+### Ajouté (phase 03 — décisions et plans, aucune mutation)
+- `sync-plan` : plan d'exécution immuable, sérialisable en JSON versionné
+  (`schema_version` 1) et validé au chargement ; opérations `copy`, `replace`,
+  `keep`, `delete`, `conflict`, `skip` avec motif, risque, préconditions,
+  dépendances et observations ; politiques d'écrasement et de suppression ;
+  garde-fous de suppression (inventaires complets, source non vide, plafonds).
+- `sync-decisions` : contrat `PlanStrategy`, règle commune des modes
+  unidirectionnels, passes de sûreté (parent indisponible, répertoire non vidé,
+  suppressions refusées en bloc).
+- `sync-backup` : sauvegarde (jamais de suppression ; conflit si la destination
+  est plus récente, par défaut).
+- `sync-mirror` : miroir (suppressions seulement sur autorisation explicite).
+- `sync-core` : `PlanId`. `sync-compare` : `ComparisonReport::filter_rules`,
+  `left_connector`, `right_connector`.
+- CLI : commande `preview` (texte ou `--json`), refus d'une destination
+  imbriquée dans la source. Rien n'est exécuté.
+
+### Modifié (phase 03)
+- CLI : l'aide décrit la commande `preview` et ses codes de sortie ; les tests
+  d'intégration partagent leurs aides (`apps/cli/tests/common`).
+
 ### Ajouté (phase 02 — scan et comparaison, lecture seule)
 - `connector-api` : opérations `list` (paginée), `stat`, `open_read` (flux),
   `ListPage`, `PageToken`, `ListingIssue` ; modèle synchrone, annulation coopérative.

@@ -294,6 +294,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync-backup"
+version = "0.1.0"
+dependencies = [
+ "connector-memory",
+ "sync-compare",
+ "sync-core",
+ "sync-decisions",
+ "sync-filter",
+ "sync-plan",
+ "sync-scanner",
+]
+
+[[package]]
 name = "sync-compare"
 version = "0.1.0"
 dependencies = [
@@ -312,6 +325,21 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "sync-decisions"
+version = "0.1.0"
+dependencies = [
+ "connector-api",
+ "connector-memory",
+ "sync-compare",
+ "sync-core",
+ "sync-errors",
+ "sync-filter",
+ "sync-plan",
+ "sync-scanner",
  "thiserror",
 ]
 
@@ -347,6 +375,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync-mirror"
+version = "0.1.0"
+dependencies = [
+ "connector-api",
+ "connector-memory",
+ "sync-compare",
+ "sync-core",
+ "sync-decisions",
+ "sync-filter",
+ "sync-plan",
+ "sync-scanner",
+]
+
+[[package]]
+name = "sync-plan"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sync-core",
+ "sync-errors",
+ "sync-filter",
+ "thiserror",
+]
+
+[[package]]
 name = "sync-scanner"
 version = "0.1.0"
 dependencies = [
@@ -371,9 +425,14 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "connector-local",
+ "serde_json",
+ "sync-backup",
  "sync-compare",
  "sync-core",
+ "sync-decisions",
  "sync-filter",
+ "sync-mirror",
+ "sync-plan",
  "sync-scanner",
  "tempfile",
 ]

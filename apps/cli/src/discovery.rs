@@ -33,7 +33,8 @@ pub(crate) mod exit {
     pub(crate) const FAILURE: u8 = 4;
 }
 
-/// Échec d'une commande de découverte, avant tout résultat exploitable.
+/// Échec d'une commande de découverte ou de prévisualisation, avant tout
+/// résultat exploitable.
 #[derive(Debug)]
 pub(crate) enum DiscoveryError {
     /// Règles de filtre invalides (erreur d'utilisation).
@@ -49,6 +50,12 @@ pub(crate) enum DiscoveryError {
     },
     /// Comparaison refusée.
     Compare(sync_compare::CompareError),
+    /// Source et destination imbriquées (ou identiques).
+    Nested(String),
+    /// Politique refusée par la stratégie (erreur d'utilisation).
+    Policy(sync_decisions::PolicyViolation),
+    /// Planification ou sérialisation du plan impossible.
+    Plan(String),
     /// Écriture de la sortie impossible.
     Output(io::Error),
 }
@@ -66,6 +73,9 @@ impl std::fmt::Display for DiscoveryError {
                 Ok(())
             }
             Self::Compare(error) => write!(f, "comparaison refusée : {error}"),
+            Self::Nested(message) => write!(f, "{message} : aucun plan produit"),
+            Self::Policy(error) => write!(f, "politique refusée : {error}"),
+            Self::Plan(message) => write!(f, "plan impossible : {message}"),
             Self::Output(error) => write!(f, "sortie impossible : {error}"),
         }
     }
@@ -80,11 +90,14 @@ impl From<io::Error> for DiscoveryError {
 impl DiscoveryError {
     /// Vrai pour une erreur d'utilisation (code 2).
     pub(crate) fn is_usage(&self) -> bool {
-        matches!(self, Self::Filter(_) | Self::Path(_))
+        matches!(
+            self,
+            Self::Filter(_) | Self::Path(_) | Self::Nested(_) | Self::Policy(_)
+        )
     }
 }
 
-fn filter_of(args: &DiscoveryArgs) -> Result<Filter, DiscoveryError> {
+pub(crate) fn filter_of(args: &DiscoveryArgs) -> Result<Filter, DiscoveryError> {
     let mut rules = FilterRules::new().with_case_insensitive(args.ignore_case);
     for pattern in &args.include_files {
         rules = rules.include_file(pattern);
@@ -98,7 +111,7 @@ fn filter_of(args: &DiscoveryArgs) -> Result<Filter, DiscoveryError> {
     Filter::new(rules).map_err(DiscoveryError::Filter)
 }
 
-fn scan_options(args: &DiscoveryArgs) -> ScanOptions {
+pub(crate) fn scan_options(args: &DiscoveryArgs) -> ScanOptions {
     if args.hash {
         ScanOptions::new().with_hash(HashAlgorithm::Blake3)
     } else {
@@ -116,7 +129,7 @@ fn connector_for(root: &Path) -> Result<LocalConnector, DiscoveryError> {
 }
 
 /// Résultat d'un scan : complet, ou partiel après annulation.
-fn run_scan(
+pub(crate) fn run_scan(
     root: &Path,
     filter: &Filter,
     options: &ScanOptions,
@@ -206,7 +219,11 @@ pub(crate) fn compare_command(
     }
 }
 
-fn write_issues(out: &mut dyn Write, side: &str, inventory: &Inventory) -> io::Result<()> {
+pub(crate) fn write_issues(
+    out: &mut dyn Write,
+    side: &str,
+    inventory: &Inventory,
+) -> io::Result<()> {
     for (path, reason) in inventory.incomplete_directories() {
         let path = if path.is_root() {
             "<racine>"
@@ -246,7 +263,7 @@ fn write_summary(out: &mut dyn Write, report: &ComparisonReport) -> io::Result<(
     Ok(())
 }
 
-fn kind_marker(kind: EntryKind) -> &'static str {
+pub(crate) fn kind_marker(kind: EntryKind) -> &'static str {
     match kind {
         EntryKind::File => "F",
         EntryKind::Directory => "D",
@@ -325,7 +342,7 @@ fn difference_text(difference: &Difference) -> String {
     }
 }
 
-fn incomplete_text(reason: IncompleteReason) -> String {
+pub(crate) fn incomplete_text(reason: IncompleteReason) -> String {
     match reason {
         IncompleteReason::ListFailed(kind) => format!("listing impossible : {kind:?}"),
         IncompleteReason::OmittedEntries => "entrées non représentables".to_owned(),
