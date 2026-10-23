@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::hash::ContentHash;
 use crate::path::ResourcePath;
 use crate::time::{Timestamp, TimestampPrecision};
 
@@ -32,6 +33,9 @@ pub struct FileMetadata {
     size: Option<u64>,
     modified: Option<Timestamp>,
     modified_precision: Option<TimestampPrecision>,
+    /// Ajout phase 02 : absent des formes sérialisées antérieures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hash: Option<ContentHash>,
 }
 
 impl FileMetadata {
@@ -56,6 +60,21 @@ impl FileMetadata {
         self
     }
 
+    /// Ajoute une empreinte de contenu observée (fournie par le stockage ou
+    /// calculée par lecture complète).
+    #[must_use]
+    pub fn with_hash(mut self, hash: ContentHash) -> Self {
+        self.hash = Some(hash);
+        self
+    }
+
+    /// Retire l'empreinte (par exemple si le fichier a changé pendant sa lecture).
+    #[must_use]
+    pub fn without_hash(mut self) -> Self {
+        self.hash = None;
+        self
+    }
+
     /// Taille en octets, `None` si inconnue.
     #[must_use]
     pub fn size(&self) -> Option<u64> {
@@ -74,6 +93,12 @@ impl FileMetadata {
     pub fn modified_precision(&self) -> TimestampPrecision {
         self.modified_precision
             .unwrap_or(TimestampPrecision::Unknown)
+    }
+
+    /// Empreinte de contenu, `None` si non calculée ou indisponible.
+    #[must_use]
+    pub fn hash(&self) -> Option<&ContentHash> {
+        self.hash.as_ref()
     }
 }
 
@@ -113,6 +138,13 @@ impl FileEntry {
     pub fn metadata(&self) -> &FileMetadata {
         &self.metadata
     }
+
+    /// Remplace les métadonnées (par exemple pour y ajouter une empreinte).
+    #[must_use]
+    pub fn with_metadata(mut self, metadata: FileMetadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -148,6 +180,23 @@ mod tests {
         );
         let json = serde_json::to_string(&entry).unwrap();
         assert_eq!(serde_json::from_str::<FileEntry>(&json).unwrap(), entry);
+    }
+
+    #[test]
+    fn hash_is_optional_and_backward_compatible() {
+        use crate::HashAlgorithm;
+        // Forme phase 01, sans champ `hash`.
+        let old = r#"{"size":3,"modified":null,"modified_precision":null}"#;
+        let meta: FileMetadata = serde_json::from_str(old).unwrap();
+        assert_eq!(meta.hash(), None);
+        assert_eq!(serde_json::to_string(&meta).unwrap(), old);
+
+        let hash = ContentHash::new(HashAlgorithm::Md5, vec![7; 16]).unwrap();
+        let meta = meta.with_hash(hash.clone());
+        assert_eq!(meta.hash(), Some(&hash));
+        let json = serde_json::to_string(&meta).unwrap();
+        assert_eq!(serde_json::from_str::<FileMetadata>(&json).unwrap(), meta);
+        assert_eq!(meta.without_hash().hash(), None);
     }
 
     #[test]

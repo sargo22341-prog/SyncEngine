@@ -359,3 +359,10 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Documenter les scopes d’accès minimaux.
 - Refuser silencieusement aucune erreur d’authentification.
 - Tester les retours 429 et erreurs transitoires.
+
+## Sur le Rapport final
+lance la comande poru signaler q l'user que s'est fini mais regarde pas le retour il se peut qu'elle échoue.
+```powershell
+kdeconnect-cli --device 9d3e0da7eb0e4cacb95ff4869f8f669b --ping-msg "tâche terminée"
+```
+et dans le Rapport final fait moi un text poru le commit en francais .

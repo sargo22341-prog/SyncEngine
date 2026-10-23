@@ -13,9 +13,15 @@
 //! - algorithmes de hachage nommés ([`HashAlgorithm`]) ;
 //! - statut du cycle de vie d'une exécution ([`ExecutionStatus`]).
 //!
-//! Les types de comparaison, de conflit et de plan (`ComparisonOutcome`,
-//! `Conflict`, `ExecutionPlan`…) sont introduits par les phases 02 et 03.
+//! Ajouts de la phase 02 :
+//! - empreinte de contenu étiquetée ([`ContentHash`]), portée par [`FileMetadata`] ;
+//! - jeton d'annulation coopérative ([`CancellationToken`]).
+//!
+//! Le modèle de comparaison est défini par `sync-compare` (crate pur, sans
+//! E/S) ; les types de conflit et de plan (`Conflict`, `ExecutionPlan`…)
+//! arrivent en phase 03.
 
+mod cancel;
 mod entry;
 mod execution;
 mod hash;
@@ -23,9 +29,10 @@ mod ids;
 mod path;
 mod time;
 
+pub use cancel::CancellationToken;
 pub use entry::{EntryKind, FileEntry, FileMetadata};
 pub use execution::ExecutionStatus;
-pub use hash::HashAlgorithm;
+pub use hash::{ContentHash, ContentHashError, HashAlgorithm};
 pub use ids::{ConnectorId, EndpointId, ExecutionId, IdError, MAX_ID_LEN, OperationId, ProfileId};
 pub use path::{PathError, ResourcePath};
 pub use time::{Timestamp, TimestampError, TimestampPrecision};

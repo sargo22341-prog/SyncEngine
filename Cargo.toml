@@ -5,6 +5,11 @@ members = [
     "crates/foundation/sync-errors",
     "crates/foundation/sync-events",
     "crates/adapters/connector-api",
+    "crates/adapters/connector-local",
+    "crates/discovery/sync-filter",
+    "crates/discovery/sync-scanner",
+    "crates/discovery/sync-compare",
+    "tests/support/connector-memory",
     "apps/cli",
     "tests/architecture",
 ]
@@ -21,11 +26,21 @@ sync-core = { path = "crates/foundation/sync-core" }
 sync-errors = { path = "crates/foundation/sync-errors" }
 sync-events = { path = "crates/foundation/sync-events" }
 connector-api = { path = "crates/adapters/connector-api" }
+connector-local = { path = "crates/adapters/connector-local" }
+sync-filter = { path = "crates/discovery/sync-filter" }
+sync-scanner = { path = "crates/discovery/sync-scanner" }
+sync-compare = { path = "crates/discovery/sync-compare" }
+# Double de test (stockage mémoire avec injection de pannes) : dev-dependency uniquement.
+connector-memory = { path = "tests/support/connector-memory" }
 
 # Dépendances externes : versions épinglées en semver mineur, Cargo.lock versionné.
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
+# Phase 02 : motifs de filtre (globs) et empreintes de contenu (choix BLAKE3 de CONTEXTE.md).
+globset = { version = "0.4.20", default-features = false }
+blake3 = "1.8.7"
+tempfile = "3.27.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

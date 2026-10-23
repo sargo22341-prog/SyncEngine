@@ -1,0 +1,17 @@
+[package]
+name = "connector-local"
+description = "Connecteur du système de fichiers local (Windows et Linux), en lecture seule en phase 02 : listing, métadonnées et lecture en flux, sans suivre les liens symboliques ni sortir de la racine configurée."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+connector-api.workspace = true
+sync-core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

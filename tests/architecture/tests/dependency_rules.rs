@@ -15,12 +15,48 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
     ("sync-errors", &["sync-core"]),
     ("sync-events", &["sync-core", "sync-errors"]),
     ("connector-api", &["sync-core", "sync-errors"]),
+    ("connector-local", &["sync-core", "connector-api"]),
+    ("connector-memory", &["sync-core", "connector-api"]),
+    ("sync-filter", &["sync-core"]),
+    (
+        "sync-scanner",
+        &[
+            "sync-core",
+            "sync-errors",
+            "sync-filter",
+            "connector-api",
+            "connector-memory",
+        ],
+    ),
+    (
+        "sync-compare",
+        &[
+            "sync-core",
+            "sync-errors",
+            "sync-scanner",
+            "connector-api",
+            "connector-memory",
+            "sync-filter",
+        ],
+    ),
     (
         "syncengine-cli",
-        &["sync-core", "sync-errors", "sync-events", "connector-api"],
+        &[
+            "sync-core",
+            "sync-errors",
+            "sync-events",
+            "connector-api",
+            "connector-local",
+            "sync-filter",
+            "sync-scanner",
+            "sync-compare",
+        ],
     ),
     ("syncengine-architecture-tests", &[]),
 ];
+
+/// Doubles de test : autorisés uniquement en dev-dependency.
+const TEST_DOUBLES: &[&str] = &["connector-memory"];
 
 /// Paquets de présentation : seuls autorisés à dépendre de Tauri.
 const PRESENTATION: &[&str] = &[];
@@ -30,6 +66,8 @@ struct Package {
     description: Option<String>,
     /// Dépendances déclarées (toutes sections : normales, dev, build).
     dependencies: BTreeSet<String>,
+    /// Dépendances hors dev-dependencies (normales et build).
+    non_dev_dependencies: BTreeSet<String>,
 }
 
 // Exception locale : fonction d'aide de test hors `#[test]`, un JSON
@@ -68,6 +106,13 @@ fn workspace_packages() -> Vec<Package> {
                 .as_array()
                 .unwrap()
                 .iter()
+                .map(|dep| dep["name"].as_str().unwrap().to_owned())
+                .collect(),
+            non_dev_dependencies: package["dependencies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|dep| dep["kind"].as_str() != Some("dev"))
                 .map(|dep| dep["name"].as_str().unwrap().to_owned())
                 .collect(),
         })
@@ -112,6 +157,19 @@ fn engines_do_not_depend_on_presentation_layer() {
             assert!(
                 !dep.starts_with("tauri"),
                 "{} dépend de {dep} : Tauri est réservé à la couche de présentation",
+                package.name
+            );
+        }
+    }
+}
+
+#[test]
+fn test_doubles_are_dev_dependencies_only() {
+    for package in workspace_packages() {
+        for double in TEST_DOUBLES {
+            assert!(
+                !package.non_dev_dependencies.contains(*double),
+                "{} dépend de {double} hors dev-dependencies : double de test réservé aux tests",
                 package.name
             );
         }

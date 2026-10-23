@@ -1,0 +1,21 @@
+[package]
+name = "sync-compare"
+description = "Comparaison SyncEngine : confronte deux inventaires et constate, chemin par chemin, présence, équivalence, différences ou incertitude (scan partiel, précision des dates, collisions de casse). Produit des faits, jamais de décisions ; aucune E/S."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+connector-api.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+sync-scanner.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+connector-memory.workspace = true
+sync-filter.workspace = true
+
+[lints]
+workspace = true

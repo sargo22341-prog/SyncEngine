@@ -1,6 +1,6 @@
 [package]
 name = "syncengine-cli"
-description = "Interface en ligne de commande de SyncEngine (squelette phase 01 : aide et version, aucune opération sur des fichiers)."
+description = "Interface en ligne de commande de SyncEngine (phase 02 : inventaire et comparaison de dossiers locaux en lecture seule ; aucune copie, modification ni suppression)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,17 @@ publish.workspace = true
 [[bin]]
 name = "syncengine"
 path = "src/main.rs"
+
+[dependencies]
+connector-local.workspace = true
+sync-compare.workspace = true
+sync-core.workspace = true
+sync-filter.workspace = true
+sync-scanner.workspace = true
+
+[dev-dependencies]
+blake3.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -20,13 +20,16 @@ Ce kit constitue une **spécification de démarrage** ; il ne contient pas encor
 - UI Tauri 2 + frontend TypeScript ; tout le métier, les transferts et les connecteurs en Rust.
 - `AGENTS.md` s'applique au dépôt et reste sous 400 lignes.
 
-## État actuel : phase 01 (fondations)
-Le workspace compile des contrats minimaux (`sync-core`, `sync-errors`, `sync-events`, `connector-api`) et une CLI squelette. **Aucune** fonction de sauvegarde, de miroir, de synchronisation ou de simulation n'est encore disponible ; rien ne lit ni ne modifie de fichier.
+## État actuel : phase 02 (scan et comparaison, lecture seule)
+Le workspace compile les contrats (`sync-core`, `sync-errors`, `sync-events`, `connector-api`), un connecteur local **en lecture seule** (`connector-local`), les moteurs de découverte (`sync-filter`, `sync-scanner`, `sync-compare`) et une CLI qui inventorie et compare des dossiers locaux. **Aucune** fonction de sauvegarde, de miroir ou de synchronisation n'existe encore : rien n'est jamais copié, modifié ni supprimé.
 
-Prérequis : `docs/BUILD.md`. Exemple :
+Prérequis : `docs/BUILD.md`. Exemples :
 ```sh
-cargo run -p syncengine-cli -- version   # syncengine 0.1.0 (windows-x86_64, debug)
-cargo run -p syncengine-cli -- help
+cargo run -p syncengine-cli -- scan ./mon-dossier --exclude "*.tmp" --exclude-dir "**/node_modules"
+cargo run -p syncengine-cli -- compare ./source ./destination          # différences seulement
+cargo run -p syncengine-cli -- compare ./source ./destination --hash --all
 cargo test --workspace --all-features
 ```
+Lecture de `compare` : `<` gauche seulement, `>` droite seulement, `!=` différent, `??` incertain (dossier illisible, date non fiable, collision de casse…), `=` équivalent (avec `--all`). Codes de sortie : 0 rien à signaler, 1 différences, 2 usage, 3 inventaire incomplet ou constats incertains, 4 échec (un dossier inaccessible n'est jamais traité comme vide).
+
 Contrats compilés : `docs/CONTRATS.md` ; décisions : `docs/adr/` ; état de passation : `docs/ETAT_PROJET.md`.
