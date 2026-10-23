@@ -399,7 +399,9 @@ impl ExecutionPlan {
                 }
             }
             match op.reason {
-                Reason::DeletionRefused { .. } => summary.deletions_refused += 1,
+                Reason::DeletionRefused { .. } | Reason::DeletionDisabled => {
+                    summary.deletions_refused += 1
+                }
                 Reason::Uncertain { .. } => summary.uncertain += 1,
                 _ => {}
             }

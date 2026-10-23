@@ -70,9 +70,45 @@ pub fn preview(
     policy: &PlanPolicy,
     cancel: &CancellationToken,
 ) -> Result<ExecutionPlan, SessionError> {
+    preview_observed(
+        history,
+        source,
+        destination,
+        context,
+        filter,
+        policy,
+        cancel,
+        &|_, _, _| {},
+    )
+}
+
+/// Builds the ordinary bidirectional preview with presentation-only scan stats.
+/// `side` identifies the scanned endpoint; the callback must return promptly.
+/// It never authorizes mutations or changes baseline publication.
+/// # Errors
+/// Same validation, scan and persistence errors as [`preview`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "compatible extension of the existing seven-argument preview API; observer is presentation only"
+)]
+pub fn preview_observed(
+    history: &History,
+    source: &dyn StorageConnector,
+    destination: &dyn StorageConnector,
+    context: &PlanContext,
+    filter: &Filter,
+    policy: &PlanPolicy,
+    cancel: &CancellationToken,
+    observe: &dyn Fn(bool, &sync_scanner::ScanStats, usize),
+) -> Result<ExecutionPlan, SessionError> {
     let options = ScanOptions::new().with_hash(HashAlgorithm::Blake3);
-    let left = scan(source, filter, &options, cancel)?;
-    let right = scan(destination, filter, &options, cancel)?;
+    let left = sync_scanner::scan_observed(source, filter, &options, cancel, &|stats, issues| {
+        observe(false, stats, issues)
+    })?;
+    let right =
+        sync_scanner::scan_observed(destination, filter, &options, cancel, &|stats, issues| {
+            observe(true, stats, issues)
+        })?;
     let identity = binding(&left, &right, context)?;
     let baseline = history.baseline(&identity)?;
     Ok(BidirectionalStrategy.build_plan(&left, &right, context, baseline.as_ref(), policy)?)

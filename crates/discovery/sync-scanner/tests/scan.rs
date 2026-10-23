@@ -44,6 +44,43 @@ fn sample() -> MemoryConnector {
 }
 
 #[test]
+fn scan_observations_are_cumulative_and_cancellation_keeps_partial_inventory()
+-> Result<(), Box<dyn std::error::Error>> {
+    let connector = sample();
+    let counts = std::cell::RefCell::new(Vec::new());
+    let token = CancellationToken::new();
+    let inventory = sync_scanner::scan_observed(
+        &connector,
+        &Filter::include_all(),
+        &ScanOptions::new().with_hash(HashAlgorithm::Blake3),
+        &token,
+        &|stats, issues| {
+            counts
+                .borrow_mut()
+                .push((stats.files, stats.hashed, issues))
+        },
+    )?;
+    assert_eq!(inventory.stats().files, 3);
+    assert_eq!(counts.borrow().last().copied(), Some((3, 3, 0)));
+    assert!(
+        counts
+            .borrow()
+            .windows(2)
+            .all(|pair| pair[0].0 <= pair[1].0 && pair[0].1 <= pair[1].1)
+    );
+    let token = CancellationToken::new();
+    let result = sync_scanner::scan_observed(
+        &connector,
+        &Filter::include_all(),
+        &ScanOptions::new(),
+        &token,
+        &|_, _| token.cancel(),
+    );
+    assert!(matches!(result, Err(ScanError::Cancelled { partial }) if !partial.is_complete()));
+    Ok(())
+}
+
+#[test]
 fn empty_root_is_complete_and_empty() {
     let inventory = scan_all(&MemoryConnector::new("mem")).unwrap();
     assert!(inventory.is_empty());

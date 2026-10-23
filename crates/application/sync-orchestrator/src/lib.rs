@@ -27,7 +27,7 @@ use sync_plan::{
     DeletionGuard, DeletionPolicy, ExecutionPlan, OverwritePolicy, PlanPolicy, SyncMode,
 };
 use sync_profiles::{Preferences, Profile, Profiles};
-use sync_scanner::{ScanOptions, scan};
+use sync_scanner::ScanOptions;
 use sync_versioning::VersionStore;
 
 /// Serializable, redacted IPC error. A failed execution may have partial work;
@@ -101,6 +101,12 @@ pub struct JobSnapshot {
     pub entries_done: u64,
     /// Validated transferred bytes (updates between completed files).
     pub bytes_done: u64,
+    /// Entries observed during preview, including directories (both endpoints).
+    pub entries_scanned: u64,
+    /// Nonfatal scan anomalies; unknown coverage never authorizes deletion.
+    pub scan_issues: u64,
+    /// Failed/refused execution observations, after durable journal writes.
+    pub operation_errors: u64,
 }
 
 struct Cached {
@@ -369,8 +375,26 @@ impl Application {
                 },
             );
             let filter = Filter::new(profile.filter.clone()).map_err(io)?;
+            let counts = std::cell::Cell::new([(0u64, 0u64); 2]);
+            let observe = |side: bool, stats: &sync_scanner::ScanStats, issues: usize| {
+                let mut values = counts.get();
+                values[usize::from(side)] = (
+                    stats
+                        .files
+                        .saturating_add(stats.directories)
+                        .saturating_add(stats.others),
+                    issues as u64,
+                );
+                counts.set(values);
+                let mut snapshot = self
+                    .snapshot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                snapshot.entries_scanned = values[0].0.saturating_add(values[1].0);
+                snapshot.scan_issues = values[0].1.saturating_add(values[1].1);
+            };
             let plan = if profile.mode == SyncMode::Bidirectional {
-                sync_session::preview(
+                sync_session::preview_observed(
                     &History::open(self.state.join("state.sqlite")).map_err(io)?,
                     left.as_ref(),
                     right.as_ref(),
@@ -378,12 +402,27 @@ impl Application {
                     &filter,
                     &policy,
                     &cancel,
+                    &observe,
                 )
                 .map_err(io)?
             } else {
                 let options = ScanOptions::new().with_hash(HashAlgorithm::Blake3);
-                let a = scan(left.as_ref(), &filter, &options, &cancel).map_err(io)?;
-                let b = scan(right.as_ref(), &filter, &options, &cancel).map_err(io)?;
+                let a = sync_scanner::scan_observed(
+                    left.as_ref(),
+                    &filter,
+                    &options,
+                    &cancel,
+                    &|stats, issues| observe(false, stats, issues),
+                )
+                .map_err(io)?;
+                let b = sync_scanner::scan_observed(
+                    right.as_ref(),
+                    &filter,
+                    &options,
+                    &cancel,
+                    &|stats, issues| observe(true, stats, issues),
+                )
+                .map_err(io)?;
                 let comparison =
                     sync_compare::compare(&a, &b, &sync_compare::CompareOptions::new())
                         .map_err(io)?;
@@ -595,7 +634,7 @@ struct ObservedJournal<'a> {
 impl JournalSink for ObservedJournal<'_> {
     fn append(&mut self, record: JournalRecord) -> Result<(), JournalError> {
         self.file.append(record.clone())?;
-        if let JournalRecord::OperationFinished { bytes, .. } = record {
+        if let JournalRecord::OperationFinished { bytes, outcome, .. } = record {
             // Presentation-only poison recovery cannot change execution decisions.
             let mut value = self
                 .snapshot
@@ -603,6 +642,12 @@ impl JournalSink for ObservedJournal<'_> {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             value.entries_done = value.entries_done.saturating_add(1);
             value.bytes_done = value.bytes_done.saturating_add(bytes);
+            if matches!(
+                outcome,
+                sync_journal::OutcomeCode::Failed | sync_journal::OutcomeCode::Refused
+            ) {
+                value.operation_errors = value.operation_errors.saturating_add(1);
+            }
         }
         Ok(())
     }

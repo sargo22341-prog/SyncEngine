@@ -57,6 +57,7 @@ fn preview_is_read_only_exact_plan_consumed_once_and_history_survives()
     fs::write(p.source.join("été.txt"), b"data")?;
     fs::write(p.source.join("secret.tmp"), b"excluded")?;
     let preview = app.preview(p.id.clone())?;
+    assert!(app.snapshot()?.entries_scanned >= 1);
     assert!(!p.destination.join("été.txt").exists());
     let id = preview["plan"]["id"]
         .as_str()
@@ -470,5 +471,102 @@ fn paged_preview_transports_only_the_inspected_slice_and_executes_the_whole_plan
         5
     );
     assert!(!historical["operations"][0]["outcome"].is_null());
+    Ok(())
+}
+
+#[test]
+fn mirror_replicates_removal_after_initial_two_file_sync() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (_temp, app, mut p) = fixture(SyncMode::Mirror)?;
+    p.allow_delete = true;
+    app.profile_save(p.clone())?;
+    fs::write(p.source.join("keep.txt"), b"keep")?;
+    fs::write(p.source.join("remove.txt"), b"preserve this version")?;
+    let first = app.preview(p.id.clone())?;
+    app.execute(
+        p.id.clone(),
+        first["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    assert_eq!(
+        fs::read(p.destination.join("remove.txt"))?,
+        b"preserve this version"
+    );
+    // Given two files copied by a real first execution, When one source file
+    // is removed, Then repeated previews remain read-only and plan one deletion.
+    fs::remove_file(p.source.join("remove.txt"))?;
+    for _ in 0..2 {
+        let preview = app.preview(p.id.clone())?;
+        assert_eq!(preview["summary"]["delete"], 1);
+        assert_eq!(preview["summary"]["deletions_refused"], 0);
+        assert!(p.destination.join("remove.txt").exists());
+    }
+    let preview = app.preview(p.id.clone())?;
+    let report = app.execute(
+        p.id.clone(),
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        true,
+    )?;
+    assert_eq!(report["status"], "succeeded");
+    assert!(!p.destination.join("remove.txt").exists());
+    assert_eq!(fs::read(p.destination.join("keep.txt"))?, b"keep");
+    assert_eq!(app.preview(p.id)?["summary"]["delete"], 0);
+    Ok(())
+}
+#[test]
+fn mirror_without_deletion_consent_reports_refusal_instead_of_losing_data()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_temp, app, p) = fixture(SyncMode::Mirror)?;
+    fs::write(p.source.join("keep"), b"keep")?;
+    fs::write(p.destination.join("keep"), b"keep")?;
+    fs::write(p.destination.join("old"), b"old")?;
+    let preview = app.preview(p.id.clone())?;
+    assert_eq!(preview["summary"]["delete"], 0);
+    assert_eq!(preview["summary"]["deletions_refused"], 1);
+    app.execute(
+        p.id,
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    assert_eq!(fs::read(p.destination.join("old"))?, b"old");
+    assert_eq!(
+        app.history_overview(ProfileId::new("p")?)?[0]
+            .report
+            .as_ref()
+            .ok_or("summary")?["deletions_refused"],
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn mirror_revalidates_a_reappeared_source_before_deleting_destination()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_temp, app, mut p) = fixture(SyncMode::Mirror)?;
+    p.allow_delete = true;
+    app.profile_save(p.clone())?;
+    fs::write(p.source.join("keep"), b"keep")?;
+    fs::write(p.destination.join("keep"), b"keep")?;
+    fs::write(p.destination.join("old"), b"destination must survive")?;
+    let preview = app.preview(p.id.clone())?;
+    assert_eq!(preview["summary"]["delete"], 1);
+    // Given a deletion was previewed, When source content reappears, Then the
+    // executor refuses deletion and both independent contents remain intact.
+    fs::write(p.source.join("old"), b"source reappeared")?;
+    let report = app.execute(
+        p.id,
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        true,
+    )?;
+    assert_ne!(report["status"], "succeeded");
+    assert_eq!(
+        fs::read(p.destination.join("old"))?,
+        b"destination must survive"
+    );
+    assert_eq!(fs::read(p.source.join("old"))?, b"source reappeared");
     Ok(())
 }

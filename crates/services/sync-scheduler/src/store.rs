@@ -18,7 +18,7 @@ pub struct ScheduleState {
     /// Latest result only (bounded); detailed application history is separate.
     pub result: Option<Completion>,
 }
-/// SQLite v1 store. One schedule per profile, one receipt per schedule.
+/// SQLite v2 store (transactional v1 migration). One schedule per profile, one receipt per schedule.
 /// Keep outside synchronized roots; back up with all application state at rest.
 pub struct Scheduler(Connection);
 impl Scheduler {
@@ -45,8 +45,11 @@ impl Scheduler {
                 return Err(SchedulerError::Invalid("foreign database"));
             }
             tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
-        } else if version != 1 || app != 1_398_361_682 {
+        } else if !(1..=2).contains(&version) || app != 1_398_361_682 {
             return Err(SchedulerError::Invalid("unknown scheduler schema"));
+        }
+        if version < 2 {
+            tx.execute_batch(include_str!("../migrations/002_session_wakes.sql"))?;
         }
         tx.commit()?;
         db.execute_batch("PRAGMA synchronous=FULL;")?;
@@ -148,6 +151,19 @@ impl Scheduler {
         if !(0..=i64::MAX - 86_400).contains(&now) {
             return Err(SchedulerError::Invalid("clock out of range"));
         }
+        if matches!(wake, Wake::Session(platform_api::SessionEvent::Logon)) {
+            // Coalesce duplicate native notifications within one minute. Never
+            // let a wall-clock rollback replace a newer observed event.
+            self.0.execute("INSERT INTO session_wakes VALUES('logon',?1) ON CONFLICT(event) DO UPDATE SET occurred_at=excluded.occurred_at WHERE excluded.occurred_at/60>session_wakes.occurred_at/60", [now])?;
+        }
+        let logon: Option<i64> = self
+            .0
+            .query_row(
+                "SELECT occurred_at FROM session_wakes WHERE event='logon'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
         let mut results = Vec::new();
         for state in self.list()? {
             if cancel.is_cancelled() {
@@ -164,7 +180,18 @@ impl Scheduler {
                 });
                 continue;
             }
-            let Some(slot) = state.schedule.slot(now, wake) else {
+            let due = if let crate::Trigger::LogonDelayed { seconds } = state.schedule.trigger {
+                logon
+                    .filter(|event| state.schedule.enabled && *event >= state.schedule.created_at)
+                    .and_then(|event| event.checked_add(i64::from(seconds)))
+                    .filter(|due| {
+                        *due <= now
+                            && (state.schedule.missed != crate::MissedJobs::Skip || now - *due < 60)
+                    })
+            } else {
+                state.schedule.slot(now, wake)
+            };
+            let Some(slot) = due else {
                 continue;
             };
             let json = serde_json::to_string(&state.schedule)?;

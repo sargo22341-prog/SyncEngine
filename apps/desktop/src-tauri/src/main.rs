@@ -1,6 +1,7 @@
 //! Desktop IPC transport. All filesystem/SQLite work runs on blocking workers.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod native;
 use std::future::Future;
 use std::sync::Arc;
 use sync_core::ProfileId;
@@ -162,6 +163,36 @@ fn schedule_remove(
 ) -> impl Future<Output = Result<(), AppError>> + Send + use<> {
     worker(app.inner().clone(), move |a| a.schedule_remove(id))
 }
+#[tauri::command(async)]
+async fn browse_folder() -> Result<Option<String>, AppError> {
+    tauri::async_runtime::spawn_blocking(native::browse)
+        .await
+        .map_err(transport)?
+}
+#[tauri::command(async)]
+async fn startup_enabled() -> Result<bool, AppError> {
+    tauri::async_runtime::spawn_blocking(native::startup_enabled)
+        .await
+        .map_err(transport)?
+}
+#[tauri::command(async)]
+async fn startup_save(enabled: bool) -> Result<(), AppError> {
+    tauri::async_runtime::spawn_blocking(move || native::startup_save(enabled))
+        .await
+        .map_err(transport)?
+}
+#[tauri::command]
+fn native_capabilities() -> serde_json::Value {
+    serde_json::json!({"windows":cfg!(windows)})
+}
+#[tauri::command(async)]
+fn agent_activate(
+    app: State<'_, App>,
+) -> impl Future<Output = Result<(), AppError>> + Send + use<> {
+    worker(app.inner().clone(), |a| {
+        native::activate_agent(a.state_directory())
+    })
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tauri::Builder::default()
         .setup(|app| {
@@ -205,6 +236,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            browse_folder,
+            startup_enabled,
+            startup_save,
+            native_capabilities,
+            agent_activate,
             profiles_list,
             profile_save,
             profile_remove,

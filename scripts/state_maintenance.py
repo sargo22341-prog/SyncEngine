@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 DATABASES = {"profiles.sqlite": (1398361680, (1, 2)),
              "state.sqlite": (1398361669, (1,)),
              "desktop-runs.sqlite": (1398361681, (1,)),
-             "scheduler.sqlite": (1398361682, (1,))}
+             "scheduler.sqlite": (1398361682, (1, 2))}
 IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 
 

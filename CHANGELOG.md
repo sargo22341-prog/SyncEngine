@@ -183,3 +183,12 @@ Première livraison de cette phase (complétée ci-dessus) :
 - Licence GPL-3.0-only choisie par le propriétaire, texte officiel inclus et
   métadonnées Cargo, frontend et paquets renseignées. Les licences tierces
   restent distinctes.
+
+## Corrections UX et miroir — 23 octobre 2026
+
+- Actions par profil, sélection explicite en simulation, regroupement et édition des groupes.
+- Éditeur pleine page avec champs distants sans JSON, choix de dossiers, exemples de filtres et planification facultative.
+- Historique graphique paginé et suivi agrégé avec courbes d’analyse et de transfert.
+- Ouverture de la fenêtre à la connexion Windows, activation explicite de l’agent et déclencheur de connexion avec délai persistant.
+- Visibilité des suppressions interdites dans les résumés et historiques ; régressions miroir deux fichiers/retrait et source réapparue.
+- Migration additive du scheduler v1 vers v2 ; livrer ensemble GUI, agent et maintenance. Détails : `docs/CORRECTIONS_UX_MIROIR.md`.

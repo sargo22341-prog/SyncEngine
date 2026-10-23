@@ -112,7 +112,7 @@ pub(super) fn overview(root: &Path, id: &ProfileId) -> Result<Vec<Run>, AppError
 fn list_view(root: &Path, id: &ProfileId, overview: bool) -> Result<Vec<Run>, AppError> {
     let db = open(root)?;
     let query = if overview {
-        "SELECT execution,started,state,'null',CASE WHEN report IS NULL THEN NULL ELSE json_object('status',COALESCE(json_extract(report,'$.status'),json_extract(report,'$.execution.status')),'verification_error',substr(json_extract(report,'$.verification_error'),1,4096),'baseline_updated',json_extract(report,'$.baseline_updated'),'code',json_extract(report,'$.code'),'message',substr(json_extract(report,'$.message'),1,4096),'totals',COALESCE(json_extract(report,'$.totals'),json_extract(report,'$.execution.totals'))) END FROM runs WHERE profile=?1 ORDER BY (state='running') DESC,rowid DESC LIMIT 100"
+        "SELECT execution,started,state,'null',CASE WHEN report IS NULL THEN NULL ELSE json_object('status',COALESCE(json_extract(report,'$.status'),json_extract(report,'$.execution.status')),'verification_error',substr(json_extract(report,'$.verification_error'),1,4096),'baseline_updated',json_extract(report,'$.baseline_updated'),'code',json_extract(report,'$.code'),'message',substr(json_extract(report,'$.message'),1,4096),'totals',COALESCE(json_extract(report,'$.totals'),json_extract(report,'$.execution.totals')),'deletions_refused',(SELECT count(*) FROM json_each(runs.plan,'$.operations') WHERE json_extract(value,'$.reason.code') IN ('deletion_disabled','deletion_refused'))) END FROM runs WHERE profile=?1 ORDER BY (state='running') DESC,rowid DESC LIMIT 100"
     } else {
         "SELECT execution,started,state,plan,report FROM runs WHERE profile=?1 ORDER BY (state='running') DESC,rowid DESC LIMIT 100"
     };

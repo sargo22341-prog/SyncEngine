@@ -34,7 +34,7 @@ impl Application {
                 "autorisation des écritures sans fenêtre requise",
             ));
         }
-        if matches!(trigger, Trigger::Logon) && !cfg!(windows)
+        if matches!(trigger, Trigger::Logon | Trigger::LogonDelayed { .. }) && !cfg!(windows)
             || matches!(trigger, Trigger::UserManagerStart) && !cfg!(target_os = "linux")
         {
             return Err(error(

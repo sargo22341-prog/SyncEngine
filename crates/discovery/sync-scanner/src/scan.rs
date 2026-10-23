@@ -146,6 +146,22 @@ pub fn scan(
     options: &ScanOptions,
     cancel: &CancellationToken,
 ) -> Result<Inventory, ScanError> {
+    scan_observed(connector, filter, options, cancel, &|_, _| {})
+}
+
+/// Scans with synchronous aggregate observations after directories and hashes.
+/// The observer receives cumulative stats and issue count for this endpoint;
+/// it must return promptly and must not mutate storage or authorize operations.
+/// No observation queue is retained. Guarantees and errors are those of [`scan`].
+/// # Errors
+/// Same errors and partial-inventory semantics as [`scan`].
+pub fn scan_observed(
+    connector: &dyn StorageConnector,
+    filter: &Filter,
+    options: &ScanOptions,
+    cancel: &CancellationToken,
+    observe: &dyn Fn(&crate::ScanStats, usize),
+) -> Result<Inventory, ScanError> {
     let capabilities = connector.capabilities();
     if let Some(algorithm) = options.hash {
         let native = capabilities.native_hashes.contains(&algorithm);
@@ -197,13 +213,15 @@ pub fn scan(
                     .push(ScanIssue::new(directory, ScanIssueKind::ListFailed(kind)));
             }
         }
+        observe(&inventory.stats, inventory.issues.len());
     }
 
     if let Some(algorithm) = options.hash
-        && hash_files(connector, &mut inventory, algorithm, cancel) == HashPass::Cancelled
+        && hash_files(connector, &mut inventory, algorithm, cancel, observe) == HashPass::Cancelled
     {
         return Err(cancelled(inventory, &[]));
     }
+    observe(&inventory.stats, inventory.issues.len());
     Ok(inventory)
 }
 
@@ -355,6 +373,7 @@ fn hash_files(
     inventory: &mut Inventory,
     algorithm: HashAlgorithm,
     cancel: &CancellationToken,
+    observe: &dyn Fn(&crate::ScanStats, usize),
 ) -> HashPass {
     let targets: Vec<ResourcePath> = inventory
         .entries
@@ -415,6 +434,7 @@ fn hash_files(
             *entry = before.with_metadata(metadata);
             inventory.stats.hashed += 1;
         }
+        observe(&inventory.stats, inventory.issues.len());
     }
     HashPass::Completed
 }

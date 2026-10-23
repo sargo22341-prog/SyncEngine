@@ -9,7 +9,7 @@ use sync_orchestrator::Application;
 use sync_scheduler::{JobStatus, MissedJobs, Schedule, Scheduler, Trigger, Wake};
 
 type Failure = Box<dyn std::error::Error>;
-const USAGE: &str = "syncengine-agent list STATE | authorize STATE PROFILE interval SECONDS|daily UTC_HOUR UTC_MINUTE|logon|manager-start --approve-writes [--approve-deletions] [--skip-missed] | remove STATE PROFILE | acknowledge STATE PROFILE --diagnosed | tick STATE clock|logon|manager-start | cancel STATE | clear-cancel STATE | export STATE OUTPUT windows|linux";
+const USAGE: &str = "syncengine-agent list STATE | authorize STATE PROFILE interval SECONDS|daily UTC_HOUR UTC_MINUTE|logon|logon-delay SECONDS|manager-start --approve-writes [--approve-deletions] [--skip-missed] | remove STATE PROFILE | acknowledge STATE PROFILE --diagnosed | tick STATE clock|logon|logon-delay SECONDS|manager-start | cancel STATE | clear-cancel STATE | export STATE OUTPUT windows|linux";
 fn main() {
     let result = run(std::env::args().skip(1).collect());
     let code = match result {
@@ -107,10 +107,16 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
                     6,
                 ),
                 "logon" => (Trigger::Logon, 4),
+                "logon-delay" if args.len() > 5 => (
+                    Trigger::LogonDelayed {
+                        seconds: args[4].parse()?,
+                    },
+                    5,
+                ),
                 "manager-start" => (Trigger::UserManagerStart, 4),
                 _ => return Err(USAGE.into()),
             };
-            if matches!(trigger, Trigger::Logon) && !cfg!(windows)
+            if matches!(trigger, Trigger::Logon | Trigger::LogonDelayed { .. }) && !cfg!(windows)
                 || matches!(trigger, Trigger::UserManagerStart) && !cfg!(target_os = "linux")
             {
                 return Err("session trigger NotSupported on this OS".into());

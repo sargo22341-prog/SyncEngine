@@ -288,3 +288,61 @@ fn disable_and_remove_do_not_invoke_application() -> Result<(), Box<dyn std::err
     assert_eq!(app.calls.get(), 0);
     Ok(())
 }
+
+#[test]
+fn delayed_logon_survives_restart_and_never_runs_early_or_replays()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("db");
+    let mut db = Scheduler::open(&path)?;
+    let mut s = schedule(&temp)?;
+    s.trigger = Trigger::LogonDelayed { seconds: 90 };
+    db.save(&s)?;
+    let app = Mock {
+        calls: Cell::new(0),
+        status: JobStatus::Succeeded,
+    };
+    let cancel = CancellationToken::new();
+    // Given no native logon, clock polls alone cannot invent a session event.
+    assert!(db.dispatch(200, Wake::Clock, &app, &cancel)?.is_empty());
+    assert!(
+        db.dispatch(200, Wake::Session(SessionEvent::Logon), &app, &cancel)?
+            .is_empty()
+    );
+    // Duplicate native event in the same minute must not postpone the deadline.
+    assert!(
+        db.dispatch(205, Wake::Session(SessionEvent::Logon), &app, &cancel)?
+            .is_empty()
+    );
+    drop(db);
+    let mut db = Scheduler::open(&path)?;
+    assert!(db.dispatch(289, Wake::Clock, &app, &cancel)?.is_empty());
+    assert_eq!(db.dispatch(290, Wake::Clock, &app, &cancel)?.len(), 1);
+    assert!(db.dispatch(300, Wake::Clock, &app, &cancel)?.is_empty());
+    assert!(db.dispatch(280, Wake::Clock, &app, &cancel)?.is_empty());
+    assert_eq!(app.calls.get(), 1);
+    Ok(())
+}
+#[test]
+fn migration_v1_preserves_authorization_and_completion() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("db");
+    let s = schedule(&temp)?;
+    let old = rusqlite::Connection::open(&path)?;
+    old.execute_batch(include_str!("../migrations/001_initial.sql"))?;
+    old.execute(
+        "INSERT INTO schedules(profile,config,last_slot) VALUES(?1,?2,123)",
+        rusqlite::params![s.approved.id.as_str(), serde_json::to_string(&s)?],
+    )?;
+    drop(old);
+    let db = Scheduler::open(&path)?;
+    let rows = db.list()?;
+    assert_eq!(rows[0].schedule, s);
+    assert_eq!(rows[0].last_slot, Some(123));
+    assert_eq!(
+        rusqlite::Connection::open(&path)?
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
+        2
+    );
+    Ok(())
+}

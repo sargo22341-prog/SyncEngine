@@ -46,6 +46,11 @@ pub enum Trigger {
     },
     /// Windows logon, supported only by the Windows adapter.
     Logon,
+    /// Windows logon followed by a durable delay; requires clock polling too.
+    LogonDelayed {
+        /// Delay in 1..=86400 seconds, dispatched on the next eligible poll.
+        seconds: u32,
+    },
     /// Linux user manager start, not each desktop login.
     UserManagerStart,
 }
@@ -93,6 +98,9 @@ impl Schedule {
             }
             Trigger::DailyUtc { hour, minute } if hour > 23 || minute > 59 => {
                 Err(SchedulerError::Invalid("daily UTC time out of range"))
+            }
+            Trigger::LogonDelayed { seconds } if !(1..=86_400).contains(&seconds) => {
+                Err(SchedulerError::Invalid("logon delay out of range"))
             }
             _ => Ok(()),
         }
