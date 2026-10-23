@@ -1,0 +1,18 @@
+[package]
+name = "sync-errors"
+description = "Classification structurée des erreurs SyncEngine : classes et codes stables pour l'interface, gravité, contexte (profil, exécution, chemin), chaîne de causes et caviardage des secrets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+sync-core.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/foundation/sync-core",
+    "crates/foundation/sync-errors",
+    "crates/foundation/sync-events",
+    "crates/adapters/connector-api",
+    "apps/cli",
+    "tests/architecture",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+# Crates internes (option A : liés à la compilation).
+sync-core = { path = "crates/foundation/sync-core" }
+sync-errors = { path = "crates/foundation/sync-errors" }
+sync-events = { path = "crates/foundation/sync-events" }
+connector-api = { path = "crates/adapters/connector-api" }
+
+# Dépendances externes : versions épinglées en semver mineur, Cargo.lock versionné.
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+unused_must_use = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+let_underscore_must_use = "warn"

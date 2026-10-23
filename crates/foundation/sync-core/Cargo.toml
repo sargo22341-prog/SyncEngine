@@ -1,0 +1,17 @@
+[package]
+name = "sync-core"
+description = "Types partagés stables de SyncEngine : identifiants typés, chemins logiques, horodatages, entrées de fichiers et statut d'exécution. Aucune E/S, aucune dépendance d'interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

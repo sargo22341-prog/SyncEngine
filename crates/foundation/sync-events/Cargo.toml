@@ -1,0 +1,18 @@
+[package]
+name = "sync-events"
+description = "Événements informatifs SyncEngine (cycle de vie, progression agrégée, diagnostics) et diffusion bornée non bloquante. Les événements ne sont jamais une source de vérité."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+sync-core.workspace = true
+sync-errors.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

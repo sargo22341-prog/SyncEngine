@@ -1,0 +1,73 @@
+# Contrôles obligatoires (AGENTS.md, section QUALITÉ RUST).
+# La chaîne Rust est lue depuis rust-toolchain.toml.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: Contrôles (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Debian n'est pas disponible en runner hébergé : Ubuntu sert de cible
+        # Linux de référence ; Debian reste à valider (voir docs/ETAT_PROJET.md).
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer la chaîne Rust épinglée
+        run: rustup toolchain install
+
+      - name: Versions
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Formatage
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --all-features --locked
+
+      - name: Check sans warning
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo check --workspace --all-targets --all-features --locked
+
+      - name: Documentation sans warning
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --no-deps --all-features --locked
+
+  audit:
+    name: Audit des dépendances
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer la chaîne Rust épinglée
+        run: rustup toolchain install
+
+      - name: Installer cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit RustSec
+        run: cargo audit

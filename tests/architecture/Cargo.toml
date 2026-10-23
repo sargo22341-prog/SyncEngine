@@ -1,0 +1,18 @@
+[package]
+name = "syncengine-architecture-tests"
+description = "Tests d'architecture du workspace : direction des dépendances internes, absence de dépendance d'interface dans les moteurs, description obligatoire des crates."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+test = false
+doctest = false
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
