@@ -11,7 +11,9 @@ réseau expérimentaux, activés séparément :
 [SMB natif](crates/connectors/network/connector-smb/README.md).
 Sources/destinations selon capacités documentées, SMB Linux lecture seule.
 Factories Rust : [registre statique](crates/adapters/connector-registry/README.md).
-Les profils/GUI restent locaux ; aucun cloud implémenté.
+La phase 09 ajoute une [source OneDrive expérimentale en lecture seule](crates/connectors/cloud/connector-onedrive/README.md),
+avec jetons fournis par un service externe et tests HTTPS isolés ; aucun compte
+Microsoft réel validé. Les profils/GUI restent locaux.
 
 Phase 06 : profils persistants, assistant, simulation, exécution confirmée,
 annulation, progression agrégée, historique et paramètres d’affichage.

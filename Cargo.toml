@@ -2,6 +2,8 @@
 resolver = "3"
 exclude = ["vendor/suppaftp"]
 members = [
+    "crates/services/sync-credentials",
+    "crates/connectors/cloud/connector-onedrive",
     "crates/adapters/connector-registry",
     "crates/connectors/network/connector-ftp-transport",
     "crates/connectors/network/connector-ftp",
@@ -51,6 +53,7 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
+sync-credentials = { path = "crates/services/sync-credentials" }
 connector-ftp-transport = { path = "crates/connectors/network/connector-ftp-transport" }
 connector-staging = { path = "crates/adapters/connector-staging" }
 suppaftp = { version = "12.1.1", default-features = false, features = ["native-tls"] }

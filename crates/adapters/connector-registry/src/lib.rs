@@ -5,6 +5,28 @@
 use connector_api::{StorageConnector, StorageError};
 use std::sync::Arc;
 
+/// Factory cloud additive, sans étendre les enums exhaustifs réseau existants.
+/// Absente à la compilation sans la feature `onedrive`.
+#[cfg(feature = "onedrive")]
+pub mod onedrive {
+    use super::*;
+    /// Configuration du provider OneDrive en lecture seule.
+    pub use connector_onedrive::OneDriveOptions;
+    /// Construit une source Graph puis vérifie la connexion à sa racine.
+    /// Le service externe fournit les jetons et borne ses propres délais.
+    /// # Errors
+    /// Configuration invalide, authentification, accès, réseau ou annulation.
+    pub fn connect(
+        options: OneDriveOptions,
+        tokens: Arc<dyn sync_credentials::AccessTokenProvider>,
+        cancel: &sync_core::CancellationToken,
+    ) -> Result<Arc<dyn StorageConnector>, StorageError> {
+        let connector = connector_onedrive::OneDriveConnector::new(options, tokens)?;
+        connector.connect(cancel)?;
+        Ok(Arc::new(connector))
+    }
+}
+
 /// Protocole distinct, jamais confondu par une factory de repli.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {

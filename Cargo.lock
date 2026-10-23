@@ -415,16 +415,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "connector-onedrive"
+version = "0.1.0"
+dependencies = [
+ "connector-api",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sync-core",
+ "sync-credentials",
+ "sync-filter",
+ "sync-scanner",
+]
+
+[[package]]
 name = "connector-registry"
 version = "0.1.0"
 dependencies = [
  "connector-api",
  "connector-ftp",
  "connector-ftps",
+ "connector-onedrive",
  "connector-sftp",
  "connector-smb",
  "connector-webdav",
  "sync-core",
+ "sync-credentials",
 ]
 
 [[package]]
@@ -3439,6 +3455,13 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sync-credentials"
+version = "0.1.0"
+dependencies = [
+ "sync-core",
 ]
 
 [[package]]

@@ -2,6 +2,13 @@
 
 ## [0.1.0] — non publié
 
+### Ajouté (phase 09 — source OneDrive expérimentale)
+- Connecteur Microsoft Graph en lecture seule, pagination serveur, métadonnées
+  et téléchargement en flux avec contrôle taille/ETag à EOF.
+- Port de jetons runtime externe et factory statique optionnelle ; aucun
+  login OAuth, secret persistant, destination cloud ou écran GUI annoncé.
+- Tests HTTPS isolés, limites de cohérence et conditions de recette documentées.
+
 ### Ajouté (phase 08 — sources réseau expérimentales)
 - Complément de clôture : destinations SFTP/WebDAV, providers FTP/FTPS séparés,
   adaptateur SMB natif (UNC Windows ; CIFS Linux lecture seule) et registre statique.

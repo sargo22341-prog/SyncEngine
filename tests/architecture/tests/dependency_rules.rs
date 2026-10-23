@@ -11,6 +11,17 @@ use serde_json::Value;
 /// Tout nouveau paquet doit être ajouté ici : un paquet absent fait échouer
 /// le test, ce qui force à décider explicitement de sa place dans le graphe.
 const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
+    ("sync-credentials", &["sync-core"]),
+    (
+        "connector-onedrive",
+        &[
+            "sync-core",
+            "connector-api",
+            "sync-credentials",
+            "sync-scanner",
+            "sync-filter",
+        ],
+    ),
     (
         "connector-registry",
         &[
@@ -21,6 +32,8 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "connector-ftp",
             "connector-ftps",
             "connector-smb",
+            "connector-onedrive",
+            "sync-credentials",
         ],
     ),
     (

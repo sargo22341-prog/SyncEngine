@@ -70,12 +70,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Contrats SFTP, HTTPS, FTP et FTPS sur serveurs éphémères
+      - name: Contrats SFTP, HTTPS, FTP, FTPS et OneDrive sur serveurs éphémères
         run: |
           python -m pip install paramiko==5.1.0 pyftpdlib==2.2.0 pyopenssl==26.4.0
           python scripts/test_phase08_sftp.py
           python scripts/test_phase08_webdav.py
           python scripts/test_phase08_ftp.py
+          python scripts/test_phase09_onedrive.py
 
       - name: Registre sans providers activés
         run: cargo test -p connector-registry --no-default-features --locked

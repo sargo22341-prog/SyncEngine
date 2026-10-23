@@ -7,12 +7,15 @@ rust-version.workspace = true
 publish.workspace = true
 [features]
 default = []
+onedrive = ["dep:connector-onedrive", "dep:sync-credentials"]
 sftp = ["dep:connector-sftp"]
 webdav = ["dep:connector-webdav"]
 ftp = ["dep:connector-ftp"]
 ftps = ["dep:connector-ftps"]
 smb = ["dep:connector-smb"]
 [dependencies]
+connector-onedrive = { path = "../../connectors/cloud/connector-onedrive", features = ["onedrive"], optional = true }
+sync-credentials = { workspace = true, optional = true }
 sync-core.workspace = true
 connector-api.workspace = true
 connector-sftp = { path = "../../connectors/network/connector-sftp", features=["sftp"],optional=true }
