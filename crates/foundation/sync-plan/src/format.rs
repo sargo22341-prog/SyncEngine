@@ -68,7 +68,7 @@ impl ExecutionPlan {
             .get("schema_version")
             .and_then(Value::as_u64)
             .ok_or(PlanFormatError::MissingVersion)?;
-        if found != u64::from(PLAN_SCHEMA_VERSION) {
+        if found != u64::from(PLAN_SCHEMA_VERSION) && found != 2 {
             return Err(PlanFormatError::UnsupportedVersion { found });
         }
         let raw: RawPlan = serde_json::from_value(value).map_err(PlanFormatError::Malformed)?;

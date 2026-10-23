@@ -572,10 +572,10 @@ fn tampered_plans_are_rejected() {
 
 #[test]
 fn schema_version_is_checked_first() {
-    let error = tampered(|v| v["schema_version"] = 2.into()).unwrap_err();
+    let error = tampered(|v| v["schema_version"] = 3.into()).unwrap_err();
     assert!(matches!(
         error,
-        PlanFormatError::UnsupportedVersion { found: 2 }
+        PlanFormatError::UnsupportedVersion { found: 3 }
     ));
     let error = tampered(|v| {
         v.as_object_mut().unwrap().remove("schema_version");

@@ -192,7 +192,14 @@ impl<'a> Run<'a> {
     }
 
     fn visit(&mut self, index: usize, op: &'a Operation) {
+        let reverse = op.target() == PlanSide::Source;
+        if reverse {
+            std::mem::swap(&mut self.req.source, &mut self.req.destination);
+        }
         let status = self.status_of(op);
+        if reverse {
+            std::mem::swap(&mut self.req.source, &mut self.req.destination);
+        }
         let mutation = op.action().is_mutation();
         if mutation && !matches!(status, OutcomeStatus::NotStarted) {
             self.progress.entries_done += 1;
@@ -224,6 +231,16 @@ impl<'a> Run<'a> {
                     operation: dependency.clone(),
                 },
             };
+        }
+        if self.req.plan.mode() == sync_plan::SyncMode::Bidirectional
+            && let Err(error) = self.req.journal.append(JournalRecord::OperationDirection {
+                operation: op.id().clone(),
+                target: op.target(),
+            })
+        {
+            self.stop = Some(StopCause::JournalFailure);
+            self.diagnostic(&error, Severity::Fatal, op);
+            return OutcomeStatus::NotStarted;
         }
         if let Err(error) = self.req.journal.append(JournalRecord::OperationStarted {
             operation: op.id().clone(),
@@ -321,8 +338,11 @@ impl<'a> Run<'a> {
     fn verify_source(&self, op: &Operation) -> Result<(), Interrupt> {
         let snapshot = self.snapshot(op, op.source())?;
         match self.req.source.stat(op.path(), self.req.cancel) {
-            Ok(entry) => compare_observation(snapshot.kind(), snapshot.metadata(), &entry)
-                .map_err(|mismatch| Interrupt::Refused(Refusal::SourceChanged { mismatch })),
+            Ok(entry) => {
+                compare_observation(snapshot.kind(), snapshot.metadata(), &entry)
+                    .map_err(|mismatch| Interrupt::Refused(Refusal::SourceChanged { mismatch }))?;
+                self.verify_hash(op, snapshot, self.req.source, true)
+            }
             Err(error) if error.kind() == StorageErrorKind::NotFound => {
                 Err(Interrupt::Refused(Refusal::SourceVanished))
             }
@@ -344,8 +364,12 @@ impl<'a> Run<'a> {
     fn verify_destination_unchanged(&self, op: &Operation) -> Result<(), Interrupt> {
         let snapshot = self.snapshot(op, op.destination())?;
         match self.req.destination.stat(op.path(), self.req.cancel) {
-            Ok(entry) => compare_observation(snapshot.kind(), snapshot.metadata(), &entry)
-                .map_err(|mismatch| Interrupt::Refused(Refusal::DestinationChanged { mismatch })),
+            Ok(entry) => {
+                compare_observation(snapshot.kind(), snapshot.metadata(), &entry).map_err(
+                    |mismatch| Interrupt::Refused(Refusal::DestinationChanged { mismatch }),
+                )?;
+                self.verify_hash(op, snapshot, self.req.destination, false)
+            }
             Err(error) if error.kind() == StorageErrorKind::NotFound => {
                 Err(Interrupt::Refused(Refusal::DestinationVanished))
             }
@@ -354,11 +378,64 @@ impl<'a> Run<'a> {
     }
 
     /// Avant la première suppression : la source doit être lisible.
+    fn verify_hash(
+        &self,
+        op: &Operation,
+        snapshot: &EntrySnapshot,
+        connector: &dyn connector_api::StorageConnector,
+        source: bool,
+    ) -> Result<(), Interrupt> {
+        if self.req.plan.mode() != sync_plan::SyncMode::Bidirectional
+            || snapshot.kind() != EntryKind::File
+        {
+            return Ok(());
+        }
+        let (Some(hash), Some(size)) = (snapshot.metadata().hash(), snapshot.metadata().size())
+        else {
+            return Err(Interrupt::Refused(if source {
+                Refusal::SourceChanged {
+                    mismatch: Mismatch::Unverifiable,
+                }
+            } else {
+                Refusal::DestinationChanged {
+                    mismatch: Mismatch::Unverifiable,
+                }
+            }));
+        };
+        verify_content(
+            connector,
+            op.path(),
+            hash,
+            size,
+            self.req.options.buffer_size,
+            self.req.cancel,
+        )
+        .map_err(|error| match error {
+            VerifyError::Mismatch(mismatch) => Interrupt::Refused(if source {
+                Refusal::SourceChanged { mismatch }
+            } else {
+                Refusal::DestinationChanged { mismatch }
+            }),
+            VerifyError::Storage(error) => self.storage(
+                op,
+                &error,
+                if source {
+                    PlanSide::Source
+                } else {
+                    PlanSide::Destination
+                },
+            ),
+            other => self.fail(op, &other, None),
+        })
+    }
+
     fn check_source_before_deletions(&mut self) {
         let root = ResourcePath::root();
-        match self.req.source.stat(&root, self.req.cancel) {
-            Ok(entry) if entry.kind() == EntryKind::Directory => {}
-            _ => self.deletions_blocked = true,
+        for connector in [self.req.source, self.req.destination] {
+            match connector.stat(&root, self.req.cancel) {
+                Ok(entry) if entry.kind() == EntryKind::Directory => {}
+                _ => self.deletions_blocked = true,
+            }
         }
     }
 
@@ -691,6 +768,7 @@ impl<'a> Run<'a> {
             }
             outcomes.push(OperationOutcome {
                 operation: op.id().clone(),
+                target: op.target(),
                 path: op.path().clone(),
                 action: op.action(),
                 status,

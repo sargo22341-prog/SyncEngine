@@ -35,7 +35,7 @@ use sync_core::{
     ExecutionId, ExecutionStatus, OperationId, PlanId, ProfileId, ResourcePath, Timestamp,
 };
 use sync_errors::{ClassifiedError, ErrorClass};
-use sync_plan::Action;
+use sync_plan::{Action, PlanSide};
 use thiserror::Error;
 
 /// Version du format de journal produite par cette version du code.
@@ -85,6 +85,13 @@ pub struct JournalTotals {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum JournalRecord {
+    /// Physical receiver, recorded before a bidirectional operation starts.
+    OperationDirection {
+        /// Operation identifier.
+        operation: OperationId,
+        /// Physical receiving endpoint.
+        target: PlanSide,
+    },
     /// Début d'exécution (avant toute mutation).
     ExecutionStarted {
         /// Exécution.
@@ -375,6 +382,8 @@ pub struct Replay {
 /// Opération commencée mais sans issue consignée (exécution interrompue).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InFlight {
+    /// Physical receiving endpoint (destination for legacy journals).
+    pub target: PlanSide,
     /// Opération.
     pub operation: OperationId,
     /// Chemin.
@@ -435,8 +444,12 @@ impl Replay {
             ..RecoveryReport::default()
         };
         let mut open: Vec<InFlight> = Vec::new();
+        let mut directions = std::collections::BTreeMap::new();
         for entry in &self.lines {
             match &entry.record {
+                JournalRecord::OperationDirection { operation, target } => {
+                    directions.insert(operation.clone(), *target);
+                }
                 JournalRecord::ExecutionStarted {
                     execution,
                     plan,
@@ -452,6 +465,10 @@ impl Replay {
                     path,
                     action,
                 } => open.push(InFlight {
+                    target: directions
+                        .get(operation)
+                        .copied()
+                        .unwrap_or(PlanSide::Destination),
                     operation: operation.clone(),
                     path: path.clone(),
                     action: *action,

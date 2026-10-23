@@ -2,6 +2,14 @@
 
 SyncEngine fournit une CLI Rust pour inventorier, comparer, prévisualiser et exécuter des sauvegardes ou miroirs locaux. L'interface graphique, l'agent et les connecteurs réseau/cloud ne sont pas encore implémentés.
 
+La phase 05 ajoute la synchronisation bidirectionnelle locale : baseline
+SQLite, historique, tombstones et conflits conservés en place. Entrée réelle :
+`cargo run -p sync-session --example local -- SOURCE DESTINATION ETAT`
+(simulation par défaut, `--execute` pour appliquer). Voir le
+[README de phase 05](crates/application/sync-session/README.md) pour les dossiers
+requis, les protections, les versions et la reprise après interruption.
+La CLI historique conserve ses commandes backup/mirror.
+
 ## Entrée rapide
 1. Lire `CONTEXTE.md`, puis `AGENTS.md`, puis `docs/CONTRATS.md`.
 2. Choisir **un seul** fichier `prompts/PHASE_XX_*.md` et le transmettre à une session IA avec les trois documents précédents.
@@ -20,7 +28,7 @@ SyncEngine fournit une CLI Rust pour inventorier, comparer, prévisualiser et ex
 - UI Tauri 2 + frontend TypeScript ; tout le métier, les transferts et les connecteurs en Rust.
 - `AGENTS.md` s'applique au dépôt et reste sous 400 lignes.
 
-## État actuel : phase 04 (exécution sécurisée locale)
+## CLI des phases 01 à 04 (exécution sécurisée locale)
 Le workspace comprend les contrats, la découverte, les stratégies sauvegarde/miroir et les moteurs `sync-copy`, `sync-verify`, `sync-versioning`, `sync-journal`, `sync-executor`. `scan`, `compare` et `preview` restent sans mutation ; **`execute` modifie réellement la destination**, après confirmation. La source est ouverte en lecture seule. Les contrats de phase 04 sont soumis à revue (ADR 0004).
 
 Prérequis : `docs/BUILD.md`. Exemples :

@@ -2,6 +2,26 @@
 
 ## [0.1.0] — non publié
 
+### Ajouté (phase 05 — synchronisation bidirectionnelle)
+- `sync-bidirectional` : décisions par baseline et BLAKE3 dans les deux sens ;
+  conflits préservés en place, tombstones sans expiration, aucune suppression
+  déduite sans baseline ni comparaison sur timestamps seuls.
+- `sync-history` : SQLite embarqué, migration transactionnelle, historique daté,
+  rétention configurable, backup cohérent, refus des bases corrompues/étrangères,
+  réservation des profils et racines identiques dans une même base.
+- `sync-session` : preview/exécution du même plan, rescan avant publication
+  atomique de baseline, diagnostic et replanification après interruption ;
+  exemple local réel avec versions systématiques et simulation par défaut.
+
+### Modifié (phase 05)
+- Plan v2 bidirectionnel avec direction et preuve baseline ; plans v1 et
+  constructeurs backup/mirror conservés, aucun instantané JSON régénéré.
+- Exécuteur : capacités directionnelles, relecture des empreintes avant
+  mutations bidirectionnelles ; journal/rapport identifient le receveur.
+- Champ public `InFlight.target` ajouté (littéraux externes à adapter) ;
+  nouveau type `OperationDirection` rejeté par les anciens lecteurs de journal.
+  Revue d'intégration demandée dans l'ADR 0005.
+
 ### Ajouté (phase 04 — exécution sécurisée locale)
 - `sync-copy`, `sync-verify`, `sync-versioning`, `sync-journal`, `sync-executor` :
   transferts en flux, vérification BLAKE3 par défaut, versions facultatives,

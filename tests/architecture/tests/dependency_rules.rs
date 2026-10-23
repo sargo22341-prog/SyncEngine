@@ -11,6 +11,40 @@ use serde_json::Value;
 /// Tout nouveau paquet doit être ajouté ici : un paquet absent fait échouer
 /// le test, ce qui force à décider explicitement de sa place dans le graphe.
 const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
+    (
+        "sync-bidirectional",
+        &[
+            "sync-core",
+            "sync-errors",
+            "sync-plan",
+            "sync-scanner",
+            "sync-compare",
+            "sync-decisions",
+            "connector-memory",
+            "connector-api",
+            "sync-filter",
+        ],
+    ),
+    ("sync-history", &["sync-core", "sync-errors", "sync-plan"]),
+    (
+        "sync-session",
+        &[
+            "sync-core",
+            "sync-errors",
+            "sync-plan",
+            "sync-history",
+            "sync-bidirectional",
+            "sync-decisions",
+            "sync-scanner",
+            "sync-filter",
+            "sync-executor",
+            "sync-journal",
+            "sync-versioning",
+            "connector-api",
+            "connector-memory",
+            "connector-local",
+        ],
+    ),
     ("sync-core", &[]),
     ("sync-errors", &["sync-core"]),
     ("sync-events", &["sync-core", "sync-errors"]),
@@ -168,7 +202,13 @@ const TEST_DOUBLES: &[&str] = &["connector-memory"];
 /// Paquets de planification : purs, sans E/S. Ils ne dépendent d'aucune
 /// implémentation de connecteur (seul le contrat `connector-api` est admis,
 /// et seulement pour les tests).
-const PLANNING: &[&str] = &["sync-plan", "sync-decisions", "sync-backup", "sync-mirror"];
+const PLANNING: &[&str] = &[
+    "sync-plan",
+    "sync-decisions",
+    "sync-backup",
+    "sync-mirror",
+    "sync-bidirectional",
+];
 
 /// Paquets d'exécution : ils appliquent un plan sans le recalculer et
 /// n'accèdent au stockage que par le contrat `connector-api`.
@@ -183,6 +223,7 @@ const EXECUTION: &[&str] = &[
 /// Paquets qui décident (découverte, comparaison, stratégies) : interdits
 /// aux paquets d'exécution hors tests.
 const DECIDING: &[&str] = &[
+    "sync-bidirectional",
     "sync-scanner",
     "sync-compare",
     "sync-decisions",

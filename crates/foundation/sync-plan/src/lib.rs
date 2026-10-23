@@ -30,12 +30,14 @@
 //! de filtre (`sync-filter`), que `sync-core` ne peut pas connaître sans
 //! inverser le graphe ; voir ADR 0003.
 
+mod baseline;
 mod format;
 mod operation;
 mod plan;
 mod policy;
 mod validate;
 
+pub use baseline::{Baseline, BaselineError, StateBinding, same_content};
 pub use format::PlanFormatError;
 pub use operation::{
     Action, EntrySnapshot, Operation, OperationSpec, PlanSide, Precondition, Reason, Risk,

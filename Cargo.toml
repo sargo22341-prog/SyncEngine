@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/strategy/sync-bidirectional",
+    "crates/services/sync-history",
+    "crates/application/sync-session",
     "crates/foundation/sync-core",
     "crates/foundation/sync-errors",
     "crates/foundation/sync-events",
@@ -30,6 +33,10 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
+sync-bidirectional = { path = "crates/strategy/sync-bidirectional" }
+sync-history = { path = "crates/services/sync-history" }
+sync-session = { path = "crates/application/sync-session" }
+rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
 # Crates internes (option A : liés à la compilation).
 sync-core = { path = "crates/foundation/sync-core" }
 sync-errors = { path = "crates/foundation/sync-errors" }

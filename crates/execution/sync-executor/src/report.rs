@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sync_core::{ExecutionId, ExecutionStatus, OperationId, PlanId, ProfileId, ResourcePath};
 use sync_errors::{ErrorClass, ErrorReport};
 use sync_journal::{JournalTotals, OutcomeCode};
-use sync_plan::Action;
+use sync_plan::{Action, PlanSide};
 use sync_verify::Mismatch;
 
 /// Raison d'un refus : une précondition n'est plus vraie au moment de la
@@ -151,6 +151,8 @@ impl OutcomeStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperationOutcome {
+    #[serde(default = "legacy_target")]
+    pub(crate) target: PlanSide,
     pub(crate) operation: OperationId,
     pub(crate) path: ResourcePath,
     pub(crate) action: Action,
@@ -158,6 +160,12 @@ pub struct OperationOutcome {
 }
 
 impl OperationOutcome {
+    /// Physical receiving side of this operation.
+    #[must_use]
+    pub fn target(&self) -> PlanSide {
+        self.target
+    }
+
     /// Opération du plan.
     #[must_use]
     pub fn operation(&self) -> &OperationId {
@@ -253,4 +261,8 @@ impl ExecutionReport {
     pub fn outcome(&self, path: &ResourcePath) -> Option<&OperationOutcome> {
         self.outcomes.iter().find(|outcome| &outcome.path == path)
     }
+}
+
+fn legacy_target() -> PlanSide {
+    PlanSide::Destination
 }

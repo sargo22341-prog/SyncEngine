@@ -76,39 +76,43 @@ fn check_connectors(request: &ExecutionRequest<'_>) -> Result<(), ExecutionError
 }
 
 fn check_capabilities(request: &ExecutionRequest<'_>) -> Result<(), ExecutionError> {
-    let mut source = vec![StorageFeature::Stat];
-    let mut destination = vec![StorageFeature::Stat];
     for op in request.plan.operations() {
+        let (source, destination) = if op.target() == PlanSide::Destination {
+            (request.source, request.destination)
+        } else {
+            (request.destination, request.source)
+        };
+        let mut reads = vec![StorageFeature::Stat];
+        let mut writes = vec![StorageFeature::Stat];
         match (op.action(), op.kind()) {
             (Action::Copy | Action::Replace, EntryKind::File) => {
-                source.push(StorageFeature::Read);
-                destination.push(StorageFeature::Write);
+                reads.push(StorageFeature::Read);
+                writes.push(StorageFeature::Write);
                 if request.options.verify == sync_verify::VerifyMode::Content {
-                    destination.push(StorageFeature::Read);
+                    writes.push(StorageFeature::Read);
                 }
             }
-            (Action::Copy, EntryKind::Directory) => {
-                destination.push(StorageFeature::CreateDirectory);
-            }
-            (Action::Delete, _) => destination.push(StorageFeature::Delete),
+            (Action::Copy, EntryKind::Directory) => writes.push(StorageFeature::CreateDirectory),
+            (Action::Delete, _) => writes.push(StorageFeature::Delete),
             _ => {}
         }
         if matches!(op.action(), Action::Replace | Action::Delete)
-            && request.versions.is_some()
             && op.kind() == EntryKind::File
+            && (request.versions.is_some()
+                || request.plan.mode() == sync_plan::SyncMode::Bidirectional)
         {
-            destination.push(StorageFeature::Read);
+            writes.push(StorageFeature::Read);
         }
-    }
-    for (side, connector, features) in [
-        (PlanSide::Source, request.source, source),
-        (PlanSide::Destination, request.destination, destination),
-    ] {
-        if let Some(feature) = features
-            .into_iter()
-            .find(|feature| !connector.capabilities().supports(*feature))
-        {
-            return Err(ExecutionError::CapabilityMissing { side, feature });
+        for (side, connector, features) in [
+            (op.target().opposite(), source, reads),
+            (op.target(), destination, writes),
+        ] {
+            if let Some(feature) = features
+                .into_iter()
+                .find(|f| !connector.capabilities().supports(*f))
+            {
+                return Err(ExecutionError::CapabilityMissing { side, feature });
+            }
         }
     }
     Ok(())

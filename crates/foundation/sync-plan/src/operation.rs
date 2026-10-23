@@ -142,6 +142,24 @@ pub enum PlanSide {
     Destination,
 }
 
+impl PlanSide {
+    /// Opposite physical side.
+    #[must_use]
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::Source => Self::Destination,
+            Self::Destination => Self::Source,
+        }
+    }
+}
+
+fn default_target() -> PlanSide {
+    PlanSide::Destination
+}
+fn is_default_target(side: &PlanSide) -> bool {
+    *side == PlanSide::Destination
+}
+
 /// Cause d'incertitude reprise du constat de comparaison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "cause", rename_all = "snake_case", deny_unknown_fields)]
@@ -179,6 +197,9 @@ pub enum UncertainCause {
 #[serde(tag = "code", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum Reason {
+    /// Concurrent or ambiguous change relative to reference state.
+    ConcurrentChange,
+
     /// Absent de la destination (absence établie) ⇒ copie.
     MissingAtDestination,
     /// La source est plus récente ⇒ remplacement.
@@ -240,6 +261,7 @@ impl Reason {
     #[must_use]
     pub fn allows(&self, action: Action) -> bool {
         match self {
+            Self::ConcurrentChange => action == Action::Conflict,
             Self::MissingAtDestination => action == Action::Copy,
             Self::SourceNewer | Self::ContentDiffers => action == Action::Replace,
             Self::DestinationNewer => matches!(action, Action::Replace | Action::Conflict),
@@ -260,6 +282,7 @@ impl Reason {
     /// Côtés qui doivent avoir été observés pour ce motif.
     pub(crate) fn shape(&self) -> Shape {
         match self {
+            Self::ConcurrentChange => Shape::Any,
             Self::MissingAtDestination => Shape::SourceOnly,
             Self::SourceNewer
             | Self::DestinationNewer
@@ -359,6 +382,8 @@ pub struct OperationSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Operation {
+    #[serde(default = "default_target", skip_serializing_if = "is_default_target")]
+    pub(crate) target: PlanSide,
     pub(crate) id: OperationId,
     pub(crate) path: ResourcePath,
     pub(crate) kind: EntryKind,
@@ -373,6 +398,23 @@ pub struct Operation {
 }
 
 impl Operation {
+    /// Physical receiver. Source/destination observations of
+    /// the operation are relative to transfer direction (sender/receiver).
+    #[must_use]
+    pub fn target(&self) -> PlanSide {
+        self.target
+    }
+
+    /// Observation on a physical side of the plan.
+    #[must_use]
+    pub fn observation(&self, side: PlanSide) -> Option<&EntrySnapshot> {
+        if self.target == side {
+            self.destination()
+        } else {
+            self.source()
+        }
+    }
+
     /// Identifiant stable dans le plan.
     #[must_use]
     pub fn id(&self) -> &OperationId {

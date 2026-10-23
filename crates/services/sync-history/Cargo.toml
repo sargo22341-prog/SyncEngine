@@ -1,0 +1,22 @@
+[package]
+name = "sync-history"
+description = "Transactional SQLite baseline, tombstones and bounded execution history."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+sync-core.workspace = true
+sync-errors.workspace = true
+sync-plan.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

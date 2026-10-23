@@ -1,0 +1,26 @@
+[package]
+name = "sync-bidirectional"
+description = "Pure baseline-aware bidirectional planning; no I/O or mutations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+sync-core.workspace = true
+sync-errors.workspace = true
+sync-plan.workspace = true
+sync-scanner.workspace = true
+sync-compare.workspace = true
+sync-decisions.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+connector-memory.workspace = true
+connector-api.workspace = true
+sync-filter.workspace = true
+
+[lints]
+workspace = true

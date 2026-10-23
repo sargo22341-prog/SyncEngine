@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use sync_core::{ConnectorId, OperationId, PlanId, ProfileId, ResourcePath, Timestamp};
 use sync_filter::FilterRules;
 
-use crate::operation::{Action, Operation, OperationSpec, Reason};
+use crate::Baseline;
+use crate::operation::{Action, Operation, OperationSpec, PlanSide, Reason};
 use crate::policy::PlanPolicy;
 use crate::validate::{PlanError, derive_operations, validate};
 
@@ -19,6 +20,8 @@ pub const PLAN_SCHEMA_VERSION: u32 = 1;
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SyncMode {
+    /// Bidirectional synchronization with reliable previous state.
+    Bidirectional,
     /// Sauvegarde : source → destination, jamais de suppression.
     Backup,
     /// Miroir : la destination est rendue conforme à la source, suppressions
@@ -160,6 +163,8 @@ impl PlanSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawPlan")]
 pub struct ExecutionPlan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) baseline: Option<Baseline>,
     pub(crate) schema_version: u32,
     pub(crate) id: PlanId,
     pub(crate) profile: Option<ProfileId>,
@@ -176,6 +181,8 @@ pub struct ExecutionPlan {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawPlan {
+    #[serde(default)]
+    baseline: Option<Baseline>,
     schema_version: u32,
     id: PlanId,
     profile: Option<ProfileId>,
@@ -193,6 +200,7 @@ impl TryFrom<RawPlan> for ExecutionPlan {
 
     fn try_from(raw: RawPlan) -> Result<Self, Self::Error> {
         let plan = Self {
+            baseline: raw.baseline,
             schema_version: raw.schema_version,
             id: raw.id,
             profile: raw.profile,
@@ -222,13 +230,66 @@ impl ExecutionPlan {
     /// correcte ne produit jamais d'erreur : elle transforme d'elle-même les
     /// opérations non admissibles en sauts motivés.
     pub fn new(header: PlanHeader, specs: Vec<OperationSpec>) -> Result<Self, PlanError> {
+        Self::construct(
+            header,
+            specs
+                .into_iter()
+                .map(|s| (PlanSide::Destination, s))
+                .collect(),
+            None,
+        )
+    }
+
+    /// Bidirectional v2 plan; the side associated with each description is
+    /// the physical receiver. Observations and preconditions are relative
+    /// to this direction. One-way modes reject reversed operations.
+    ///
+    /// # Errors
+    /// `PlanError` si la direction, le mode ou un invariant est invalide.
+    pub fn new_directed(
+        header: PlanHeader,
+        specs: Vec<(PlanSide, OperationSpec)>,
+    ) -> Result<Self, PlanError> {
+        Self::construct(header, specs, None)
+    }
+
+    /// Builds a v2 plan carrying its previous successful reference state.
+    ///
+    /// # Errors
+    /// Rejects inconsistent reference identity or mutations without evidence.
+    pub fn new_bidirectional(
+        header: PlanHeader,
+        specs: Vec<(PlanSide, OperationSpec)>,
+        baseline: Option<Baseline>,
+    ) -> Result<Self, PlanError> {
+        Self::construct(header, specs, baseline)
+    }
+
+    /// Previous state used to justify bidirectional mutations, if available.
+    #[must_use]
+    pub fn baseline(&self) -> Option<&Baseline> {
+        self.baseline.as_ref()
+    }
+
+    fn construct(
+        header: PlanHeader,
+        specs: Vec<(PlanSide, OperationSpec)>,
+        baseline: Option<Baseline>,
+    ) -> Result<Self, PlanError> {
         let operations = derive_operations(specs)?;
         let mut source = header.source;
         let mut destination = header.destination;
-        source.entries = count(&operations, |op| op.source.is_some());
-        destination.entries = count(&operations, |op| op.destination.is_some());
+        source.entries = count(&operations, |op| op.observation(PlanSide::Source).is_some());
+        destination.entries = count(&operations, |op| {
+            op.observation(PlanSide::Destination).is_some()
+        });
         let plan = Self {
-            schema_version: PLAN_SCHEMA_VERSION,
+            baseline,
+            schema_version: if header.mode == SyncMode::Bidirectional {
+                2
+            } else {
+                PLAN_SCHEMA_VERSION
+            },
             id: header.id,
             profile: header.profile,
             mode: header.mode,

@@ -30,6 +30,10 @@ pub enum DeletionBlock {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum PlanError {
+    /// Bidirectional mutation lacks reliable baseline/content evidence.
+    #[error("bidirectional mutation lacks reliable baseline evidence")]
+    BaselineEvidence,
+
     /// Version de schéma non prise en charge.
     #[error(
         "version de schéma de plan {found} non prise en charge (attendu {PLAN_SCHEMA_VERSION})"
@@ -181,7 +185,7 @@ fn children(operations: &[Operation], index: usize) -> impl Iterator<Item = usiz
 
 /// Vrai si le répertoire `path` existera à la destination lors de
 /// l'exécution des opérations qui en dépendent.
-fn directory_available(operations: &[Operation], path: &ResourcePath) -> bool {
+fn directory_available(operations: &[Operation], path: &ResourcePath, target: PlanSide) -> bool {
     if path.is_root() {
         return true;
     }
@@ -189,11 +193,10 @@ fn directory_available(operations: &[Operation], path: &ResourcePath) -> bool {
         return false;
     };
     match op.action {
-        Action::Copy => op.kind == EntryKind::Directory,
-        Action::Delete => false,
+        Action::Copy if op.target == target => op.kind == EntryKind::Directory,
+        Action::Delete if op.target == target => false,
         _ => op
-            .destination
-            .as_ref()
+            .observation(target)
             .is_some_and(|d| d.kind() == EntryKind::Directory),
     }
 }
@@ -207,7 +210,7 @@ fn expected_dependencies(operations: &[Operation], index: usize) -> Vec<Operatio
             .filter(|parent| !parent.is_root())
             .and_then(|parent| index_of(operations, &parent))
             .and_then(|i| operations.get(i))
-            .filter(|parent| parent.action == Action::Copy)
+            .filter(|parent| parent.action == Action::Copy && parent.target == op.target)
             .map(|parent| vec![parent.id.clone()])
             .unwrap_or_default(),
         Action::Delete if op.kind == EntryKind::Directory => children(operations, index)
@@ -219,21 +222,25 @@ fn expected_dependencies(operations: &[Operation], index: usize) -> Vec<Operatio
 
 /// Construit les opérations numérotées et leurs champs dérivés.
 pub(crate) fn derive_operations(
-    mut specs: Vec<OperationSpec>,
+    mut specs: Vec<(PlanSide, OperationSpec)>,
 ) -> Result<Vec<Operation>, PlanError> {
-    specs.sort_by(|a, b| a.path.cmp(&b.path));
-    if let Some(pair) = specs.windows(2).find(|pair| pair[0].path == pair[1].path) {
+    specs.sort_by(|a, b| a.1.path.cmp(&b.1.path));
+    if let Some(pair) = specs
+        .windows(2)
+        .find(|pair| pair[0].1.path == pair[1].1.path)
+    {
         return Err(PlanError::DuplicatePath {
-            path: pair[1].path.clone(),
+            path: pair[1].1.path.clone(),
         });
     }
     let mut operations: Vec<Operation> = specs
         .into_iter()
         .enumerate()
-        .map(|(index, spec)| {
+        .map(|(index, (target, spec))| {
             let kind = derived_kind(spec.action, spec.source.as_ref(), spec.destination.as_ref())
                 .unwrap_or(EntryKind::Other);
             Ok(Operation {
+                target,
                 id: operation_id(index)?,
                 kind,
                 risk: spec.action.risk(),
@@ -259,10 +266,29 @@ pub(crate) fn derive_operations(
 
 /// Vérifie tous les invariants d'un plan.
 pub(crate) fn validate(plan: &ExecutionPlan) -> Result<(), PlanError> {
-    if plan.schema_version != PLAN_SCHEMA_VERSION {
+    if plan.schema_version
+        != if plan.mode == SyncMode::Bidirectional {
+            2
+        } else {
+            PLAN_SCHEMA_VERSION
+        }
+    {
         return Err(PlanError::UnsupportedVersion {
             found: plan.schema_version,
         });
+    }
+    if let Some(base) = &plan.baseline {
+        let binding = base.binding();
+        if plan.mode != SyncMode::Bidirectional
+            || plan.profile.as_ref() != Some(&binding.profile)
+            || plan.source.connector() != &binding.source_connector
+            || plan.destination.connector() != &binding.destination_connector
+            || plan.source.location() != binding.source
+            || plan.destination.location() != binding.destination
+            || plan.filter != binding.filter
+        {
+            return Err(PlanError::BaselineEvidence);
+        }
     }
     let operations = &plan.operations;
     for pair in operations.windows(2) {
@@ -300,6 +326,43 @@ fn validate_operation(plan: &ExecutionPlan, index: usize, op: &Operation) -> Res
     let source = op.source.as_ref();
     let destination = op.destination.as_ref();
 
+    if plan.mode == SyncMode::Bidirectional && op.action.is_mutation() {
+        let reliable = |entry: &EntrySnapshot| {
+            entry.kind() == EntryKind::Directory
+                || (entry.kind() == EntryKind::File
+                    && entry.metadata().size().is_some()
+                    && entry
+                        .metadata()
+                        .hash()
+                        .is_some_and(|h| h.algorithm() == sync_core::HashAlgorithm::Blake3))
+        };
+        if !plan.source.is_complete()
+            || !plan.destination.is_complete()
+            || source.is_some_and(|e| !reliable(e))
+            || destination.is_some_and(|e| !reliable(e))
+        {
+            return Err(PlanError::BaselineEvidence);
+        }
+        let previous = plan
+            .baseline
+            .as_ref()
+            .and_then(|b| b.entries().get(&op.path));
+        match op.action {
+            Action::Copy if previous.is_some() => return Err(PlanError::BaselineEvidence),
+            Action::Replace | Action::Delete => {
+                let Some(Some(previous)) = previous else {
+                    return Err(PlanError::BaselineEvidence);
+                };
+                if !destination.is_some_and(|current| crate::same_content(previous, current)) {
+                    return Err(PlanError::BaselineEvidence);
+                }
+            }
+            _ => {}
+        }
+    }
+    if op.target == PlanSide::Source && plan.mode != SyncMode::Bidirectional {
+        return Err(PlanError::InvalidShape { id: id() });
+    }
     if !op.reason.allows(op.action) {
         return Err(PlanError::ReasonNotAllowed {
             id: id(),
@@ -368,13 +431,15 @@ fn validate_operation(plan: &ExecutionPlan, index: usize, op: &Operation) -> Res
     match op.action {
         Action::Copy | Action::Replace => {
             let parent = op.path.parent().unwrap_or_default();
-            if !directory_available(operations, &parent) {
+            if !directory_available(operations, &parent, op.target) {
                 return Err(PlanError::ParentUnavailable { id: id() });
             }
         }
         Action::Delete
             if op.kind == EntryKind::Directory
-                && children(operations, index).any(|i| operations[i].action != Action::Delete) =>
+                && children(operations, index).any(|i| {
+                    operations[i].action != Action::Delete || operations[i].target != op.target
+                }) =>
         {
             return Err(PlanError::DirectoryNotEmptied { id: id() });
         }
@@ -402,12 +467,12 @@ fn validate_entry_counts(plan: &ExecutionPlan) -> Result<(), PlanError> {
     let sources = plan
         .operations
         .iter()
-        .filter(|op| op.source.is_some())
+        .filter(|op| op.observation(PlanSide::Source).is_some())
         .count() as u64;
     let destinations = plan
         .operations
         .iter()
-        .filter(|op| op.destination.is_some())
+        .filter(|op| op.observation(PlanSide::Destination).is_some())
         .count() as u64;
     if plan.source.entries() != sources {
         return Err(PlanError::EntryCountMismatch {
@@ -441,14 +506,26 @@ fn validate_deletions(plan: &ExecutionPlan) -> Result<(), PlanError> {
         DeletionPolicy::Enabled { guard } => guard,
         DeletionPolicy::Disabled => return Err(block(DeletionBlock::PolicyDisabled)),
     };
-    let census = DeletionCensus {
-        deletions: 1 + deletions.count() as u64,
-        destination_entries: plan.destination.entries(),
-        source_entries: plan.source.entries(),
-        source_complete: plan.source.is_complete(),
-        destination_complete: plan.destination.is_complete(),
-    };
-    guard
-        .check(&census)
-        .map_err(|refusal| block(DeletionBlock::Refused(refusal)))
+    for target in [PlanSide::Source, PlanSide::Destination] {
+        let (source, destination) = if target == PlanSide::Destination {
+            (&plan.source, &plan.destination)
+        } else {
+            (&plan.destination, &plan.source)
+        };
+        let census = DeletionCensus {
+            deletions: plan
+                .operations
+                .iter()
+                .filter(|op| op.action == Action::Delete && op.target == target)
+                .count() as u64,
+            destination_entries: destination.entries(),
+            source_entries: source.entries(),
+            source_complete: source.is_complete(),
+            destination_complete: destination.is_complete(),
+        };
+        guard
+            .check(&census)
+            .map_err(|refusal| block(DeletionBlock::Refused(refusal)))?;
+    }
+    Ok(())
 }
