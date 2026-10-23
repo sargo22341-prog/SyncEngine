@@ -1,8 +1,0 @@
-{
-  "crate": "gtk3-macros",
-  "version": "0.18.2",
-  "crates_io_sha256": "52ff3c5b21f14f0736fed6dcfc0bfb4225ebf5725f3c0209edeec181e4d73e9d",
-  "upstream": "https://github.com/gtk-rs/gtk3-rs",
-  "changes": "Replace unmaintained proc-macro-error 1/2 with proc-macro-error3 3.1.1 (explicit syn2-error); retain import name",
-  "additional_changes": "Canonical extern-crate alias required by proc-macro-error3; remove three never-read private fields and their unused inputs/imports (no change to emitted tokens or diagnostics)"
-}

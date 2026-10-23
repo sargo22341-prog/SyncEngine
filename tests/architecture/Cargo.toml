@@ -15,8 +15,5 @@ doctest = false
 [dev-dependencies]
 serde_json.workspace = true
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-glib = "0.18.5"
-
 [lints]
 workspace = true

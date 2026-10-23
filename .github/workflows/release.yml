@@ -3,10 +3,6 @@ name: Release candidate
 on:
   workflow_dispatch:
     inputs:
-      appimage:
-        description: Build optional AppImage (Ubuntu 24.04 baseline)
-        type: boolean
-        default: false
 permissions:
   contents: read
 defaults:
@@ -20,18 +16,11 @@ jobs:
         include:
           - os: windows-2025
             target: x86_64-pc-windows-msvc
-            formats: nsis
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            formats: deb
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -39,19 +28,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev zlib1g-dev libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2t64
+          sudo apt-get install -y build-essential pkg-config libssl-dev zlib1g-dev
       - run: rustup toolchain install
       - name: Release tooling tests
         run: |
           python scripts/test_release.py
           python scripts/test_state_maintenance.py
-          python scripts/verify_vendor.py
-      - name: Frontend
-        working-directory: apps/desktop
-        run: |
-          npm ci
-          npm test
-          npm run build
       - name: Mandatory Rust checks
         env:
           RUSTFLAGS: -D warnings
@@ -77,47 +59,19 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo audit --deny warnings
-          npm --prefix apps/desktop audit
-      - name: Prepare native CLI and agent
+      - name: Build native GUI, CLI and agent
         run: python scripts/release.py prepare
-      - name: Bundle
-        working-directory: apps/desktop
+      # Installers (NSIS, deb, AppImage) were produced by the removed Tauri
+      # bundler; a Rust-native packager is a separate packaging step. The
+      # candidate is a portable archive of the three binaries.
+      - name: Portable archive
         env:
-          OPTIONAL_APPIMAGE: ${{ inputs.appimage }}
-          BASE_FORMAT: ${{ matrix.formats }}
-        run: |
-          formats="$BASE_FORMAT"
-          if [[ "$RUNNER_OS" == Linux && "$OPTIONAL_APPIMAGE" == true ]]; then formats="deb,appimage"; fi
-          npm run tauri -- build --config src-tauri/tauri.release.conf.json --bundles "$formats" --features network,onedrive -- --locked
-      - name: Windows disposable install/reinstall/uninstall
-        if: runner.os == 'Windows'
-        run: |
-          installers=(target/release/bundle/nsis/*-setup.exe)
-          test "${#installers[@]}" -eq 1
-          python scripts/smoke_install_windows.py "${installers[0]}"
-      - name: Inspect Debian package and installed CLI
-        if: runner.os == 'Linux'
-        run: |
-          deb=(target/release/bundle/deb/*.deb)
-          test "${#deb[@]}" -eq 1
-          dpkg-deb --info "${deb[0]}"
-          dpkg-deb --contents "${deb[0]}"
-          sudo apt-get install -y "./${deb[0]}"
-          /usr/bin/syncengine --help
-          test -x /usr/bin/syncengine-agent
-          package_name=$(dpkg-deb --field "${deb[0]}" Package)
-          # Reinstall the same candidate to exercise package replacement.
-          sudo dpkg -i "${deb[0]}"
-          sudo apt-get remove -y "$package_name"
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: python scripts/release.py portable --bundle target/release/bundle --target "$RELEASE_TARGET"
       - name: Collect checksums and provenance
         env:
-          OPTIONAL_APPIMAGE: ${{ inputs.appimage }}
           RELEASE_TARGET: ${{ matrix.target }}
-          BASE_FORMAT: ${{ matrix.formats }}
-        run: |
-          formats="$BASE_FORMAT"
-          if [[ "$RUNNER_OS" == Linux && "$OPTIONAL_APPIMAGE" == true ]]; then formats="deb appimage"; fi
-          python scripts/release.py collect --bundle target/release/bundle --output target/release-candidate --target "$RELEASE_TARGET" --formats $formats
+        run: python scripts/release.py collect --bundle target/release/bundle --output target/release-candidate --target "$RELEASE_TARGET" --formats portable
       - uses: actions/upload-artifact@v4
         with:
           name: syncengine-${{ matrix.target }}

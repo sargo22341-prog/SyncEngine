@@ -30,24 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
-
-      - name: Prérequis desktop Ubuntu
+      # Interface native iced : X11/Wayland/xkbcommon sont chargés à l'exécution
+      # (dlopen) ; seuls les outils C et OpenSSL (connecteurs TLS) sont requis.
+      - name: Prérequis de compilation Ubuntu
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-
-      - name: Frontend desktop
-        working-directory: apps/desktop
-        run: |
-          npm ci
-          npm test
-          npm run build
+          sudo apt-get install -y build-essential pkg-config libssl-dev
 
       - name: Installer la chaîne Rust épinglée
         run: rustup toolchain install
@@ -61,7 +50,6 @@ jobs:
         run: |
           python scripts/test_release.py
           python scripts/test_state_maintenance.py
-          python scripts/verify_vendor.py
 
       - name: Formatage
         run: cargo fmt --all -- --check
@@ -94,10 +82,6 @@ jobs:
         if: runner.os == 'Linux'
         run: python scripts/test_signals.py --binary target/debug/syncengine
 
-      - name: Regression GLib optimisee (Linux)
-        if: runner.os == 'Linux'
-        run: cargo test -p syncengine-architecture-tests --test glib_security --release --locked
-
       - name: Feature flags applicatifs
         run: |
           cargo check -p syncengine-cli -p syncengine-agent -p syncengine-desktop --no-default-features --locked
@@ -129,15 +113,4 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Audit RustSec
-        run: |
-          cargo audit --deny warnings
-          python scripts/verify_vendor.py
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Audit frontend
-        working-directory: apps/desktop
-        run: |
-          npm ci
-          npm audit
+        run: cargo audit --deny warnings

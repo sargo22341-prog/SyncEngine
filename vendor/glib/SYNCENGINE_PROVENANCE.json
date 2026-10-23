@@ -1,8 +1,0 @@
-{
-  "crate": "glib",
-  "version": "0.18.5",
-  "crates_io_sha256": "233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5",
-  "upstream": "https://github.com/gtk-rs/gtk-rs-core",
-  "changes": "VariantStrIter mutable out-pointer; upstream PR 1343",
-  "additional_changes": "34 Rust 1.98.1 compiler suggestions: explicit lifetimes and redundant parentheses; exact diff and hashes in SYNCENGINE_LIFETIME_FIXES.{patch,json}"
-}

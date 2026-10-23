@@ -6,7 +6,7 @@ contrats, procédures et preuves : [durcissement 01–10](docs/DURCISSEMENT_01_1
 Les documents `CONTEXTE.md`, `prompts/` et `visuels/` restent volontairement privés
 et ignorés par Git ; ils ne sont pas nécessaires au binaire distribué.
 
-SyncEngine fournit une CLI Rust et une interface Tauri 2/TypeScript pour les
+SyncEngine fournit une CLI Rust et une [interface native Rust (iced)](apps/desktop/README.md) pour les
 sauvegardes, miroirs et synchronisations bidirectionnelles locales. Un agent
 sans GUI exécute les profils programmés. La phase 08 fournit cinq connecteurs
 réseau expérimentaux, activés séparément :
@@ -51,7 +51,7 @@ La CLI historique conserve ses commandes backup/mirror.
 - Noms du produit (`SyncEngine`) et de l'interface : provisoires.
 - Cibles : Windows 64 bits, Ubuntu et Debian 64 bits, support Linux plus large ultérieur.
 - Crates intégrés à la compilation (option A), pas de plugins DLL/SO chargeables à chaud.
-- UI Tauri 2 + frontend TypeScript ; tout le métier, les transferts et les connecteurs en Rust.
+- 100 % Rust : interface native iced ([ADR 0009](docs/adr/0009-interface-native-iced.md)), métier, transferts et connecteurs ; aucun frontend web.
 - `AGENTS.md` s'applique au dépôt et reste sous 400 lignes.
 
 ## CLI des phases 01 à 04 (exécution sécurisée locale)

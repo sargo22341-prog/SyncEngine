@@ -1,8 +1,0 @@
-{
-  "crate": "glib-macros",
-  "version": "0.18.5",
-  "crates_io_sha256": "0bb0228f477c0900c880fd78c8759b95c7636dbd7842707f49e132378aa2acdc",
-  "upstream": "https://github.com/gtk-rs/gtk-rs-core",
-  "changes": "Replace unmaintained proc-macro-error 1/2 with proc-macro-error3 3.1.1 (explicit syn2-error); retain import name",
-  "additional_changes": "Canonical extern-crate alias required by proc-macro-error3 attribute expansion"
-}

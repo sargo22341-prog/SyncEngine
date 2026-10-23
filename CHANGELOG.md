@@ -2,6 +2,26 @@
 
 ## [0.1.0] — non publié
 
+### Interface native Rust (iced) — remplace Tauri/TypeScript
+- Nouvelle interface `syncengine-desktop` en iced 0.14, sans TypeScript, npm,
+  WebView ni script PowerShell : rail de navigation, barre de profils groupés,
+  vue d’ensemble, page profil, activité en direct, historique, planification,
+  réglages. Thèmes sombre (Discord) et clair (Google), suivi du thème système,
+  transitions animées. Voir `apps/desktop/README.md` et l’ADR 0009.
+- Assistant en sept étapes sans JSON (mode, source, destination, filtres avec
+  raccourcis, sécurité, planification, récapitulatif) ; nom proposé ;
+  « Enregistrer et simuler ».
+- Menus contextuels (profil, groupe, fond), glisser-déposer d’un profil vers un
+  groupe ou un nouveau groupe, double-clic pour modifier, raccourcis clavier
+  (dont Ctrl+1…5 indépendants de la disposition AZERTY).
+- Suivi d’exécution : anneau de progression, débit, compteurs ; fermeture
+  pendant une tâche = annulation coopérative puis fermeture après état durable.
+- Même répertoire d’état qu’avant ; `SYNCENGINE_STATE_DIR` pour un état isolé ;
+  préférences visuelles dans `desktop-ui.json` (v1). Aucun contrat moteur modifié.
+- Retrait des vendorisations GLib/GTK3, du test `glib_security` et de
+  `scripts/verify_vendor.py` (hors graphe sans Tauri). Candidat de livraison :
+  archive portable (`scripts/release.py portable`) ; installateurs à reconstruire.
+
 ### Finalisation et durcissement des phases 01 à 10
 - Profils distants typés et migration SQLite v1→v2 sans réécriture des profils
   locaux ; features des fournisseurs existants propagées à CLI, GUI et agent.

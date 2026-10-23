@@ -112,6 +112,8 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "sync-orchestrator",
             "sync-profiles",
             "sync-core",
+            "sync-filter",
+            "sync-plan",
             "sync-scheduler",
         ],
     ),
@@ -336,8 +338,12 @@ const DECIDING: &[&str] = &[
     "sync-mirror",
 ];
 
-/// Paquets de présentation : seuls autorisés à dépendre de Tauri.
+/// Paquets de présentation : seuls autorisés à dépendre d'une boîte à
+/// outils graphique (iced, dialogues natifs) ou de l'ancienne pile Tauri.
 const PRESENTATION: &[&str] = &["syncengine-desktop"];
+
+/// Préfixes de crates graphiques réservés à la couche de présentation.
+const GUI_TOOLKITS: &[&str] = &["iced", "rfd", "tauri", "winit", "wgpu"];
 
 struct Package {
     name: String,
@@ -433,8 +439,8 @@ fn engines_do_not_depend_on_presentation_layer() {
         }
         for dep in &package.dependencies {
             assert!(
-                !dep.starts_with("tauri"),
-                "{} dépend de {dep} : Tauri est réservé à la couche de présentation",
+                !GUI_TOOLKITS.iter().any(|gui| dep.starts_with(gui)),
+                "{} dépend de {dep} : l'interface graphique est réservée à la couche de présentation",
                 package.name
             );
         }

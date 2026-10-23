@@ -1,4 +1,4 @@
-"""Prepare native Tauri companions and collect a verifiable private release.
+"""Build the native Rust binaries and collect a verifiable private release.
 
 Run from any directory. No publishing, installation or user-state mutation.
 """
@@ -8,7 +8,9 @@ import json
 import platform
 import shutil
 import subprocess
+import tarfile
 import tomllib
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,11 +34,13 @@ def source_inventory():
 
 
 def version():
+    """Single source of truth: every binary inherits the workspace version."""
     cargo = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
     expected = cargo["workspace"]["package"]["version"]
-    for name in ("apps/desktop/package.json", "apps/desktop/src-tauri/tauri.conf.json"):
-        if json.loads((ROOT / name).read_text(encoding="utf-8"))["version"] != expected:
-            raise ValueError(f"version mismatch: {name}")
+    for member in ("apps/desktop", "apps/cli", "apps/agent"):
+        package = tomllib.loads((ROOT / member / "Cargo.toml").read_text(encoding="utf-8"))["package"]
+        if package.get("version") != {"workspace": True}:
+            raise ValueError(f"version not inherited from workspace: {member}")
     return expected
 
 
@@ -66,27 +70,62 @@ def prepare():
     if host not in ("x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"):
         raise ValueError(f"unsupported release host: {host}")
     subprocess.run(["cargo", "build", "--release", "--locked", "--target", host,
-                    "-p", "syncengine-cli", "-p", "syncengine-agent", "--features", "network,onedrive"], cwd=ROOT, check=True)
-    suffix = ".exe" if "windows" in host else ""
-    output = ROOT / "apps/desktop/src-tauri/binaries"
-    output.mkdir(exist_ok=True)
-    for name in ("syncengine", "syncengine-agent"):
-        shutil.copy2(ROOT / "target" / host / "release" / (name + suffix),
-                     output / f"{name}-{host}{suffix}")
+                    "-p", "syncengine-cli", "-p", "syncengine-agent", "-p", "syncengine-desktop",
+                    "--features", "network,onedrive"], cwd=ROOT, check=True)
+
+
+BINARIES = ("syncengine-desktop", "syncengine", "syncengine-agent")
+PORTABLE = {"x86_64-pc-windows-msvc": ".zip", "x86_64-unknown-linux-gnu": ".tar.gz"}
+
+
+def portable(bundle, target, binaries=None, notices=None):
+    """Archive GUI, CLI and agent side by side (the GUI activates the adjacent
+    agent). Refuses an existing archive; nothing is installed or published."""
+    current = version()
+    if target not in PORTABLE:
+        raise ValueError("unsupported target")
+    binaries = binaries or ROOT / "target" / target / "release"
+    notices = notices or NOTICES
+    suffix = ".exe" if "windows" in target else ""
+    members = [(binaries / (name + suffix), name + suffix) for name in BINARIES]
+    members += [(notices / name, "notices/" + name) for name in ("license-inventory.json", "THIRD_PARTY_NOTICES.txt")]
+    members += [(ROOT / "LICENSE", "LICENSE"), (ROOT / "scripts/state_maintenance.py", "tools/state_maintenance.py")]
+    for path, _ in members:
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"missing portable member: {path.name}; run prepare")
+    folder = bundle / "portable"
+    folder.mkdir(parents=True, exist_ok=True)
+    root = f"SyncEngine_{current}_{target}"
+    archive = folder / (root + PORTABLE[target])
+    if archive.exists():
+        raise ValueError("archive already exists; choose a new bundle directory")
+    if PORTABLE[target] == ".zip":
+        with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as out:
+            for path, name in members:
+                out.write(path, f"{root}/{name}")
+    else:
+        with tarfile.open(archive, "x:gz") as out:
+            for path, name in members:
+                info = out.gettarinfo(str(path), f"{root}/{name}")
+                info.mode = 0o755 if name in BINARIES else 0o644
+                with path.open("rb") as stream:
+                    out.addfile(info, stream)
+    return archive
 
 
 def collect(bundle, output, target, formats):
     """Fail closed on missing formats; never mix a prior collection with this one."""
     current = version()
-    allowed = {"x86_64-pc-windows-msvc": {"nsis"},
-               "x86_64-unknown-linux-gnu": {"deb", "appimage"}}
+    allowed = {"x86_64-pc-windows-msvc": {"nsis", "portable"},
+               "x86_64-unknown-linux-gnu": {"deb", "appimage", "portable"}}
     if not formats or target not in allowed or not set(formats) <= allowed[target]:
         raise ValueError("artifact formats do not match target")
     if output.exists():
         raise ValueError("output already exists; choose a new release directory")
     files = []
     for kind in formats:
-        extension = {"nsis": ".exe", "deb": ".deb", "appimage": ".AppImage"}[kind]
+        extension = {"nsis": ".exe", "deb": ".deb", "appimage": ".AppImage",
+                     "portable": PORTABLE[target]}[kind]
         matches = sorted((bundle / kind).glob("*" + extension))
         if len(matches) != 1 or not matches[0].is_file() or matches[0].is_symlink():
             raise ValueError(f"expected exactly one {kind} artifact")
@@ -108,11 +147,11 @@ def collect(bundle, output, target, formats):
     manifest = {"schema_version": 1, "version": current, "target": target,
                 "commit": run("git", "rev-parse", "HEAD"),
                 "dirty": bool(run("git", "status", "--porcelain")),
-                "rustc": run("rustc", "--version"), "node": run("node", "--version"),
+                "rustc": run("rustc", "--version"),
                 "build_host": platform.platform(), "signed": False,
                 "source_inventory_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
                 "locks": {name: digest(ROOT / name) for name in
-                          ("Cargo.lock", "apps/desktop/package-lock.json")},
+                          ("Cargo.lock",)},
                 "artifacts": [{"name": p.name, "bytes": p.stat().st_size,
                                "sha256": digest(p)} for p in files]}
     output.mkdir(parents=True)
@@ -130,14 +169,19 @@ if __name__ == "__main__":
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("prepare")
     commands.add_parser("check-version")
+    packer = commands.add_parser("portable")
+    packer.add_argument("--bundle", type=Path, required=True)
+    packer.add_argument("--target", choices=sorted(PORTABLE), required=True)
     collector = commands.add_parser("collect")
     collector.add_argument("--bundle", type=Path, required=True)
     collector.add_argument("--output", type=Path, required=True)
     collector.add_argument("--target", choices=["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"], required=True)
-    collector.add_argument("--formats", nargs="+", choices=["nsis", "deb", "appimage"], required=True)
+    collector.add_argument("--formats", nargs="+", choices=["nsis", "deb", "appimage", "portable"], required=True)
     args = parser.parse_args()
     if args.command == "prepare":
         prepare()
+    elif args.command == "portable":
+        print(portable(args.bundle, args.target))
     elif args.command == "collect":
         collect(args.bundle, args.output, args.target, args.formats)
     else:

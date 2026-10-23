@@ -61,5 +61,31 @@ class ReleaseTests(unittest.TestCase):
                 release.collect(root, root / "out", "x86_64-unknown-linux-gnu", ["deb"])
 
 
+    def test_portable_archive_holds_the_three_binaries_and_refuses_overwrite(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binaries = root / "bin"
+            binaries.mkdir()
+            for name in release.BINARIES:
+                (binaries / (name + ".exe")).write_bytes(b"fixture " + name.encode())
+            notices = root / "notices"
+            notices.mkdir()
+            (notices / "license-inventory.json").write_text("{}")
+            (notices / "THIRD_PARTY_NOTICES.txt").write_text("synthetic notice")
+            archive = release.portable(root / "bundle", "x86_64-pc-windows-msvc", binaries, notices)
+            with zipfile.ZipFile(archive) as content:
+                names = set(content.namelist())
+            prefix = f"SyncEngine_{release.version()}_x86_64-pc-windows-msvc/"
+            for expected in ("syncengine-desktop.exe", "syncengine.exe", "syncengine-agent.exe", "LICENSE",
+                             "notices/THIRD_PARTY_NOTICES.txt", "tools/state_maintenance.py"):
+                self.assertIn(prefix + expected, names)
+            with self.assertRaises(ValueError):
+                release.portable(root / "bundle", "x86_64-pc-windows-msvc", binaries, notices)
+            (binaries / "syncengine-agent.exe").unlink()
+            with self.assertRaises(ValueError):
+                release.portable(root / "other", "x86_64-pc-windows-msvc", binaries, notices)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-exclude = ["vendor/suppaftp", "vendor/glib", "vendor/glib-macros", "vendor/gtk3-macros"]
+exclude = ["vendor/suppaftp"]
 members = [
     "crates/services/sync-credentials",
     "crates/connectors/cloud/connector-onedrive",
@@ -18,7 +18,7 @@ members = [
     "crates/adapters/platform-linux",
     "apps/agent",
 
-    "apps/desktop/src-tauri",
+    "apps/desktop",
     "crates/services/sync-profiles",
     "crates/application/sync-orchestrator",
     "crates/strategy/sync-bidirectional",
@@ -124,8 +124,3 @@ let_underscore_must_use = "warn"
 [patch.crates-io]
 # SuppaFTP 12.2.1 logs PASS and server replies at TRACE; local minimal redaction.
 suppaftp = { path = "vendor/suppaftp" }
-
-# GTK3 ABI remains 0.18; minimal reviewed upstream backport and maintained macros.
-glib = { path = "vendor/glib" }
-glib-macros = { path = "vendor/glib-macros" }
-gtk3-macros = { path = "vendor/gtk3-macros" }
