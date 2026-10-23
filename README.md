@@ -108,3 +108,5 @@ dans cette session ; détails des tests et limites dans l'état du projet.
 Agent local sans GUI, programmations UTC et adaptateurs Windows/Linux :
 [utilisation, installation et reprise](apps/agent/README.md).
 Contrats et limites : [ADR 0007](docs/adr/0007-scheduler-agent.md).
+
+Phase 10 : [livraison, installation et risques](docs/RELEASE.md). Candidats 0.1.0 internes ; publication encore bloquée par les validations documentées.

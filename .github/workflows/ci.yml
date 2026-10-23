@@ -57,6 +57,9 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Version de livraison et tests des scripts
+        run: python scripts/test_release.py
+
       - name: Formatage
         run: cargo fmt --all -- --check
 

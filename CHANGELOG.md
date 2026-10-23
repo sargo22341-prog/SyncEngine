@@ -145,3 +145,10 @@ Première livraison de cette phase (complétée ci-dessus) :
   `StorageErrorKind`, `StorageOperation`, trait `StorageConnector`, `ensure_supported`.
 - CLI `syncengine` : commandes `help` et `version` uniquement.
 - Tests d'architecture (direction des dépendances), CI Windows/Linux, ADR 0001.
+
+## Phase 10 — 0.1.0 — 2026-10-23
+
+- Configuration release NSIS par utilisateur et Linux deb/AppImage optionnelle, CLI/agent inclus.
+- Workflow manuel de candidats, contrôles préalables, manifeste de provenance et SHA256 sans publication automatique.
+- Scripts testés de préparation/collecte et mesure synthétique du scanner ; guide installation, migrations, récupération et risques.
+- Aucun changement d'API métier, schéma SQLite ou moteur ; publication encore non validée.
