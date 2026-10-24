@@ -14,7 +14,16 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
   contrôle d'imbrication : une destination à l'intérieur de l'état, désignée par
   un chemin court Windows (8.3) ou un lien, est refusée comme les autres.
 
+- SFTP (Windows) : environ une connexion sur 256 échouait à l'échange de clés
+  (`Session(-8)`) quand le secret Diffie-Hellman commençait par un octet nul
+  (backend WinCNG de libssh2). Correctif upstream libssh2#2583 appliqué dans
+  `vendor/libssh2-sys` en attendant une version publiée.
+
 ### CI
+- Serveur SFTP de test : une connexion coupée par le client sous Windows
+  (`ConnectionResetError`) n'arrête plus le serveur.
+- Tests agent : relance bornée (5 s) d'une commande refusée `busy` à cause
+  d'un verrou hérité brièvement par le processus lancé par un autre test.
 - Les tests de refus d'accès sont déclarés `NON EXÉCUTÉ` quand l'OS ignore le
   refus (administrateur Windows avec privilège de sauvegarde, comme sur les
   runners GitHub) au lieu d'échouer ; ils restent exécutés sous Ubuntu.

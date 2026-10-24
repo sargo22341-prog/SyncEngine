@@ -17,7 +17,11 @@ La chaîne Rust est épinglée dans `rust-toolchain.toml` (édition 2024) ;
 
 SQLite est compilé avec le projet (`rusqlite` *bundled*). FTP/FTPS utilise une
 copie corrigée de SuppaFTP sous `vendor/suppaftp` (voir `SYNCENGINE-PATCH.md`) :
-ne pas la remplacer par la version amont sans revérifier ce correctif.
+ne pas la remplacer par la version amont sans revérifier ce correctif. SFTP
+utilise une copie corrigée de `libssh2-sys` sous `vendor/libssh2-sys` (échange
+de clés WinCNG sous Windows, libssh2#2583 non encore publié ; voir son
+`SYNCENGINE-PATCH.md`). `cargo audit` ne contrôle pas ces copies locales :
+surveiller à la main les avis visant `suppaftp`, `libssh2-sys` et `ssh2`.
 
 ## Lancer
 

@@ -6,6 +6,27 @@ use sync_orchestrator::Application;
 use sync_profiles::Profile;
 use sync_scheduler::{MissedJobs, Schedule, Scheduler, Trigger};
 type Error = Box<dyn std::error::Error>;
+/// Runs `action` on the facade of `root`, retrying briefly while `busy`.
+/// Tests share one process: a child spawned by another test inherits the open
+/// `desktop.lock` descriptor (and its `flock`) until its `exec`, which can
+/// refuse this in-process command for a few milliseconds. Bounded to 5 s.
+fn with_app<T>(
+    root: &Path,
+    action: impl Fn(&Application) -> Result<T, sync_orchestrator::AppError>,
+) -> Result<T, Error> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let result =
+            Application::open_with_lock_root(root.join("state"), root.join("SyncEngine/job-locks"))
+                .and_then(|app| action(&app));
+        match result {
+            Err(error) if error.code == "busy" && std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            other => return Ok(other?),
+        }
+    }
+}
 fn fixture() -> Result<(tempfile::TempDir, Profile), Error> {
     let temp = tempfile::tempdir()?;
     for name in ["state", "source", "destination"] {
@@ -24,11 +45,7 @@ fn fixture() -> Result<(tempfile::TempDir, Profile), Error> {
         allow_delete: false,
         compare: sync_profiles::CompareMethod::Content,
     };
-    Application::open_with_lock_root(
-        temp.path().join("state"),
-        temp.path().join("SyncEngine/job-locks"),
-    )?
-    .profile_save(p.clone())?;
+    with_app(temp.path(), |app| app.profile_save(p.clone()))?;
     Ok((temp, p))
 }
 fn command(root: &Path, action: &str, tail: &[&str]) -> Result<Output, Error> {
@@ -85,11 +102,8 @@ fn approved_profile_runs_in_headless_process_and_is_not_replayed() -> Result<(),
         serde_json::from_slice::<serde_json::Value>(&replay.stdout)?,
         serde_json::json!([])
     );
-    let app = Application::open_with_lock_root(
-        temp.path().join("state"),
-        temp.path().join("SyncEngine/job-locks"),
-    )?;
-    assert_eq!(app.history(p.id)?.len(), 1);
+    let history = with_app(temp.path(), |app| app.history(p.id.clone()))?;
+    assert_eq!(history.len(), 1);
     Ok(())
 }
 #[test]
@@ -98,21 +112,13 @@ fn changed_profile_or_missing_mirror_source_never_writes_or_deletes() -> Result<
     schedule(temp.path(), p.clone(), false)?;
     std::fs::write(p.source.join("new"), b"source")?;
     p.name = "edited".into();
-    Application::open_with_lock_root(
-        temp.path().join("state"),
-        temp.path().join("SyncEngine/job-locks"),
-    )?
-    .profile_save(p.clone())?;
+    with_app(temp.path(), |app| app.profile_save(p.clone()))?;
     let run = command(temp.path(), "tick", &["clock"])?;
     assert_eq!(run.status.code(), Some(2));
     assert!(!p.destination.join("new").exists());
     p.mode = serde_json::from_str("\"mirror\"")?;
     p.allow_delete = true;
-    Application::open_with_lock_root(
-        temp.path().join("state"),
-        temp.path().join("SyncEngine/job-locks"),
-    )?
-    .profile_save(p.clone())?;
+    with_app(temp.path(), |app| app.profile_save(p.clone()))?;
     // Separate fresh schedule to avoid intentionally retained completed watermark.
     let db = Scheduler::open(temp.path().join("state/scheduler.sqlite"))?;
     db.remove(&p.id)?;

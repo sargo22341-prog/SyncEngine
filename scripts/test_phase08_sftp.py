@@ -190,7 +190,11 @@ def main():
             transport.set_subsystem_handler("sftp", ExtendedServer, Filesystem)
             try:
                 transport.start_server(server=Authentication())
-            except (EOFError, paramiko.SSHException):
+            # Un client qui abandonne (clé d'hôte refusée) donne EOFError sous
+            # Linux mais ConnectionResetError (OSError, WinError 10054) sous
+            # Windows : sans ce cas, le thread serveur meurt et les connexions
+            # suivantes échouent (« Session(-8) »).
+            except (EOFError, OSError, paramiko.SSHException):
                 transport.close()
 
     thread = threading.Thread(target=serve, daemon=True)

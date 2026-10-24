@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-exclude = ["vendor/suppaftp"]
+exclude = ["vendor/suppaftp", "vendor/libssh2-sys"]
 members = [
     "crates/services/sync-credentials",
     "crates/connectors/cloud/connector-onedrive",
@@ -124,3 +124,6 @@ let_underscore_must_use = "warn"
 [patch.crates-io]
 # SuppaFTP 12.2.1 logs PASS and server replies at TRACE; local minimal redaction.
 suppaftp = { path = "vendor/suppaftp" }
+# libssh2-sys 0.3.3 (libssh2 1.11.1_DEV), WinCNG: upstream DH/ECDH leading-zero fix
+# (libssh2#2583) not yet released; see vendor/libssh2-sys/SYNCENGINE-PATCH.md.
+libssh2-sys = { path = "vendor/libssh2-sys" }

@@ -13,3 +13,4 @@ liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 - Logo retiré du haut de la barre de navigation.
 - Outil de maintenance : la sauvegarde refuse aussi une destination imbriquée écrite avec un chemin court Windows (8.3).
 - Windows : un fichier brièvement verrouillé par un antivirus ou l'indexeur ne fait plus échouer son remplacement.
+- SFTP sous Windows : une connexion sur 256 environ n'échoue plus à l'échange de clés.
