@@ -432,3 +432,50 @@ fn staged_content_can_be_reread_through_the_writer_before_commit() {
     writer.abort().unwrap();
     assert_eq!(names(dir.path()), ["f.bin"]);
 }
+
+/// Given a file larger than the intermediate flush interval (128 MiB), When
+/// it is written in 1 MiB blocks, re-read through the writer and committed,
+/// Then the flushes in the middle of the transfer change neither the content,
+/// nor the re-read, nor the published size.
+#[test]
+fn large_write_survives_intermediate_flushes() {
+    let dir = TempDir::new().unwrap();
+    let connector = writable(dir.path());
+    let cancel = CancellationToken::new();
+    const BLOCK: usize = 1024 * 1024;
+    let blocks: usize = 129;
+    let block = |n: usize| vec![u8::try_from(n % 251).unwrap(); BLOCK];
+    let mut writer = connector
+        .open_write(&p("large.bin"), &WriteOptions::new(), &cancel)
+        .unwrap();
+    for n in 0..blocks {
+        writer.write(&block(n)).unwrap();
+    }
+    let mut buffer = vec![0; 256 * 1024];
+    let mut reread = 0usize;
+    let mut mismatch = false;
+    assert!(
+        writer
+            .read_back(&mut buffer, &mut |data| {
+                for (offset, byte) in data.iter().enumerate() {
+                    let n = (reread + offset) / BLOCK;
+                    mismatch |= *byte != u8::try_from(n % 251).unwrap();
+                }
+                reread += data.len();
+            })
+            .unwrap()
+    );
+    assert!(!mismatch);
+    assert_eq!(reread, blocks * BLOCK);
+    let entry = writer.commit(CommitMode::CreateNew).unwrap();
+    assert_eq!(entry.metadata().size(), Some((blocks * BLOCK) as u64));
+    let written = fs::read(dir.path().join("large.bin")).unwrap();
+    assert_eq!(written.len(), blocks * BLOCK);
+    assert!(
+        written
+            .chunks(BLOCK)
+            .enumerate()
+            .all(|(n, c)| c == block(n))
+    );
+    assert_eq!(names(dir.path()), ["large.bin"]);
+}

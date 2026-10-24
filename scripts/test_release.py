@@ -42,9 +42,15 @@ class ReleaseTests(unittest.TestCase):
                 release.collect(root, root / "out", "x86_64-unknown-linux-gnu", ["deb"])
             output = root / "out"
             manifest = json.loads((output / "manifest.json").read_text())
+            # Only the published artifact is listed; provenance is CI-only.
+            self.assertEqual([a["name"] for a in manifest["artifacts"]], ["fixture.deb"])
+            self.assertEqual(sorted(p.name for p in output.iterdir()), [
+                "SHA256SUMS", "fixture.deb", "license-inventory.json", "manifest.json",
+                "source-inventory.json"])
             self.assertEqual(manifest["artifacts"][0]["sha256"],
                              hashlib.sha256(b"isolated fixture").hexdigest())
             self.assertEqual(release.digest(output / "source-inventory.json"),manifest["source_inventory_sha256"])
+            self.assertNotIn(b"\r", (output / "SHA256SUMS").read_bytes())
             for line in (output / "SHA256SUMS").read_text().splitlines():
                 expected, name = line.split("  ", 1)
                 self.assertEqual(release.digest(output / name), expected)
@@ -65,7 +71,8 @@ class ReleaseTests(unittest.TestCase):
                 release.collect(root, root / "out", "x86_64-unknown-linux-gnu", ["deb"])
 
 
-    def test_portable_archive_holds_the_three_binaries_and_refuses_overwrite(self):
+    def test_portable_archive_holds_only_what_users_need_and_refuses_overwrite(self):
+        import tarfile
         import zipfile
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -73,6 +80,7 @@ class ReleaseTests(unittest.TestCase):
             binaries.mkdir()
             for name in release.BINARIES:
                 (binaries / (name + ".exe")).write_bytes(b"fixture " + name.encode())
+                (binaries / name).write_bytes(b"fixture " + name.encode())
             notices = root / "notices"
             notices.mkdir()
             (notices / "license-inventory.json").write_text("{}")
@@ -81,16 +89,24 @@ class ReleaseTests(unittest.TestCase):
             with zipfile.ZipFile(archive) as content:
                 names = set(content.namelist())
             prefix = f"SyncEngine_{release.version()}_x86_64-pc-windows-msvc/"
-            for expected in ("syncengine-desktop.exe", "syncengine.exe", "syncengine-agent.exe", "LICENSE",
-                             "notices/THIRD_PARTY_NOTICES.txt", "tools/state_maintenance.py",
-                             "syncengine.png"):
-                self.assertIn(prefix + expected, names)
+            # Exactly the three executables and the legally required texts.
+            self.assertEqual(names, {prefix + name for name in (
+                "syncengine-desktop.exe", "syncengine.exe", "syncengine-agent.exe",
+                "LICENSE.txt", "THIRD_PARTY_NOTICES.txt")})
+            archive = release.portable(root / "linux", "x86_64-unknown-linux-gnu", binaries, notices)
+            with tarfile.open(archive) as content:
+                members = {m.name: m.mode for m in content.getmembers()}
+            prefix = f"SyncEngine_{release.version()}_x86_64-unknown-linux-gnu/"
+            self.assertEqual(set(members), {prefix + name for name in (
+                "syncengine-desktop", "syncengine", "syncengine-agent",
+                "LICENSE.txt", "THIRD_PARTY_NOTICES.txt")})
+            self.assertEqual(members[prefix + "syncengine"], 0o755)
+            self.assertEqual(members[prefix + "LICENSE.txt"], 0o644)
             with self.assertRaises(ValueError):
                 release.portable(root / "bundle", "x86_64-pc-windows-msvc", binaries, notices)
             (binaries / "syncengine-agent.exe").unlink()
             with self.assertRaises(ValueError):
                 release.portable(root / "other", "x86_64-pc-windows-msvc", binaries, notices)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,10 +7,12 @@ use crate::draft::{self, Provider};
 use crate::icons::{self, Glyph};
 use crate::model::{self, OpView};
 use crate::shell::{mode_color, mode_glyph, outcome_color};
+use crate::speed;
 use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
 use iced::widget::{Space, button, column, container, row, scrollable, text_input};
 use iced::{Alignment, Color, Length, Padding};
+use std::time::Instant;
 use sync_plan::{Action, SyncMode};
 use sync_profiles::Profile;
 
@@ -299,10 +301,11 @@ impl App {
             JobKind::Execute => ("Exécution réelle en cours", p.success),
         };
         let progress = match job.kind {
+            // Block-level bytes, like the curve: the ring moves inside a large file.
             JobKind::Execute => job
                 .planned_bytes
                 .filter(|b| *b > 0)
-                .map(|b| s.bytes_done as f32 / b as f32)
+                .map(|b| (s.bytes_transferred as f32 / b as f32).min(1.0))
                 .or_else(|| {
                     job.planned
                         .filter(|n| *n > 0)
@@ -331,32 +334,30 @@ impl App {
             ))
             .center(Length::Fixed(104.0)),
         ];
-        // Throughput from consecutive samples (bytes/s, or entries/s while scanning).
-        let values: Vec<f32> = job
-            .samples
-            .iter()
-            .zip(job.samples.iter().skip(1))
-            .map(|(a, b)| {
-                let dt = b.at.saturating_duration_since(a.at).as_secs_f32().max(0.05);
-                match job.kind {
-                    JobKind::Execute => b.bytes.saturating_sub(a.bytes) as f32 / dt,
-                    JobKind::Preview => b.scanned.saturating_sub(a.scanned) as f32 / dt,
-                }
-            })
-            .collect();
-        // Light smoothing: the bounded snapshot is sampled about 5 times per second.
-        let values: Vec<f32> = values
-            .iter()
-            .enumerate()
-            .map(|(i, _)| {
-                let window = &values[i.saturating_sub(2)..=i];
-                window.iter().sum::<f32>() / window.len() as f32
-            })
-            .collect();
-        let rate = values.iter().rev().take(5).sum::<f32>() / values.len().clamp(1, 5) as f32;
-        let rate_label = match job.kind {
-            JobKind::Execute => format!("{}/s", model::bytes(rate as u64)),
-            JobKind::Preview => format!("{} éléments/s", model::count(rate as u64)),
+        // Throughput over a 4 s sliding window (bytes/s, or entries/s while
+        // scanning), as FreeFileSync: see `speed`.
+        let series = |count: fn(&crate::app::Sample) -> u64| -> Vec<f32> {
+            let counts: Vec<(Instant, u64)> =
+                job.samples.iter().map(|s| (s.at, count(s))).collect();
+            speed::rates(&counts, job.started)
+        };
+        let values = match job.kind {
+            JobKind::Execute => series(|s| s.bytes),
+            JobKind::Preview => series(|s| s.scanned),
+        };
+        // Many small items (folders, thumbnails) move few bytes: show the
+        // operation rate next to the byte rate, as FreeFileSync does.
+        let operations = match job.kind {
+            JobKind::Execute => series(|s| s.operations).last().copied(),
+            JobKind::Preview => None,
+        };
+        let rate_label = match (values.last(), job.kind) {
+            // Not estimated during the first second: no misleading 0.
+            (None, _) => "mesure…".to_owned(),
+            (Some(rate), JobKind::Execute) => format!("{}/s", model::bytes(*rate as u64)),
+            (Some(rate), JobKind::Preview) => {
+                format!("{} éléments/s", model::count(*rate as u64))
+            }
         };
         let stat = |label: &'static str, value: String, c: Color| -> El<'a, Message> {
             column![ui::title(p, value, 20.0), ui::colored(c, label, 12.0)]
@@ -415,7 +416,22 @@ impl App {
                         p.muted
                     }
                 ),
-                stat("débit", rate_label, p.muted),
+                column![
+                    ui::title(p, rate_label, 20.0),
+                    ui::colored(
+                        p.muted,
+                        operations.map_or_else(
+                            || "débit".to_owned(),
+                            |rate| format!(
+                                "débit · {} opérations/s",
+                                model::count(rate.round() as u64)
+                            )
+                        ),
+                        12.0
+                    )
+                ]
+                .spacing(2)
+                .width(Length::Fill),
             ],
         }
         .spacing(16);
@@ -630,18 +646,52 @@ impl App {
                 "Certains chemins n’ont pas pu être lus : ils sont ignorés et aucune suppression n’est déduite de leur absence.",
             ));
         }
-        if s.deletions_refused > 0 {
+        if s.ceiling_lifted && s.delete > 0 {
             col = col.push(ui::callout(
                 p,
-                p.warning,
-                Glyph::Shield,
-                &format!("{} suppression(s) refusée(s)", model::count(s.deletions_refused)),
-                if profile.allow_delete {
-                    "Un garde-fou s’est déclenché (source vide, plafond de 50 %, absence incertaine). Le miroir ne sera pas identique tant que ces refus subsistent."
-                } else {
-                    "Ce profil interdit les suppressions : la destination conserve des fichiers absents de la source. Autorisez-les dans « Sécurité » puis recalculez."
-                },
+                p.danger,
+                Glyph::Trash,
+                &format!(
+                    "Plafond de suppressions levé : {} suppression(s) prévue(s)",
+                    model::count(s.delete)
+                ),
+                "Vous avez autorisé ce volume pour cette simulation uniquement. Vérifiez la liste « Suppressions » ; l’exécution demandera encore votre confirmation. « Recalculer » rétablit le plafond.",
             ));
+        }
+        if s.deletions_refused > 0 {
+            let title = format!(
+                "{} suppression(s) refusée(s)",
+                model::count(s.deletions_refused)
+            );
+            let (message, liftable) = match (profile.allow_delete, s.deletion_refusal) {
+                (false, _) => ("Ce profil interdit les suppressions : la destination conserve des fichiers absents de la source. Autorisez-les dans « Sécurité » puis recalculez.".to_owned(), false),
+                // The label already says what happens to the deletions.
+                (true, Some(refusal)) => (
+                    model::refusal_label(refusal),
+                    model::ceiling_liftable(refusal),
+                ),
+                (true, None) => ("Certaines suppressions sont interdites ou incertaines : la destination les conserve.".to_owned(), false),
+            };
+            col = col.push(ui::callout(p, p.warning, Glyph::Shield, &title, message));
+            if liftable {
+                col = col.push(
+                    row![
+                        ui::fill(),
+                        ui::action(
+                            p,
+                            Tone::Danger,
+                            Some(Glyph::Trash),
+                            format!(
+                                "Autoriser ces {} suppressions pour cette simulation",
+                                model::count(s.deletions_refused)
+                            ),
+                            (!self.busy())
+                                .then(|| Message::LiftDeletionCeiling(profile.id.clone()))
+                        ),
+                    ]
+                    .align_y(Alignment::Center),
+                );
+            }
         }
         if s.conflict > 0 {
             col = col.push(ui::callout(

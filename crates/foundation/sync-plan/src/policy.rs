@@ -33,8 +33,9 @@ pub enum PolicyError {
 ///
 /// Les vérifications sont **tout ou rien** : si l'une échoue, aucune
 /// suppression du plan n'est retenue (elles deviennent des sauts motivés).
-/// Valeur par défaut : au plus 50 % des entrées de la destination, aucune
-/// suppression si la source est vide, pas de plafond absolu.
+/// Valeur par défaut : au plus 50 % des entrées de la destination dès
+/// [`MIN_DELETIONS_FOR_PERCENT`] suppressions, aucune suppression si la
+/// source est vide, pas de plafond absolu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawGuard", into = "RawGuard")]
 pub struct DeletionGuard {
@@ -81,6 +82,17 @@ impl Default for DeletionGuard {
 /// Pourcentage maximal par défaut des entrées de destination supprimables.
 pub const DEFAULT_MAX_DELETE_PERCENT: u8 = 50;
 
+/// Nombre de suppressions à partir duquel le plafond relatif s'applique.
+///
+/// En dessous, le pourcentage n'a pas de sens : une destination presque vide
+/// (1 fichier obsolète sur 1) dépasserait toujours 50 %, alors que le risque
+/// visé — mauvais dossier choisi, destination vidée en masse — suppose un
+/// volume. Même seuil que la détection de « différence significative » de
+/// FreeFileSync (`significantDifferenceDetected`, 10 lignes). Source vide,
+/// inventaire incomplet et plafond absolu restent vérifiés quel que soit le
+/// nombre de suppressions.
+pub const MIN_DELETIONS_FOR_PERCENT: u64 = 10;
+
 impl DeletionGuard {
     /// Garde-fous par défaut (voir le type).
     #[must_use]
@@ -100,7 +112,8 @@ impl DeletionGuard {
     }
 
     /// Plafond relatif, en pourcentage des entrées observées à la
-    /// destination (`None` : pas de plafond).
+    /// destination (`None` : pas de plafond). Appliqué seulement à partir de
+    /// [`MIN_DELETIONS_FOR_PERCENT`] suppressions.
     ///
     /// # Errors
     /// [`PolicyError::InvalidPercent`] hors de `1..=100`.
@@ -144,8 +157,9 @@ impl DeletionGuard {
     /// Vérifie un ensemble de suppressions envisagées.
     ///
     /// Ordre des vérifications : complétude de la source, puis de la
-    /// destination, source vide, plafond absolu, plafond relatif. Aucune
-    /// suppression envisagée ⇒ toujours accepté.
+    /// destination, source vide, plafond absolu, plafond relatif (à partir de
+    /// [`MIN_DELETIONS_FOR_PERCENT`] suppressions). Aucune suppression
+    /// envisagée ⇒ toujours accepté.
     ///
     /// # Errors
     /// La première [`DeletionRefusal`] rencontrée.
@@ -170,7 +184,9 @@ impl DeletionGuard {
                 limit,
             });
         }
-        if let Some(max_percent) = self.max_percent {
+        if let Some(max_percent) = self.max_percent
+            && census.deletions >= MIN_DELETIONS_FOR_PERCENT
+        {
             // u128 : pas de débordement possible sur u64 × 100.
             let deleted = u128::from(census.deletions) * 100;
             let allowed = u128::from(census.destination_entries) * u128::from(max_percent);
@@ -303,16 +319,55 @@ mod tests {
     #[test]
     fn default_guard_limits_to_half() {
         let guard = DeletionGuard::new();
-        assert_eq!(guard.check(&census(5, 10, 3)), Ok(()));
+        assert_eq!(guard.check(&census(10, 20, 3)), Ok(()));
         assert_eq!(
-            guard.check(&census(6, 10, 3)),
+            guard.check(&census(11, 20, 3)),
             Err(DeletionRefusal::TooLarge {
-                count: 6,
-                total: 10,
+                count: 11,
+                total: 20,
                 max_percent: 50
             })
         );
         assert_eq!(guard.check(&census(0, 10, 0)), Ok(()));
+    }
+
+    /// Given une destination ne contenant qu'un fichier obsolète et une source
+    /// pleine, when le miroir prévoit de le supprimer, then le plafond relatif
+    /// ne bloque pas (1 sur 1 = 100 %, mais sous le seuil de volume).
+    #[test]
+    fn percent_ignores_small_deletion_sets() {
+        let guard = DeletionGuard::new();
+        assert_eq!(guard.check(&census(1, 1, 42_000)), Ok(()));
+        let below = MIN_DELETIONS_FOR_PERCENT - 1;
+        assert_eq!(guard.check(&census(below, below, 42_000)), Ok(()));
+        assert_eq!(
+            guard.check(&census(
+                MIN_DELETIONS_FOR_PERCENT,
+                MIN_DELETIONS_FOR_PERCENT,
+                42_000
+            )),
+            Err(DeletionRefusal::TooLarge {
+                count: MIN_DELETIONS_FOR_PERCENT,
+                total: MIN_DELETIONS_FOR_PERCENT,
+                max_percent: 50
+            })
+        );
+        // Les autres garde-fous ne connaissent pas de seuil.
+        assert_eq!(
+            guard.check(&census(1, 1, 0)),
+            Err(DeletionRefusal::SourceEmpty)
+        );
+        let mut partial = census(1, 1, 42_000);
+        partial.source_complete = false;
+        assert_eq!(
+            guard.check(&partial),
+            Err(DeletionRefusal::SourceIncomplete)
+        );
+        let capped = guard.with_max_count(Some(0));
+        assert_eq!(
+            capped.check(&census(1, 1, 42_000)),
+            Err(DeletionRefusal::TooMany { count: 1, limit: 0 })
+        );
     }
 
     #[test]

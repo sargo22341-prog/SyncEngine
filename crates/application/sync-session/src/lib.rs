@@ -6,6 +6,7 @@ use connector_api::StorageConnector;
 use sync_bidirectional::{BidirectionalError, BidirectionalStrategy, binding, converged_baseline};
 use sync_core::{CancellationToken, ExecutionId, ExecutionStatus, HashAlgorithm};
 use sync_decisions::PlanContext;
+use sync_events::EventEmitter;
 use sync_executor::{
     ExecutionError, ExecutionOptions, ExecutionReport, ExecutionRequest, Executor, PlanExecutor,
 };
@@ -158,6 +159,9 @@ pub struct SessionRequest<'a> {
     /// Optional verified preservation before every overwrite/delete.
     /// Retention is conservative: content versions are never purged here.
     pub versions: Option<&'a VersionStore<'a>>,
+    /// Optional bounded progress events (block-level transfer progress),
+    /// forwarded to the executor. Informative only, never a source of truth.
+    pub events: Option<&'a EventEmitter>,
 }
 
 /// Result including execution outcome and reference-state publication.
@@ -209,6 +213,9 @@ pub fn execute(
     .with_options(request.options);
     if let Some(versions) = request.versions {
         execution = execution.with_versions(versions);
+    }
+    if let Some(events) = request.events {
+        execution = execution.with_events(events);
     }
     let report = match Executor.execute(execution) {
         Ok(report) => report,

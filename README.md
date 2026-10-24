@@ -83,8 +83,9 @@ command line, agent) must stay side by side.
 | Windows 11 x86_64 | `SyncEngine_X.Y.Z_x86_64-pc-windows-msvc.zip` |
 | Linux x86_64 (built on Ubuntu 24.04) | `SyncEngine_X.Y.Z_x86_64-unknown-linux-gnu.tar.gz` |
 
-Check the download against `SHA256SUMS` (`sha256sum -c SHA256SUMS` on Linux,
-`Get-FileHash -Algorithm SHA256` in PowerShell). The binaries are **not signed**: Windows
+Each archive holds only the three executables, `LICENSE.txt` and `THIRD_PARTY_NOTICES.txt`.
+Check the download against the SHA-256 checksums listed at the end of the release description
+(`sha256sum FILE` on Linux, `Get-FileHash -Algorithm SHA256 FILE` in PowerShell). The binaries are **not signed**: Windows
 SmartScreen may warn on first launch.
 
 No administrator rights are needed. Profiles, history and settings live in
@@ -168,7 +169,7 @@ Copyright © 2026 sargo.
 SyncEngine is free software, distributed under the **GNU General Public License, version 3 only**
 (GPL-3.0-only): you may use, study, modify and redistribute it, provided that what you distribute
 stays under the same license, with its source code. It comes with no warranty. Full text:
-[`LICENSE`](LICENSE). Dependencies keep their own licenses; each release ships their notices
+[`LICENSE`](LICENSE). Dependencies keep their own licenses; each archive ships their notices
 (`THIRD_PARTY_NOTICES.txt`).
 
 SyncEngine is an independent project, not affiliated with SyncBack, FreeFileSync, Microsoft or

@@ -25,6 +25,7 @@ sync-scheduler.workspace = true
 sync-profiles.workspace = true
 sync-core.workspace = true
 sync-errors.workspace = true
+sync-events.workspace = true
 sync-plan.workspace = true
 sync-filter.workspace = true
 sync-scanner.workspace = true

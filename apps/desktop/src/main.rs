@@ -19,6 +19,7 @@ mod pages;
 mod profile;
 mod schedules;
 mod shell;
+mod speed;
 mod theme;
 mod tray;
 mod ui;

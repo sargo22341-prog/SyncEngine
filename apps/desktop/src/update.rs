@@ -12,6 +12,7 @@ use crate::wizard::Wizard;
 use iced::{Task, window};
 use std::time::Instant;
 use sync_core::ProfileId;
+use sync_orchestrator::DeletionCeiling;
 
 impl App {
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
@@ -181,7 +182,8 @@ impl App {
                 self.menu = None;
                 self.update(*inner)
             }
-            Message::Simulate(id) => self.simulate(id),
+            Message::Simulate(id) => self.simulate(id, DeletionCeiling::Guarded),
+            Message::LiftDeletionCeiling(id) => self.simulate(id, DeletionCeiling::Lifted),
             Message::Previewed(id, result) => {
                 self.job = None;
                 match result {

@@ -571,3 +571,159 @@ fn mirror_revalidates_a_reappeared_source_before_deleting_destination()
     assert_eq!(fs::read(p.source.join("old"))?, b"source reappeared");
     Ok(())
 }
+
+/// Given a full source and a destination holding only one obsolete file (the
+/// reported case: 42 000 photos → 1 old archive), When a mirror allowing
+/// deletions is previewed, Then the file is planned for deletion: the relative
+/// ceiling does not apply below its volume threshold.
+#[test]
+fn mirror_deletes_a_lone_obsolete_destination_file_by_default()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_temp, app, mut p) = fixture(SyncMode::Mirror)?;
+    p.allow_delete = true;
+    app.profile_save(p.clone())?;
+    for n in 0..20 {
+        fs::write(p.source.join(format!("photo{n}.jpg")), b"photo")?;
+    }
+    fs::write(p.destination.join("old.zip"), b"old")?;
+    let preview = app.preview(p.id.clone())?;
+    assert_eq!(preview["summary"]["delete"], 1);
+    assert_eq!(preview["summary"]["deletions_refused"], 0);
+    assert!(preview["summary"]["deletion_refusal"].is_null());
+    assert_eq!(preview["summary"]["ceiling_lifted"], false);
+    let report = app.execute(
+        p.id.clone(),
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        true,
+    )?;
+    assert_eq!(report["status"], "succeeded");
+    assert!(!p.destination.join("old.zip").exists());
+    assert_eq!(fs::read(p.destination.join("photo0.jpg"))?, b"photo");
+    Ok(())
+}
+
+/// Given a mirror whose deletions exceed the relative ceiling, When previewed
+/// normally, Then every deletion is refused with its exact cause; When the user
+/// lifts the ceiling for one preview, Then the deletions are planned, the lifted
+/// guard is recorded in the plan, execution still needs deletion confirmation,
+/// and the next ordinary preview is guarded again.
+#[test]
+fn mass_deletion_ceiling_is_lifted_only_for_one_explicit_preview()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_orchestrator::DeletionCeiling;
+    let (_temp, app, mut p) = fixture(SyncMode::Mirror)?;
+    p.allow_delete = true;
+    app.profile_save(p.clone())?;
+    fs::write(p.source.join("keep"), b"keep")?;
+    fs::write(p.destination.join("keep"), b"keep")?;
+    for n in 0..12 {
+        fs::write(p.destination.join(format!("old{n:02}")), b"old")?;
+    }
+    let guarded = app.preview_paged(p.id.clone())?;
+    assert_eq!(guarded["summary"]["delete"], 0);
+    assert_eq!(guarded["summary"]["deletions_refused"], 12);
+    assert_eq!(
+        guarded["summary"]["deletion_refusal"],
+        serde_json::json!({"cause":"too_large","count":12,"total":13,"max_percent":50})
+    );
+
+    let lifted = app.preview_paged_with(p.id.clone(), DeletionCeiling::Lifted)?;
+    assert_eq!(lifted["summary"]["delete"], 12);
+    assert_eq!(lifted["summary"]["ceiling_lifted"], true);
+    assert!(lifted["summary"]["deletion_refusal"].is_null());
+    let plan = lifted["plan"]["id"].as_str().ok_or("id")?.to_owned();
+    // Lifting the ceiling never replaces the per-execution confirmation.
+    assert_eq!(
+        app.execute(p.id.clone(), plan, true, false)
+            .err()
+            .ok_or("unconfirmed deletions accepted")?
+            .code,
+        "confirmation_required"
+    );
+    assert!(p.destination.join("old00").exists());
+
+    let lifted = app.preview_paged_with(p.id.clone(), DeletionCeiling::Lifted)?;
+    let plan = lifted["plan"]["id"].as_str().ok_or("id")?.to_owned();
+    let report = app.execute(p.id.clone(), plan, true, true)?;
+    assert_eq!(report["status"], "succeeded");
+    assert!(!p.destination.join("old00").exists());
+    assert_eq!(fs::read(p.destination.join("keep"))?, b"keep");
+    // The recorded plan carries the lifted guard for audit.
+    let run = &app.history(p.id.clone())?[0];
+    let guard = run
+        .plan
+        .pointer("/policy/deletion/guard")
+        .ok_or_else(|| format!("no guard in {}", run.plan))?;
+    assert_eq!(
+        guard,
+        &serde_json::json!({"max_count":null,"max_percent":null,"allow_empty_source":false})
+    );
+
+    for n in 0..12 {
+        fs::write(p.destination.join(format!("old{n:02}")), b"old")?;
+    }
+    let again = app.preview_paged(p.id)?;
+    assert_eq!(again["summary"]["deletions_refused"], 12);
+    assert_eq!(again["summary"]["ceiling_lifted"], false);
+    Ok(())
+}
+
+/// Given an empty source, When the ceiling is lifted, Then deletions stay
+/// refused: lifting never overrides the empty-source guard.
+#[test]
+fn lifting_the_ceiling_keeps_the_empty_source_guard() -> Result<(), Box<dyn std::error::Error>> {
+    use sync_orchestrator::DeletionCeiling;
+    let (_temp, app, mut p) = fixture(SyncMode::Mirror)?;
+    p.allow_delete = true;
+    app.profile_save(p.clone())?;
+    fs::write(p.destination.join("precious"), b"precious")?;
+    let lifted = app.preview_paged_with(p.id, DeletionCeiling::Lifted)?;
+    assert_eq!(lifted["summary"]["delete"], 0);
+    assert_eq!(
+        lifted["summary"]["deletion_refusal"],
+        serde_json::json!({"cause":"source_empty"})
+    );
+    assert!(p.destination.join("precious").exists());
+    Ok(())
+}
+
+/// Given a single large file being copied, When the snapshot is polled during
+/// the execution, Then transferred bytes advance block by block before the
+/// file is validated (the live throughput no longer jumps from 0 to the whole
+/// file size at the end of each file), and both counters agree at the end.
+#[test]
+fn snapshot_reports_block_level_transfer_progress() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    const SIZE: u64 = 64 * 1024 * 1024;
+    let (_temp, app, p) = fixture(SyncMode::Backup)?;
+    fs::File::create(p.source.join("large"))?.set_len(SIZE)?;
+    let preview = app.preview(p.id.clone())?;
+    let plan = preview["plan"]["id"].as_str().ok_or("id")?.to_owned();
+    let app = Arc::new(app);
+    let worker_app = app.clone();
+    let id = p.id.clone();
+    let worker = std::thread::spawn(move || worker_app.execute(id, plan, true, false));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut mid_file = false;
+    while !worker.is_finished() && Instant::now() < deadline {
+        let s = app.snapshot()?;
+        assert!(s.bytes_transferred >= s.bytes_done);
+        assert!(s.bytes_transferred <= SIZE);
+        if s.bytes_done == 0 && s.bytes_transferred > 0 {
+            mid_file = true;
+        }
+        std::thread::yield_now();
+    }
+    let report = worker.join().map_err(|_| "execution worker panicked")??;
+    assert_eq!(report["status"], "succeeded");
+    assert!(
+        mid_file,
+        "no block-level progress observed before validation"
+    );
+    let end = app.snapshot()?;
+    assert_eq!(end.bytes_done, SIZE);
+    assert_eq!(end.bytes_transferred, SIZE);
+    Ok(())
+}

@@ -52,11 +52,15 @@ pub(crate) enum JobKind {
     Execute,
 }
 
-/// One live observation kept for the charts (bounded ring buffer).
+/// One live observation kept for the charts (bounded by time, see
+/// [`crate::speed::RETAIN`]).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Sample {
     pub(crate) at: Instant,
+    /// Bytes transferred block by block (not only validated files).
     pub(crate) bytes: u64,
+    /// Completed operations (folders created, files validated, deletions).
+    pub(crate) operations: u64,
     pub(crate) scanned: u64,
 }
 
@@ -198,6 +202,8 @@ pub(crate) enum Message {
     Menu(Box<Message>),
     // Profiles.
     Simulate(ProfileId),
+    /// Re-simulates once with the deletion ceiling lifted (explicit user choice).
+    LiftDeletionCeiling(ProfileId),
     Previewed(ProfileId, Result<PreviewView, Failure>),
     PlanFilter(Option<Action>),
     PlanQuery(String),

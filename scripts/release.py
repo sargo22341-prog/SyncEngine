@@ -78,9 +78,18 @@ BINARIES = ("syncengine-desktop", "syncengine", "syncengine-agent")
 PORTABLE = {"x86_64-pc-windows-msvc": ".zip", "x86_64-unknown-linux-gnu": ".tar.gz"}
 
 
+# Strict minimum for users: the three executables (the GUI activates the
+# adjacent agent, the CLI is the documented command line) plus the texts that
+# redistribution legally requires (product license, third-party notices).
+# Provenance (manifest, source inventory, license inventory) stays in the CI
+# artifacts; maintenance scripts stay in the repository.
+ARCHIVE_NOTICES = ("THIRD_PARTY_NOTICES.txt",)
+
+
 def portable(bundle, target, binaries=None, notices=None):
-    """Archive GUI, CLI and agent side by side (the GUI activates the adjacent
-    agent). Refuses an existing archive; nothing is installed or published."""
+    """Archive GUI, CLI and agent side by side with LICENSE and the
+    third-party notices, nothing else. Refuses an existing archive; nothing is
+    installed or published."""
     current = version()
     if target not in PORTABLE:
         raise ValueError("unsupported target")
@@ -88,9 +97,8 @@ def portable(bundle, target, binaries=None, notices=None):
     notices = notices or NOTICES
     suffix = ".exe" if "windows" in target else ""
     members = [(binaries / (name + suffix), name + suffix) for name in BINARIES]
-    members += [(notices / name, "notices/" + name) for name in ("license-inventory.json", "THIRD_PARTY_NOTICES.txt")]
-    members += [(ROOT / "LICENSE", "LICENSE"), (ROOT / "scripts/state_maintenance.py", "tools/state_maintenance.py"),
-                (ROOT / "apps/desktop/assets/syncengine.png", "syncengine.png")]
+    members += [(notices / name, name) for name in ARCHIVE_NOTICES]
+    members += [(ROOT / "LICENSE", "LICENSE.txt")]
     for path, _ in members:
         if not path.is_file() or path.is_symlink():
             raise ValueError(f"missing portable member: {path.name}; run prepare")
@@ -115,7 +123,9 @@ def portable(bundle, target, binaries=None, notices=None):
 
 
 def collect(bundle, output, target, formats):
-    """Fail closed on missing formats; never mix a prior collection with this one."""
+    """Fail closed on missing formats; never mix a prior collection with this one.
+    Output: the published artifacts plus CI-only provenance (manifest,
+    source inventory, license inventory, SHA256SUMS), never published."""
     current = version()
     allowed = {"x86_64-pc-windows-msvc": {"nsis", "portable"},
                "x86_64-unknown-linux-gnu": {"deb", "appimage", "portable"}}
@@ -131,15 +141,12 @@ def collect(bundle, output, target, formats):
         if len(matches) != 1 or not matches[0].is_file() or matches[0].is_symlink():
             raise ValueError(f"expected exactly one {kind} artifact")
         files.extend(matches)
-    for name in ("license-inventory.json", "THIRD_PARTY_NOTICES.txt"):
-        notice = NOTICES / name
-        if not notice.is_file() or notice.is_symlink():
-            raise ValueError("release notices missing; run prepare")
-        files.append(notice)
-    license_file = ROOT / "LICENSE"
-    if not license_file.is_file() or license_file.is_symlink():
-        raise ValueError("product license missing")
-    files.append(license_file)
+    published = len(files)
+    # Provenance only: the notices themselves ship inside the archive.
+    inventory = NOTICES / "license-inventory.json"
+    if not inventory.is_file() or inventory.is_symlink():
+        raise ValueError("release notices missing; run prepare")
+    files.append(inventory)
     names = [file.name for file in files]
     if len(names) != len(set(names)):
         raise ValueError("duplicate artifact names")
@@ -154,15 +161,16 @@ def collect(bundle, output, target, formats):
                 "locks": {name: digest(ROOT / name) for name in
                           ("Cargo.lock",)},
                 "artifacts": [{"name": p.name, "bytes": p.stat().st_size,
-                               "sha256": digest(p)} for p in files]}
+                               "sha256": digest(p)} for p in files[:published]]}
     output.mkdir(parents=True)
     for file in files:
         shutil.copy2(file, output / file.name)
     (output / "source-inventory.json").write_text(source, encoding="utf-8", newline="\n")
-    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     included = [*names, "manifest.json", "source-inventory.json"]
+    # LF on every host: a Windows-built list is checked by `sha256sum -c` on Linux.
     (output / "SHA256SUMS").write_text("".join(
-        f"{digest(output / name)}  {name}\n" for name in sorted(included)), encoding="utf-8")
+        f"{digest(output / name)}  {name}\n" for name in sorted(included)), encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

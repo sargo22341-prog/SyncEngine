@@ -15,17 +15,18 @@ use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use sync_core::{
     CancellationToken, ExecutionId, HashAlgorithm, PlanId, ProfileId, ResourcePath, Timestamp,
 };
 use sync_decisions::{PlanContext, PlanStrategy, PlanningInput};
+use sync_events::{EmitOutcome, Event, EventEmitter, EventKind, EventSink};
 use sync_executor::{ExecutionOptions, ExecutionRequest, Executor, PlanExecutor};
 use sync_filter::Filter;
 use sync_history::{History, RetentionPolicy};
 use sync_journal::{FileJournal, JournalError, JournalRecord, JournalSink};
 use sync_plan::{
-    DeletionGuard, DeletionPolicy, ExecutionPlan, OverwritePolicy, PlanPolicy, SyncMode,
+    DeletionGuard, DeletionPolicy, ExecutionPlan, OverwritePolicy, PlanPolicy, Reason, SyncMode,
 };
 use sync_profiles::{CompareMethod, Preferences, Profile, Profiles};
 use sync_scanner::{Inventory, RECOMMENDED_HASH_WORKERS, ScanError, ScanOptions, ScanStats};
@@ -102,6 +103,11 @@ pub struct JobSnapshot {
     pub entries_done: u64,
     /// Validated transferred bytes (updates between completed files).
     pub bytes_done: u64,
+    /// Bytes read and staged so far, block by block, including the file in
+    /// progress (about every [`LIVE_PROGRESS_BYTES`]). Basis of the live
+    /// throughput; bytes of a transfer that later fails are not subtracted, so
+    /// it can exceed `bytes_done`. Presentation only.
+    pub bytes_transferred: u64,
     /// Entries observed during preview, including directories (both endpoints).
     pub entries_scanned: u64,
     /// Nonfatal scan anomalies; unknown coverage never authorizes deletion.
@@ -115,9 +121,55 @@ pub struct JobSnapshot {
     pub operation_errors: u64,
 }
 
+/// Deletion ceilings applied by one preview of a profile that allows deletions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DeletionCeiling {
+    /// Default guards: empty source, incomplete inventories, and the relative
+    /// ceiling (50 % of destination entries, from 10 deletions).
+    #[default]
+    Guarded,
+    /// The user explicitly approved, for this preview only, deletions above the
+    /// relative ceiling. Empty source and incomplete inventories still refuse
+    /// every deletion; nothing is persisted, scheduled jobs always use
+    /// [`DeletionCeiling::Guarded`], and execution still requires its own
+    /// deletion confirmation. The lifted guard is recorded in the plan policy.
+    Lifted,
+}
+
+impl DeletionCeiling {
+    fn guard(self) -> DeletionGuard {
+        match self {
+            Self::Guarded => DeletionGuard::new(),
+            // `None` is always a valid percentage; the unreachable error falls
+            // back to the stricter default guard.
+            Self::Lifted => DeletionGuard::new()
+                .with_max_percent(None)
+                .unwrap_or_default(),
+        }
+    }
+}
+
 struct Cached {
     profile: Profile,
     plan: ExecutionPlan,
+}
+
+/// Granularity of the block-level progress forwarded to [`JobSnapshot`]: four
+/// 256 KiB copy buffers. Fine enough for a steady throughput curve on slow
+/// links (1 MiB/s ⇒ one update per second), coarse enough to stay a few
+/// hundred cheap atomic stores per second at disk speed.
+pub const LIVE_PROGRESS_BYTES: u64 = 1024 * 1024;
+
+/// Keeps only the latest transferred-byte count from executor progress
+/// events: no queue, nothing grows with the transfer size.
+struct LiveTransfer(Arc<AtomicU64>);
+impl EventSink for LiveTransfer {
+    fn emit(&self, event: Event) -> EmitOutcome {
+        if let EventKind::Progress(progress) = event.kind() {
+            self.0.fetch_max(progress.bytes_done, Relaxed);
+        }
+        EmitOutcome::Delivered
+    }
 }
 
 /// Facade owner, safe to share with command workers. Never accepts a plan or
@@ -129,6 +181,9 @@ pub struct Application {
     cache: Mutex<Option<Cached>>,
     cancel: Mutex<CancellationToken>,
     snapshot: Mutex<JobSnapshot>,
+    /// Live block-level byte count of the current execution (see
+    /// [`JobSnapshot::bytes_transferred`]).
+    transferred: Arc<AtomicU64>,
 }
 impl Application {
     /// Opens an existing state directory under an initialization lock and
@@ -174,6 +229,7 @@ impl Application {
             cache: Mutex::new(None),
             cancel: Mutex::new(CancellationToken::new()),
             snapshot: Mutex::new(JobSnapshot::default()),
+            transferred: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -311,6 +367,7 @@ impl Application {
     ) -> Result<CancellationToken, AppError> {
         let cancel = token.cloned().unwrap_or_default();
         *lock(&self.cancel)? = cancel.clone();
+        self.transferred.store(0, Relaxed);
         *lock(&self.snapshot)? = JobSnapshot {
             active: true,
             phase,
@@ -339,13 +396,14 @@ impl Application {
     /// Busy, unavailable root, scan/planning/persistence failure or cancellation.
     pub fn preview(&self, id: ProfileId) -> Result<serde_json::Value, AppError> {
         let _gate = self.gate()?;
-        self.preview_locked(id, None, false)
+        self.preview_locked(id, None, false, DeletionCeiling::Guarded)
     }
     fn preview_locked(
         &self,
         id: ProfileId,
         token: Option<&CancellationToken>,
         paged: bool,
+        ceiling: DeletionCeiling,
     ) -> Result<serde_json::Value, AppError> {
         *lock(&self.cache)? = None;
         let cancel = self.begin(&id, JobPhase::Scanning, token)?;
@@ -373,7 +431,7 @@ impl Application {
             let policy = PlanPolicy::new(
                 OverwritePolicy::SourceWins,
                 if profile.allow_delete {
-                    DeletionPolicy::enabled(DeletionGuard::new())
+                    DeletionPolicy::enabled(ceiling.guard())
                 } else {
                     DeletionPolicy::Disabled
                 },
@@ -487,7 +545,13 @@ impl Application {
             } else {
                 serde_json::to_value(&plan).map_err(io)?
             };
-            let view = serde_json::json!({"plan":value,"summary":{"copy":summary.copy,"replace":summary.replace,"delete":summary.delete,"keep":summary.keep,"conflict":summary.conflict,"skip":summary.skip,"bytes":summary.bytes_to_transfer,"deletions_refused":summary.deletions_refused}});
+            // Guards are all-or-nothing: every refused deletion carries the same cause.
+            let refusal = plan.operations().iter().find_map(|op| match op.reason() {
+                Reason::DeletionRefused { refusal } => Some(*refusal),
+                _ => None,
+            });
+            let lifted = profile.allow_delete && ceiling == DeletionCeiling::Lifted;
+            let view = serde_json::json!({"plan":value,"summary":{"copy":summary.copy,"replace":summary.replace,"delete":summary.delete,"keep":summary.keep,"conflict":summary.conflict,"skip":summary.skip,"bytes":summary.bytes_to_transfer,"deletions_refused":summary.deletions_refused,"deletion_refusal":refusal,"ceiling_lifted":lifted}});
             *lock(&self.cache)? = Some(Cached { profile, plan });
             Ok(view)
         })();
@@ -590,7 +654,14 @@ impl Application {
         )
         .map_err(io)?;
         runs::begin(&self.state, &execution, &cached.profile.id, &cached.plan)?;
-        let options = ExecutionOptions::new().with_deletions_confirmed(confirm_delete);
+        let options = ExecutionOptions::new()
+            .with_deletions_confirmed(confirm_delete)
+            .with_progress_interval(LIVE_PROGRESS_BYTES);
+        let events = EventEmitter::new(
+            execution.clone(),
+            Some(cached.profile.id.clone()),
+            Arc::new(LiveTransfer(Arc::clone(&self.transferred))),
+        );
         let result = if cached.profile.mode == SyncMode::Bidirectional {
             let mut history = History::open(self.state.join("state.sqlite")).map_err(io)?;
             let request = sync_session::SessionRequest {
@@ -602,6 +673,7 @@ impl Application {
                 cancel,
                 options,
                 versions: Some(&store),
+                events: Some(&events),
             };
             sync_session::execute(&mut history, request, RetentionPolicy::default())
                 .map_err(io)
@@ -624,7 +696,8 @@ impl Application {
                         cancel,
                     )
                     .with_options(options)
-                    .with_versions(&store),
+                    .with_versions(&store)
+                    .with_events(&events),
                 )
                 .map_err(io)
                 .and_then(|r| serde_json::to_value(r).map_err(io))
@@ -645,7 +718,10 @@ impl Application {
     /// # Errors
     /// Internal state poisoned.
     pub fn snapshot(&self) -> Result<JobSnapshot, AppError> {
-        Ok(lock(&self.snapshot)?.clone())
+        let mut snapshot = lock(&self.snapshot)?.clone();
+        // Validated bytes were transferred too, even if an event was coalesced.
+        snapshot.bytes_transferred = self.transferred.load(Relaxed).max(snapshot.bytes_done);
+        Ok(snapshot)
     }
 
     /// Last 100 attempts for a profile; unfinished work remains visibly running.

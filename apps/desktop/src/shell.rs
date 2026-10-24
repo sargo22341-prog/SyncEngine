@@ -549,19 +549,25 @@ impl App {
                 model::count(s.hash_target)
             ),
             JobKind::Preview => format!("{} entrées analysées", model::count(s.entries_scanned)),
+            // Block-level bytes, as the main progress card.
             JobKind::Execute => format!(
-                "{} opérations · {}",
+                "{} opérations · {} copiés",
                 model::count(s.entries_done),
-                model::bytes(s.bytes_done)
+                model::bytes(s.bytes_transferred)
             ),
         };
         let progress = match job.kind {
             JobKind::Preview => (s.hash_target > 0)
                 .then(|| (s.entries_hashed as f32 / s.hash_target as f32).min(1.0)),
             JobKind::Execute => job
-                .planned
-                .filter(|n| *n > 0)
-                .map(|n| (s.entries_done as f32 / n as f32).min(1.0)),
+                .planned_bytes
+                .filter(|b| *b > 0)
+                .map(|b| (s.bytes_transferred as f32 / b as f32).min(1.0))
+                .or_else(|| {
+                    job.planned
+                        .filter(|n| *n > 0)
+                        .map(|n| (s.entries_done as f32 / n as f32).min(1.0))
+                }),
         };
         container(
             row![

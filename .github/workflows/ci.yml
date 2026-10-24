@@ -1,7 +1,8 @@
 # Contrôles obligatoires (AGENTS.md, section QUALITÉ RUST) sur chaque pull request et chaque
 # push sur main, sous Ubuntu et Windows. La chaîne Rust est lue depuis rust-toolchain.toml.
 # Sur main : montée de version, archives portables Windows et Linux, commit + tag vX.Y.Z et
-# GitHub Release dont le texte vient de RELEASE_NOTES.md (liste vidée dans le commit de version).
+# GitHub Release (les deux archives seulement) dont le texte vient de RELEASE_NOTES.md (liste
+# vidée dans le commit de version), suivi des empreintes SHA-256.
 # Les actions suivent leur tag de version majeure (@v7…) ; les montées majeures se font à la main.
 # Fonctionnement, limites et sécurité : docs/DEVELOPPEMENT.md.
 name: CI
@@ -248,10 +249,13 @@ jobs:
           pattern: syncengine-*
           path: ${{ runner.temp }}/artifacts
 
+      # Seules les deux archives sont publiées. Manifeste, inventaires et SHA256SUMS de la
+      # collecte servent à la vérification ci-dessous et restent dans les artefacts du run.
       - name: Vérifier les archives et préparer les fichiers publiés
         env:
           ARTIFACTS: ${{ runner.temp }}/artifacts
           DIST: ${{ runner.temp }}/dist
+          CHECKSUMS: ${{ runner.temp }}/checksums.md
           VERSION_NAME: ${{ steps.version.outputs.name }}
           COMMIT: ${{ steps.version.outputs.commit }}
         run: |
@@ -267,15 +271,27 @@ jobs:
           wrong = {key: manifest.get(key) for key, value in expected.items() if manifest.get(key) != value}
           if wrong:
               sys.exit(f"manifest {sys.argv[4]} inattendu : {wrong}")
+          names = [artifact["name"] for artifact in manifest["artifacts"]]
+          if len(names) != 1:
+              sys.exit(f"une seule archive attendue pour {sys.argv[4]} : {names}")
           EOF
             cp "$dir"/SyncEngine_*_"$target".* "$DIST/"
-            cp "$dir/manifest.json" "$DIST/manifest-$target.json"
-            cp "$dir/source-inventory.json" "$DIST/source-inventory-$target.json"
           done
-          cp "$ARTIFACTS/syncengine-x86_64-unknown-linux-gnu/THIRD_PARTY_NOTICES.txt" "$DIST/"
-          cp LICENSE "$DIST/LICENSE.txt"
-          (cd "$DIST" && sha256sum -- * > SHA256SUMS)
+          if [[ $(ls "$DIST" | wc -l) -ne 2 ]]; then
+            echo "::error::Exactement deux archives attendues."
+            ls -l "$DIST"
+            exit 1
+          fi
+          # Empreintes affichées dans la description de la release (pas de fichier en plus).
+          {
+            echo "### Empreintes SHA-256"
+            echo
+            echo '```'
+            (cd "$DIST" && sha256sum -- *)
+            echo '```'
+          } > "$CHECKSUMS"
           ls -l "$DIST"
+          cat "$CHECKSUMS"
 
       - name: Commit et tag de la version
         env:
@@ -293,10 +309,14 @@ jobs:
           VERSION_NAME: ${{ steps.version.outputs.name }}
           DIST: ${{ runner.temp }}/dist
           NOTES: ${{ runner.temp }}/release-notes.md
+          CHECKSUMS: ${{ runner.temp }}/checksums.md
+          BODY: ${{ runner.temp }}/release-body.md
         run: |
           if [[ -s "$NOTES" ]]; then
-            notes=(--notes-file "$NOTES")
+            { cat "$NOTES"; echo; cat "$CHECKSUMS"; } > "$BODY"
+            notes=(--notes-file "$BODY")
           else
-            notes=(--generate-notes)
+            # Notes générées par GitHub ; --notes (documenté) les fait précéder des empreintes.
+            notes=(--notes "$(cat "$CHECKSUMS")" --generate-notes)
           fi
           gh release create "v$VERSION_NAME" "$DIST"/* --title "SyncEngine $VERSION_NAME" "${notes[@]}"

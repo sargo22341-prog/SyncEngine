@@ -464,6 +464,15 @@ impl App {
             .spacing(2),
         ]
         .spacing(14);
+        if s.ceiling_lifted && s.delete > 0 {
+            col = col.push(ui::callout(
+                p,
+                p.danger,
+                Glyph::Alert,
+                "Plafond de suppressions levé pour ce plan",
+                "Ces suppressions dépassent le plafond habituel ; vous l’avez autorisé dans la simulation.",
+            ));
+        }
         if s.delete > 0 {
             col = col.push(
                 container(

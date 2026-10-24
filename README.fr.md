@@ -90,8 +90,9 @@ exécutables (interface, ligne de commande, agent) doivent rester côte à côte
 | Windows 11 x86_64 | `SyncEngine_X.Y.Z_x86_64-pc-windows-msvc.zip` |
 | Linux x86_64 (compilé sous Ubuntu 24.04) | `SyncEngine_X.Y.Z_x86_64-unknown-linux-gnu.tar.gz` |
 
-Vérifier le téléchargement avec `SHA256SUMS` (`sha256sum -c SHA256SUMS` sous Linux,
-`Get-FileHash -Algorithm SHA256` sous PowerShell). Les binaires **ne sont pas signés** :
+Chaque archive ne contient que les trois exécutables, `LICENSE.txt` et `THIRD_PARTY_NOTICES.txt`.
+Vérifier le téléchargement avec les empreintes SHA-256 listées à la fin de la description de la
+release (`sha256sum FICHIER` sous Linux, `Get-FileHash -Algorithm SHA256 FICHIER` sous PowerShell). Les binaires **ne sont pas signés** :
 SmartScreen peut afficher un avertissement au premier lancement.
 
 Aucun droit administrateur n'est nécessaire. Profils, historique et réglages sont dans
@@ -175,7 +176,7 @@ SyncEngine est un logiciel libre, distribué sous la **GNU General Public Licens
 uniquement** (GPL-3.0-only) : vous pouvez l'utiliser, l'étudier, le modifier et le redistribuer, à
 condition que ce que vous distribuez reste sous la même licence, avec son code source. Il est
 fourni sans garantie. Texte complet : [`LICENSE`](LICENSE). Les dépendances conservent leurs
-licences ; chaque release inclut leurs notices (`THIRD_PARTY_NOTICES.txt`).
+licences ; chaque archive inclut leurs notices (`THIRD_PARTY_NOTICES.txt`).
 
 SyncEngine est un projet indépendant, sans lien avec SyncBack, FreeFileSync, Microsoft ou un
 quelconque fournisseur de stockage.

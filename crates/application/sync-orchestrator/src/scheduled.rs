@@ -83,7 +83,12 @@ impl Application {
                     "intention inachevée : diagnostic requis",
                 ));
             }
-            let view = self.preview_locked(approved.id.clone(), Some(cancel), true)?;
+            let view = self.preview_locked(
+                approved.id.clone(),
+                Some(cancel),
+                true,
+                crate::DeletionCeiling::Guarded,
+            )?;
             let id = view["plan"]["id"]
                 .as_str()
                 .ok_or_else(|| error("internal", "identifiant de plan absent"))?

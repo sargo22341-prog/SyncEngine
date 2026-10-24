@@ -1167,7 +1167,7 @@ impl Wizard {
                     ]
                     .spacing(14)
                     .align_y(Alignment::Center),
-                    ui::caption(p, "Plafond de 50 % et source vide toujours bloqués. Une confirmation distincte est demandée à chaque exécution."),
+                    ui::caption(p, "Source vide ou illisible toujours bloquée. Au-delà de 50 % de la destination (dès 10 suppressions), la simulation demande votre accord explicite. Une confirmation distincte est demandée à chaque exécution."),
                 ]
                 .spacing(10),
             )

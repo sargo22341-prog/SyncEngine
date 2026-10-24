@@ -119,6 +119,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             cancel: &cancel,
             options: ExecutionOptions::new().with_deletions_confirmed(delete),
             versions: Some(&store),
+            events: None,
         },
         RetentionPolicy::default(),
     )?;

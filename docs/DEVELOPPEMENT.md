@@ -105,10 +105,15 @@ Tout se fait dans `.github/workflows/ci.yml` :
   1. `scripts/versioning.py` monte le patch de `[workspace.package].version`
      et crée le commit `Version X.Y.Z [skip ci]` ;
   2. un job par OS construit les trois exécutables et l'archive portable
-     (`.zip` Windows, `.tar.gz` Linux) avec manifeste, notices tierces et
-     `SHA256SUMS` (`scripts/release.py`) ;
+     (`.zip` Windows, `.tar.gz` Linux, `scripts/release.py`). L'archive ne
+     contient que le strict nécessaire : `syncengine-desktop`, `syncengine`,
+     `syncengine-agent`, `LICENSE.txt` et `THIRD_PARTY_NOTICES.txt` (textes
+     exigés par la redistribution). Manifeste, inventaires de sources et de
+     licences et `SHA256SUMS` servent à la vérification et restent dans les
+     artefacts du run, jamais publiés ;
   3. le commit et le tag `vX.Y.Z` sont poussés, puis la GitHub Release est
-     créée ;
+     créée avec **les deux archives seulement** ; leurs empreintes SHA-256
+     sont ajoutées à la fin de la description ;
 - **Actions › CI › Run workflow** permet de monter `minor` ou `major`.
 
 Ne jamais modifier la version à la main. Chaque changement visible ajoute une
@@ -131,8 +136,8 @@ python scripts/release.py collect --bundle target/release/bundle --output target
 
 Source : `docs/icon/syncengine.png`. `python scripts/generate_icons.py docs/icon/syncengine.png`
 (Pillow) régénère `apps/desktop/assets/` : `.ico` intégré à l'exécutable
-Windows par `build.rs`, `.png` pour l'archive Linux, `.rgba` pour la fenêtre et
-la zone de notification.
+Windows par `build.rs`, `.rgba` intégré pour la fenêtre et la zone de
+notification. Aucune image n'est livrée à côté des exécutables.
 
 ## Mesures
 

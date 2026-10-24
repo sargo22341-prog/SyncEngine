@@ -748,7 +748,7 @@ impl App {
             "Plan simulé identique au plan exécuté ; toute modification exige une nouvelle simulation.",
             "Copie vérifiée par empreinte BLAKE3 ; comparaison par taille et date ou par contenu, au choix de chaque profil.",
             "Versions conservées avant remplacement ou suppression.",
-            "Suppressions désactivées par défaut ; source vide et plafond de 50 % toujours bloqués.",
+            "Suppressions désactivées par défaut ; source vide ou illisible toujours bloquée ; plus de 50 % de la destination (dès 10 suppressions) bloqué sauf accord explicite dans la simulation.",
             "Un verrou par compte sérialise CLI, interface et agent.",
             "Quitter pendant une tâche demande son annulation ; SyncEngine attend l’état durable.",
         ]

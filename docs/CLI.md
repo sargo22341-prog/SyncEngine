@@ -43,7 +43,7 @@ Plan (`preview`, `execute`) :
 | `--mode backup\|mirror` | sauvegarde (défaut) ou miroir |
 | `--overwrite source-wins\|newer\|never` | traitement des fichiers différents ; `newer` (défaut sauvegarde) crée un conflit si la destination est plus récente |
 | `--allow-delete` | miroir : autorise les suppressions |
-| `--max-delete <N>` / `--max-delete-percent <P>` | plafonds de suppression (défaut 50 %) |
+| `--max-delete <N>` / `--max-delete-percent <P>` | plafonds de suppression (défaut 50 % des entrées de la destination, appliqué à partir de 10 suppressions) |
 | `--allow-empty-source` | admet des suppressions depuis une source vide |
 | `--json` | plan JSON versionné (`preview`) ou rapport JSON (`execute`) |
 

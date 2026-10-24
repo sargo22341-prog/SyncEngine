@@ -1,5 +1,5 @@
 //! Bounded presentation views. The executable plan remains owned by the facade.
-use crate::{AppError, Application, error, io, lock};
+use crate::{AppError, Application, DeletionCeiling, error, io, lock};
 use sync_core::ProfileId;
 
 impl Application {
@@ -27,8 +27,19 @@ impl Application {
     /// # Errors
     /// Same failures as `preview`; no truncation of the executable model.
     pub fn preview_paged(&self, id: ProfileId) -> Result<serde_json::Value, AppError> {
+        self.preview_paged_with(id, DeletionCeiling::Guarded)
+    }
+    /// Same as `preview_paged`, with the deletion ceiling chosen by the user
+    /// for this preview only (see [`DeletionCeiling`]).
+    /// # Errors
+    /// Same failures as `preview`.
+    pub fn preview_paged_with(
+        &self,
+        id: ProfileId,
+        ceiling: DeletionCeiling,
+    ) -> Result<serde_json::Value, AppError> {
         let _gate = self.gate()?;
-        self.preview_locked(id, None, true)
+        self.preview_locked(id, None, true, ceiling)
     }
     /// Searches the exact cached plan, returning at most 100 operations.
     /// Stale plans and oversized search values are explicitly refused.

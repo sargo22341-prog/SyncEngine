@@ -4,9 +4,10 @@ Requires Pillow (development only; nothing is generated at build time):
 
     python scripts/generate_icons.py docs/icon/syncengine.png
 
-Writes apps/desktop/assets/: syncengine.ico (Windows executable resource),
-syncengine.png (256 px, Linux archive) and icon-64.rgba (straight RGBA,
-64 x 64, embedded for the window and notification-area icons).
+Writes apps/desktop/assets/: syncengine.ico (Windows executable resource)
+and icon-64.rgba (straight RGBA, 64 x 64, embedded for the window and
+notification-area icons). Both end up inside the executables: the release
+archives ship no separate image.
 """
 import argparse
 from pathlib import Path
@@ -36,7 +37,6 @@ def generate(source):
     if image.width != image.height:
         raise SystemExit("square source image required")
     ASSETS.mkdir(parents=True, exist_ok=True)
-    image.resize((256, 256), Image.LANCZOS).save(ASSETS / "syncengine.png", optimize=True)
     image.save(ASSETS / "syncengine.ico",
                sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
     (ASSETS / "icon-64.rgba").write_bytes(image.resize((RAW_SIZE, RAW_SIZE), Image.LANCZOS).tobytes())

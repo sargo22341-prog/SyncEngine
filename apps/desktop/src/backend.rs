@@ -12,7 +12,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sync_core::ProfileId;
-use sync_orchestrator::{AppError, Application};
+use sync_orchestrator::{AppError, Application, DeletionCeiling};
 use sync_profiles::{Preferences, Profile};
 use sync_scheduler::{Completion, MissedJobs, Schedule, ScheduleState, Trigger};
 
@@ -218,10 +218,11 @@ pub(crate) fn refresh(
 pub(crate) fn preview(
     app: &Shared,
     id: ProfileId,
+    ceiling: DeletionCeiling,
 ) -> impl Future<Output = Result<PreviewView, Failure>> + use<> {
     let app = Arc::clone(app);
     blocking(move || {
-        let value = app.preview_paged(id).map_err(Failure::from)?;
+        let value = app.preview_paged_with(id, ceiling).map_err(Failure::from)?;
         PreviewView::parse(&value).map_err(|m| Failure::new("format", m))
     })
 }

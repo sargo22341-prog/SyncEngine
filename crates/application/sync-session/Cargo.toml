@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 sync-core.workspace = true
 sync-errors.workspace = true
+sync-events.workspace = true
 sync-plan.workspace = true
 sync-history.workspace = true
 sync-bidirectional.workspace = true

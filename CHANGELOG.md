@@ -6,6 +6,40 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 ## [Non publié]
 
 ### Corrections
+- Garde-fou de suppression : le plafond relatif (50 % des entrées de la
+  destination par défaut) ne s'applique qu'à partir de 10 suppressions
+  (`MIN_DELETIONS_FOR_PERCENT`, seuil de FreeFileSync). Un miroir vers une
+  destination ne contenant qu'un fichier obsolète supprimait 1 sur 1 = 100 % et
+  était refusé. Source vide, inventaire incomplet et plafond absolu restent
+  vérifiés sans seuil. Les plans enregistrés gardent le même format.
+- Interface : la simulation affiche la cause exacte du refus (source vide,
+  inventaire incomplet, plafond) au lieu d'une liste générique, et propose de
+  lever le plafond pour cette seule simulation (`DeletionCeiling::Lifted`,
+  `Application::preview_paged_with`). Source vide et inventaire incomplet ne
+  sont jamais levables ; l'agent planifié garde toujours les plafonds ; le plan
+  enregistre le garde-fou réellement appliqué ; la confirmation des
+  suppressions reste exigée à l'exécution.
+- Débit : `JobSnapshot::bytes_transferred` suit la copie bloc par bloc (événements
+  de progression de l'exécuteur tous les 1 Mio, désormais branchés par
+  l'orchestrateur, y compris en bidirectionnel via `SessionRequest::events`).
+  Le compteur précédent n'avançait qu'à la validation de chaque fichier :
+  0 o/s pendant un gros fichier puis un pic de plusieurs Go/s. La courbe est une
+  moyenne glissante sur 4 s (méthode `SpeedTest` de FreeFileSync), la première
+  seconde n'est pas estimée, et les opérations/s sont affichées.
+- Connecteur local : le fichier temporaire est vidé sur le disque
+  (`sync_data`) tous les 128 Mio pendant l'écriture, afin que la progression
+  reflète le débit réel du disque et non le remplissage du cache suivi d'un
+  long `sync_all`. Mesuré sans surcoût sur un fichier de 2 Go (Windows 11).
+
+### Livraison
+- La GitHub Release ne publie plus que les deux archives. Manifeste,
+  inventaires, notices séparées, `LICENSE.txt` et `SHA256SUMS` ne sont plus des
+  fichiers de release ; les empreintes SHA-256 sont ajoutées à la description.
+- L'archive ne contient plus que `syncengine-desktop`, `syncengine`,
+  `syncengine-agent`, `LICENSE.txt` et `THIRD_PARTY_NOTICES.txt` (plus de
+  `notices/license-inventory.json`, `tools/state_maintenance.py`, ni
+  `syncengine.png`, qui n'était utilisé par rien ; l'outil de maintenance reste
+  dans `scripts/` du dépôt).
 - Connecteur local (Windows) : la publication d'un fichier (renommage du
   fichier temporaire sur la cible, retrait du temporaire) est retentée environ
   1,3 s quand un antivirus ou l'indexeur tient brièvement un fichier ouvert

@@ -16,9 +16,15 @@ le même cycle : **simulation** (rien n'est écrit) → lecture du plan →
   Si la destination est plus récente que la source, c'est un conflit : rien
   n'est écrasé.
 - **Miroir** : la source fait foi et ses fichiers remplacent ceux de la
-  destination. Les suppressions sont plafonnées (par défaut 50 % des entrées de
-  la destination) et refusées si la source est vide ou si un inventaire est
-  incomplet.
+  destination. Les suppressions sont refusées si la source est vide ou si un
+  inventaire est incomplet. Au-delà de 50 % des entrées de la destination, et
+  à partir de 10 suppressions (même seuil que FreeFileSync), elles sont
+  bloquées comme symptôme d'un mauvais dossier : la simulation affiche la cause
+  exacte et propose **« Autoriser ces N suppressions pour cette simulation »**.
+  Cet accord ne vaut que pour ce plan (« Recalculer » rétablit le plafond),
+  n'est jamais enregistré ni utilisé par l'agent, et l'exécution demande
+  toujours sa confirmation des suppressions. Une destination presque vide (un
+  fichier obsolète sur un) n'est donc plus bloquée.
 - **Bidirectionnel** : la première exécution enregistre une *baseline* (état
   de référence). Ensuite, un fichier modifié d'un seul côté est propagé, un
   fichier supprimé d'un côté est supprimé de l'autre (une *tombstone* garde la
@@ -91,6 +97,15 @@ l'identique en simulation et en exécution.
 Le bouton d'exécution est rouge si le plan contient des suppressions, et ces
 suppressions demandent une case de confirmation distincte. Une tâche en cours
 peut être annulée à tout moment ; l'état partiel est enregistré.
+
+Pendant l'exécution, le débit et la courbe suivent les octets copiés bloc par
+bloc (tous les 1 Mio), y compris à l'intérieur d'un gros fichier, et sont
+moyennés sur une fenêtre glissante de 4 s, comme FreeFileSync ; la première
+seconde affiche « mesure… ». Les fichiers locaux sont vidés sur le disque tous
+les 128 Mio pendant l'écriture : le débit affiché est celui du disque, pas
+celui du cache de Windows/Linux. Le nombre d'opérations par seconde est
+affiché à côté (création de dossiers, petits fichiers). La relecture de
+vérification d'un fichier n'est pas comptée comme débit.
 
 Par défaut, le bouton **×** réduit la fenêtre : une tâche en cours continue.
 Pour quitter : icône de la zone de notification › « Quitter SyncEngine »,

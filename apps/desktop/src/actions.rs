@@ -5,6 +5,7 @@ use crate::app::{App, Dialog, Job, JobKind, Message, Nav, SEARCH_ID, Sample, Toa
 use crate::backend::{self, Failure, ScheduleView, Workspace};
 use crate::draft;
 use crate::model;
+use crate::speed;
 use crate::ui_prefs::ThemeChoice;
 use crate::wizard::WizardMsg;
 use iced::Task;
@@ -12,7 +13,7 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 use sync_core::ProfileId;
-use sync_orchestrator::JobSnapshot;
+use sync_orchestrator::{DeletionCeiling, JobSnapshot};
 use sync_profiles::Profile;
 
 impl App {
@@ -64,13 +65,16 @@ impl App {
         if let Ok(snapshot) = app.snapshot() {
             job.samples.push_back(Sample {
                 at: self.now,
-                bytes: snapshot.bytes_done,
+                bytes: snapshot.bytes_transferred,
+                operations: snapshot.entries_done,
                 // Listing and content reading both count as analysis work.
                 scanned: snapshot
                     .entries_scanned
                     .saturating_add(snapshot.entries_hashed),
             });
-            while job.samples.len() > 150 {
+            // Keep the drawn span plus one averaging window, never less than
+            // two samples.
+            while job.samples.len() > 2 && job.samples[1].at + speed::RETAIN <= self.now {
                 job.samples.pop_front();
             }
             job.snapshot = snapshot;
@@ -93,7 +97,13 @@ impl App {
             name,
             started: self.now,
             snapshot: JobSnapshot::default(),
-            samples: VecDeque::new(),
+            // Origin of the rates: nothing is transferred or scanned yet.
+            samples: VecDeque::from([Sample {
+                at: self.now,
+                bytes: 0,
+                operations: 0,
+                scanned: 0,
+            }]),
             cancel_requested: false,
             planned: planned.map(|p| p.0),
             planned_bytes: planned.map(|p| p.1),
@@ -101,7 +111,7 @@ impl App {
         self.last_poll = self.now;
     }
 
-    pub(crate) fn simulate(&mut self, id: ProfileId) -> Task<Message> {
+    pub(crate) fn simulate(&mut self, id: ProfileId, ceiling: DeletionCeiling) -> Task<Message> {
         let Some(app) = self.backend.clone() else {
             return Task::none();
         };
@@ -117,7 +127,7 @@ impl App {
         self.selected = Some(id.clone());
         self.go(Nav::Profiles);
         self.start_job(JobKind::Preview, id.clone(), None);
-        Task::perform(backend::preview(&app, id.clone()), move |r| {
+        Task::perform(backend::preview(&app, id.clone(), ceiling), move |r| {
             Message::Previewed(id.clone(), r)
         })
     }

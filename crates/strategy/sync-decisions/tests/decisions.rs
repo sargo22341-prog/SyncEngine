@@ -256,32 +256,33 @@ fn empty_source_refuses_deletions_unless_allowed() {
 #[test]
 fn mass_deletion_guard_is_all_or_nothing() {
     let source = MemoryConnector::new("src").file("garde", b"g", ts(1));
-    let destination = MemoryConnector::new("dst")
-        .file("garde", b"g", ts(1))
-        .file("x1", b"1", ts(1))
-        .file("x2", b"2", ts(1));
+    let destination = (1..=12).fold(
+        MemoryConnector::new("dst").file("garde", b"g", ts(1)),
+        |connector, n| connector.file(&format!("x{n:02}"), b"x", ts(1)),
+    );
     let report = report(&source, &destination);
-    // 2 suppressions sur 3 entrées = 66 % > 50 % par défaut.
+    // 12 suppressions sur 13 entrées = 92 % > 50 % par défaut.
     let plan = plan(&report, &deleting_policy(DeletionGuard::new()));
     assert_eq!(plan.summary().delete, 0);
+    assert_eq!(plan.summary().deletions_refused, 12);
     assert_eq!(
-        decision(&plan, "x1").1,
+        decision(&plan, "x01").1,
         Reason::DeletionRefused {
             refusal: DeletionRefusal::TooLarge {
-                count: 2,
-                total: 3,
+                count: 12,
+                total: 13,
                 max_percent: 50
             }
         }
     );
-    let generous = deleting_policy(DeletionGuard::new().with_max_percent(Some(70)).unwrap());
+    let generous = deleting_policy(DeletionGuard::new().with_max_percent(Some(95)).unwrap());
     let plan = plan_one_way(
         &Deleting,
         &PlanningInput::new(&report, &context()),
         &generous,
     )
     .unwrap();
-    assert_eq!(plan.summary().delete, 2);
+    assert_eq!(plan.summary().delete, 12);
     let capped = deleting_policy(
         DeletionGuard::new()
             .with_max_percent(None)
@@ -290,7 +291,24 @@ fn mass_deletion_guard_is_all_or_nothing() {
     );
     let plan = plan_one_way(&Deleting, &PlanningInput::new(&report, &context()), &capped).unwrap();
     assert_eq!(plan.summary().delete, 0);
-    assert_eq!(plan.summary().deletions_refused, 2);
+    assert_eq!(plan.summary().deletions_refused, 12);
+}
+
+/// Given une source pleine et une destination ne contenant qu'un fichier
+/// absent de la source, when le miroir est planifié avec les garde-fous par
+/// défaut, then ce fichier est supprimé : 1 suppression sur 1 entrée ne
+/// relève pas du plafond relatif (seuil de volume).
+#[test]
+fn single_obsolete_destination_file_is_deleted_by_default() {
+    let source = (1..=30).fold(MemoryConnector::new("src"), |connector, n| {
+        connector.file(&format!("photo{n:02}.jpg"), b"p", ts(1))
+    });
+    let destination = MemoryConnector::new("dst").file("ancien.zip", b"z", ts(1));
+    let report = report(&source, &destination);
+    let plan = plan(&report, &deleting_policy(DeletionGuard::new()));
+    assert_eq!(plan.summary().delete, 1);
+    assert_eq!(plan.summary().copy, 30);
+    assert_eq!(plan.summary().deletions_refused, 0);
 }
 
 #[test]

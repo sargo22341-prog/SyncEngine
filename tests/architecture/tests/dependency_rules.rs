@@ -91,6 +91,7 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "sync-profiles",
             "sync-core",
             "sync-errors",
+            "sync-events",
             "sync-plan",
             "sync-filter",
             "sync-scanner",
@@ -137,6 +138,7 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
         &[
             "sync-core",
             "sync-errors",
+            "sync-events",
             "sync-plan",
             "sync-history",
             "sync-bidirectional",

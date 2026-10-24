@@ -48,6 +48,6 @@ pub use plan::{
 };
 pub use policy::{
     DEFAULT_MAX_DELETE_PERCENT, DeletionCensus, DeletionGuard, DeletionPolicy, DeletionRefusal,
-    OverwritePolicy, PlanPolicy, PolicyError,
+    MIN_DELETIONS_FOR_PERCENT, OverwritePolicy, PlanPolicy, PolicyError,
 };
 pub use validate::{DeletionBlock, PlanError};

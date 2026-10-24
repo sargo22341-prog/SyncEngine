@@ -71,6 +71,7 @@ fn run(
             cancel: &CancellationToken::new(),
             options: ExecutionOptions::new().with_deletions_confirmed(true),
             versions: None,
+            events: None,
         },
         RetentionPolicy::default(),
     )
@@ -186,6 +187,7 @@ fn cancellation_before_final_rescan_is_explicit_and_does_not_publish() {
             cancel: &cancel,
             options: ExecutionOptions::new(),
             versions: None,
+            events: None,
         },
         RetentionPolicy::default(),
     )
@@ -250,6 +252,7 @@ fn cooperative_interruption_keeps_baseline_then_fresh_plan_resynchronizes() {
             cancel: &cancel,
             options: ExecutionOptions::new(),
             versions: None,
+            events: None,
         },
         RetentionPolicy::default(),
     )
@@ -378,7 +381,8 @@ fn disconnected_root_means_no_deletion_and_no_new_baseline() {
                 journal: &mut MemoryJournal::new(),
                 cancel: &CancellationToken::new(),
                 options: ExecutionOptions::new().with_deletions_confirmed(true),
-                versions: None
+                versions: None,
+                events: None,
             },
             RetentionPolicy::default()
         )
@@ -456,6 +460,7 @@ fn local_sqlite_cycle_and_verified_versions_are_real_files() {
             cancel: &cancel,
             options: ExecutionOptions::new(),
             versions: Some(&store),
+            events: None,
         },
         RetentionPolicy::default(),
     )

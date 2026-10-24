@@ -4,7 +4,7 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use sync_plan::{Action, SyncMode};
+use sync_plan::{Action, DeletionRefusal, SyncMode};
 use sync_profiles::{CompareMethod, Profile, RemoteEndpoint};
 
 /// Counts computed by the planner for one preview.
@@ -18,6 +18,12 @@ pub(crate) struct Summary {
     pub(crate) skip: u64,
     pub(crate) bytes: u64,
     pub(crate) deletions_refused: u64,
+    /// Guard that refused every deletion of the plan (all or nothing).
+    #[serde(default)]
+    pub(crate) deletion_refusal: Option<DeletionRefusal>,
+    /// The user lifted the deletion ceiling for this preview only.
+    #[serde(default)]
+    pub(crate) ceiling_lifted: bool,
 }
 
 impl Summary {
@@ -357,6 +363,35 @@ pub(crate) fn reason_label(code: &str) -> &str {
     }
 }
 
+/// Exact cause of a refused set of deletions, as decided by the planner.
+pub(crate) fn refusal_label(refusal: DeletionRefusal) -> String {
+    match refusal {
+        DeletionRefusal::SourceIncomplete => "La source n’a pas pu être lue entièrement : une absence n’y prouve rien, aucune suppression n’est appliquée.".into(),
+        DeletionRefusal::DestinationIncomplete => "La destination n’a pas pu être lue entièrement : aucune suppression n’est appliquée.".into(),
+        DeletionRefusal::SourceEmpty => "La source est vide (disque débranché, mauvais dossier ?) : aucune suppression n’est appliquée à la destination.".into(),
+        DeletionRefusal::TooMany { count: n, limit } => format!(
+            "{} suppressions dépassent le plafond de {} : rien n’est supprimé tant que vous ne l’autorisez pas.",
+            count(n),
+            count(limit)
+        ),
+        DeletionRefusal::TooLarge { count: n, total, max_percent } => format!(
+            "{} suppressions sur {} éléments de la destination dépassent le plafond de {max_percent} % (protection contre un mauvais dossier) : rien n’est supprimé tant que vous ne l’autorisez pas.",
+            count(n),
+            count(total)
+        ),
+        _ => "Un garde-fou de suppression s’est déclenché : aucune suppression n’est appliquée.".into(),
+    }
+}
+
+/// Only volume ceilings can be lifted by the user; an empty source or an
+/// incomplete inventory never can.
+pub(crate) fn ceiling_liftable(refusal: DeletionRefusal) -> bool {
+    matches!(
+        refusal,
+        DeletionRefusal::TooMany { .. } | DeletionRefusal::TooLarge { .. }
+    )
+}
+
 pub(crate) fn outcome_label(status: &str) -> &str {
     match status {
         "done" => "Réalisée",
@@ -606,6 +641,35 @@ mod tests {
         assert_eq!(op.receiver.as_ref().and_then(|o| o.size), Some(12));
         assert!(op.sender.is_none());
         assert!(PreviewView::parse(&json!({"plan":{},"summary":{}})).is_err());
+        assert_eq!(preview.summary.deletion_refusal, None);
+        assert!(!preview.summary.ceiling_lifted);
+    }
+
+    #[test]
+    fn deletion_refusal_is_decoded_and_only_ceilings_are_liftable() {
+        let summary: Summary = serde_json::from_value(json!({
+            "copy":0,"replace":0,"delete":0,"keep":1,"conflict":0,"skip":12,"bytes":0,
+            "deletions_refused":12,
+            "deletion_refusal":{"cause":"too_large","count":12,"total":13,"max_percent":50},
+            "ceiling_lifted":false
+        }))
+        .unwrap_or_else(|e| panic!("{e}"));
+        let refusal = summary
+            .deletion_refusal
+            .unwrap_or_else(|| panic!("refusal"));
+        assert!(ceiling_liftable(refusal));
+        assert!(refusal_label(refusal).contains("50 %"));
+        assert!(ceiling_liftable(DeletionRefusal::TooMany {
+            count: 3,
+            limit: 2
+        }));
+        for blocked in [
+            DeletionRefusal::SourceEmpty,
+            DeletionRefusal::SourceIncomplete,
+            DeletionRefusal::DestinationIncomplete,
+        ] {
+            assert!(!ceiling_liftable(blocked));
+        }
     }
 
     #[test]
