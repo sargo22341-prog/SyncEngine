@@ -146,7 +146,8 @@ Commandes, options et codes de sortie : [docs/CLI.md](docs/CLI.md).
   systemd manuelle sous Linux ; voir [la planification](docs/PLANIFICATION.md).
 - Les builds Linux sont vérifiés sous Ubuntu 24.04 en CI ; Debian n'est pas compilé nativement.
 - `cargo audit` signale des avertissements (crates non maintenus ou « unsound ») hérités de la
-  bibliothèque graphique ; aucune vulnérabilité connue.
+  bibliothèque graphique et de l'icône de notification Linux ; aucune vulnérabilité connue. Tout
+  nouvel avertissement bloque la CI ; voir [les avis tolérés](docs/DEVELOPPEMENT.md#avis-rustsec-tolérés).
 
 ## Technologies
 

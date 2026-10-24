@@ -209,7 +209,7 @@ fn access_denied_source_folder_gives_uncertainty_never_right_only() {
     write(right.path(), "docs/prive/orphelin.txt", b"o");
     write(left.path(), "docs/prive/s.txt", b"s");
     let Some(_guard) = DenyListing::new(&left.path().join("docs").join("prive")) else {
-        eprintln!("NON EXÉCUTÉ : permissions non applicables (root)");
+        eprintln!("NON EXÉCUTÉ : permissions non applicables (root ou administrateur Windows)");
         return;
     };
     let output = syncengine([

@@ -14,6 +14,13 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
   contrôle d'imbrication : une destination à l'intérieur de l'état, désignée par
   un chemin court Windows (8.3) ou un lien, est refusée comme les autres.
 
+### CI
+- Les tests de refus d'accès sont déclarés `NON EXÉCUTÉ` quand l'OS ignore le
+  refus (administrateur Windows avec privilège de sauvegarde, comme sur les
+  runners GitHub) au lieu d'échouer ; ils restent exécutés sous Ubuntu.
+- `cargo audit --deny warnings` devient bloquant : seuls six avis transitifs
+  documentés (iced 0.14, `zbus` 5) sont tolérés, tout nouvel avis bloque.
+
 ## [0.1.0]
 
 Première version.

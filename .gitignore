@@ -4,3 +4,6 @@ CONTEXTE.md
 # Artefacts Cargo
 /target/
 scripts/__pycache__/
+
+# Journaux CI téléchargés localement pour diagnostic
+/logs_*/

@@ -138,13 +138,26 @@ jobs:
       - name: Audit RustSec (vulnérabilités)
         run: cargo audit
 
-      # Avertissements « unmaintained/unsound » hérités d'iced : signalés sur
-      # chaque run sans bloquer la release ; aucun avis n'est ignoré dans la configuration.
+      # Avertissements « unmaintained/unsound » : tout nouvel avis bloque. Seuls
+      # les avis transitifs listés ici, sans correctif publié compatible, sont
+      # tolérés ; chacun est justifié, avec sa condition de retrait, dans
+      # docs/DEVELOPPEMENT.md (section « Avis RustSec tolérés »).
       - name: Audit RustSec (avertissements)
+        run: |
+          cargo audit --deny warnings \
+            --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2026-0192 \
+            --ignore RUSTSEC-2026-0253 \
+            --ignore RUSTSEC-2026-0370 \
+            --ignore RUSTSEC-2026-0371 \
+            --ignore RUSTSEC-2026-0372
+
+      # Rappel visible à chaque run des avis tolérés ci-dessus, pour ne pas les oublier.
+      - name: Audit RustSec (avis tolérés, rappel)
         continue-on-error: true
         run: |
           if ! cargo audit --deny warnings; then
-            echo "::warning::cargo audit signale des avertissements hérités d'iced."
+            echo "::warning::Avis RustSec tolérés encore présents : voir docs/DEVELOPPEMENT.md."
             exit 1
           fi
 

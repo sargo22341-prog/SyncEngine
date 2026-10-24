@@ -63,13 +63,39 @@ et, sous Linux, `test_signals.py`. Aucun test ne doit dépendre d'un compte
 réel ni toucher aux dossiers personnels : utiliser des dossiers temporaires et
 le connecteur mémoire (`tests/support/connector-memory`).
 
+Les tests de refus d'accès (`DenyListing`) retirent le droit de lister un
+dossier ; sous root (Linux) ou sous un administrateur Windows disposant du
+privilège de sauvegarde (runners GitHub), l'OS ignore ce refus : le test
+affiche `NON EXÉCUTÉ` et ne vérifie rien. Il s'exécute réellement sous Ubuntu
+en CI (utilisateur non root) et sur un poste Windows non administrateur.
+
+### Avis RustSec tolérés
+
+`cargo audit` (vulnérabilités) ne tolère aucun avis. `cargo audit --deny
+warnings` bloque aussi tout nouvel avertissement, sauf les avis ci-dessous :
+tous transitifs, sans version corrigée compatible publiée. Aucun n'est une
+vulnérabilité connue. Les retirer de `.github/workflows/ci.yml` dès que leur
+condition de retrait est remplie (une étape non bloquante les rappelle à chaque
+run).
+
+| Avis | Crate | Origine | Condition de retrait |
+|---|---|---|---|
+| RUSTSEC-2026-0370, -0371, -0372 | `zvariant`, `zbus_names`, `zvariant_derive` (non maintenus : fusionnés dans `zbus` 6) | `zbus` 5 via `ksni` (icône de notification Linux, `tray-icon`) et `mundy` (thème système, `iced_winit`) | `ksni` et `mundy` publiés sur `zbus` 6 (portage en cours : iovxw/ksni#44, #45), puis `cargo update` |
+| RUSTSEC-2026-0253 | `lru` 0.16 (« unsound » : `LruCache::pop()` si le `Drop` d'une clé panique sous `catch_unwind`) | `cryoglyph` 0.1 (rendu du texte d'`iced_wgpu` 0.14) | iced publié avec `cryoglyph` sur `lru` ≥ 0.18.2 (déjà le cas sur la branche principale d'iced) |
+| RUSTSEC-2026-0192 | `ttf-parser` (non maintenu) | `fontdb` 0.23 / `cosmic-text` 0.15 (iced 0.14), `ab_glyph` (décorations Wayland de `winit`) | iced publié sur `cosmic-text`/`fontdb` 0.24 (`skrifa`) |
+| RUSTSEC-2024-0436 | `paste` (non maintenu) | `metal` 0.32 via `wgpu` 27 ; **macOS uniquement**, jamais compilé pour Windows ou Linux | iced publié sur `wgpu` ≥ 30 (`objc2-metal`) |
+
+La branche principale d'iced (0.15 en développement) règle `lru`, `ttf-parser`
+et `paste`, mais refond l'API des widgets et n'est pas publiée : la migration
+attend une version publiée d'iced.
+
 ## Versions et publication
 
 Tout se fait dans `.github/workflows/ci.yml` :
 
 - chaque pull request et chaque push sur `main` : contrôles ci-dessus, tests
-  réseau et `cargo audit` (une vulnérabilité bloque ; les avertissements
-  hérités d'iced sont signalés sans bloquer) ;
+  réseau et `cargo audit` (une vulnérabilité ou un nouvel avertissement
+  bloque ; seuls les [avis tolérés](#avis-rustsec-tolérés) passent) ;
 - chaque push sur `main` qui ne touche pas que la documentation (`*.md`,
   `docs/`, `LICENSE`) publie une version :
   1. `scripts/versioning.py` monte le patch de `[workspace.package].version`

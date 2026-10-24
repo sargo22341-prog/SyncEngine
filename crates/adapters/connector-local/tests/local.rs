@@ -418,6 +418,13 @@ impl DenyListing {
                 .output()
                 .unwrap();
             assert!(output.status.success(), "icacls /deny : {output:?}");
+            // Un administrateur disposant du privilège de sauvegarde (runners GitHub)
+            // passe outre l'ACL : `FindFirstFileExW` ouvre avec l'intention de
+            // sauvegarde. Le refus n'est alors pas observable : test sans objet.
+            if fs::read_dir(path).is_ok() {
+                restore_listing(path).unwrap();
+                return None;
+            }
         }
         Some(Self {
             path: path.to_path_buf(),
@@ -467,7 +474,10 @@ fn restore_listing(path: &Path) -> std::io::Result<()> {
 fn access_denied_is_reported_as_such() {
     let dir = tree();
     let Some(_guard) = DenyListing::new(&dir.path().join("docs")) else {
-        eprintln!("NON EXÉCUTÉ : permissions non applicables (exécution en root)");
+        eprintln!(
+            "NON EXÉCUTÉ : permissions non applicables (root, ou administrateur Windows \
+             avec privilège de sauvegarde)"
+        );
         return;
     };
     let connector = connector(dir.path());

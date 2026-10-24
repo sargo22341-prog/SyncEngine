@@ -289,7 +289,7 @@ fn unreadable_source_folder_means_zero_deletions_on_disk() {
     write(destination.path(), "prive/ancien.txt", b"vieux");
     write(destination.path(), "obsolete.txt", b"o");
     let Some(_deny) = DenyListing::new(&source.path().join("prive")) else {
-        return; // retrait de droits impossible ici (root) : scénario non exécuté
+        return; // retrait de droits impossible ici (root ou admin Windows) : non exécuté
     };
     let output = execute(
         source.path(),

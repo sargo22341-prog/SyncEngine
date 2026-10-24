@@ -140,7 +140,8 @@ In French:
   [scheduling](docs/PLANIFICATION.md).
 - Linux builds are checked on Ubuntu 24.04 in CI; Debian is not compiled natively.
 - `cargo audit` reports warnings (unmaintained or unsound crates) inherited from the graphical
-  toolkit; no known vulnerability.
+  toolkit and the Linux tray icon; no known vulnerability. Any new warning fails CI; see the
+  [tolerated advisories](docs/DEVELOPPEMENT.md#avis-rustsec-tolérés) (French).
 
 ## Stack
 

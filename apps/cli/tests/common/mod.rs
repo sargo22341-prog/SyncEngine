@@ -32,7 +32,8 @@ pub(crate) fn write(root: &Path, relative: &str, content: &[u8]) {
 }
 
 /// Retire le droit de lister `path` le temps du test (rétabli au drop).
-/// `None` si l'OS ne l'applique pas (exécution en root sous Linux).
+/// `None` si l'OS ne l'applique pas (root sous Linux, administrateur Windows
+/// avec privilège de sauvegarde).
 pub(crate) struct DenyListing(std::path::PathBuf);
 
 impl DenyListing {
@@ -54,6 +55,13 @@ impl DenyListing {
                 .output()
                 .unwrap();
             assert!(output.status.success(), "icacls /deny : {output:?}");
+            // Un administrateur disposant du privilège de sauvegarde (runners GitHub)
+            // passe outre l'ACL : `FindFirstFileExW` ouvre avec l'intention de
+            // sauvegarde. Le refus n'est alors pas observable : test sans objet.
+            if fs::read_dir(path).is_ok() {
+                restore_listing(path).unwrap();
+                return None;
+            }
         }
         Some(Self(path.to_path_buf()))
     }

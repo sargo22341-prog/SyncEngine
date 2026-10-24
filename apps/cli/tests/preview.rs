@@ -174,7 +174,7 @@ fn mirror_with_unreadable_source_folder_plans_zero_deletion() {
     file_at(s, "prive/s.txt", b"s", T1);
     file_at(d, "prive/orphelin.txt", b"o", T1);
     let Some(_guard) = DenyListing::new(&s.join("prive")) else {
-        eprintln!("NON EXÉCUTÉ : permissions non applicables (root)");
+        eprintln!("NON EXÉCUTÉ : permissions non applicables (root ou administrateur Windows)");
         return;
     };
     let output = preview(s, d, &["--mode", "mirror", "--allow-delete"]);
