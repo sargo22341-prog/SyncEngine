@@ -265,7 +265,7 @@ pub(crate) fn flow<'a, M: 'a>(flow: Flow, width: f32) -> Element<'a, M> {
 }
 
 /// Application mark: gradient squircle with the sync arrows, used for the
-/// splash screen and the rail (and rasterized for the window icon).
+/// splash screen and the rail.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Mark {
     pub(crate) from: Color,
@@ -346,44 +346,15 @@ pub(crate) fn mark<'a, M: 'a>(mark: Mark, size: f32) -> Element<'a, M> {
 /// Side of the square application icon rasters.
 pub(crate) const ICON_SIZE: u32 = 64;
 
-/// Window icon: a rasterized version of [`Mark`].
+/// Window icon: the application icon (`apps/desktop/assets`).
 pub(crate) fn window_icon() -> Option<iced::window::Icon> {
     iced::window::icon::from_rgba(icon_rgba(), ICON_SIZE, ICON_SIZE).ok()
 }
 
-/// [`Mark`] rasterized as straight RGBA, [`ICON_SIZE`]² (window and tray).
+/// Application icon as straight RGBA, [`ICON_SIZE`]² (window and tray),
+/// generated from `docs/icon/syncengine.png` by `scripts/generate_icons.py`.
 pub(crate) fn icon_rgba() -> Vec<u8> {
-    const N: u32 = ICON_SIZE;
-    let (from, to) = ([0x58_u8, 0x65, 0xf2], [0x8b_u8, 0x5c, 0xf6]);
-    let mut rgba = Vec::with_capacity((N * N * 4) as usize);
-    let n = N as f32;
-    for y in 0..N {
-        for x in 0..N {
-            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-            // Rounded square coverage.
-            let r = n * 0.3;
-            let qx = (fx - n / 2.0).abs() - (n / 2.0 - r);
-            let qy = (fy - n / 2.0).abs() - (n / 2.0 - r);
-            let outside =
-                (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
-            let cover = (0.5 - outside).clamp(0.0, 1.0);
-            let t = ((fx + fy) / (2.0 * n)).clamp(0.0, 1.0);
-            let mut c = [0.0_f32; 3];
-            for i in 0..3 {
-                c[i] = f32::from(from[i]) + (f32::from(to[i]) - f32::from(from[i])) * t;
-            }
-            // Ring of the sync arrows with two gaps.
-            let (dx, dy) = (fx - n / 2.0, fy - n / 2.0);
-            let dist = (dx * dx + dy * dy).sqrt();
-            let angle = dy.atan2(dx).to_degrees().rem_euclid(360.0);
-            let on_arc = (200.0..325.0).contains(&angle) || (20.0..145.0).contains(&angle);
-            let ring = (1.0 - ((dist - n * 0.27).abs() - n * 0.042).clamp(0.0, 1.0))
-                * f32::from(u8::from(on_arc));
-            for v in &mut c {
-                *v += (255.0 - *v) * ring;
-            }
-            rgba.extend_from_slice(&[c[0] as u8, c[1] as u8, c[2] as u8, (cover * 255.0) as u8]);
-        }
-    }
-    rgba
+    const RGBA: &[u8; (ICON_SIZE * ICON_SIZE * 4) as usize] =
+        include_bytes!("../assets/icon-64.rgba");
+    RGBA.to_vec()
 }

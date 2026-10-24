@@ -16,7 +16,11 @@ class ReleaseTests(unittest.TestCase):
                 release.collect(Path("unused"), Path("unused"), "x86_64-pc-windows-msvc", formats)
 
     def test_versions_agree(self):
-        self.assertEqual(release.version(), "0.1.0")
+        # The CI bumps the workspace version: compare to it, not to a literal.
+        import tomllib
+        cargo = tomllib.loads((release.ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+        self.assertRegex(release.version(), r"^\d+\.\d+\.\d+$")
+        self.assertEqual(release.version(), cargo["workspace"]["package"]["version"])
 
     def test_missing_artifact_leaves_no_output(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,7 +82,8 @@ class ReleaseTests(unittest.TestCase):
                 names = set(content.namelist())
             prefix = f"SyncEngine_{release.version()}_x86_64-pc-windows-msvc/"
             for expected in ("syncengine-desktop.exe", "syncengine.exe", "syncengine-agent.exe", "LICENSE",
-                             "notices/THIRD_PARTY_NOTICES.txt", "tools/state_maintenance.py"):
+                             "notices/THIRD_PARTY_NOTICES.txt", "tools/state_maintenance.py",
+                             "syncengine.png"):
                 self.assertIn(prefix + expected, names)
             with self.assertRaises(ValueError):
                 release.portable(root / "bundle", "x86_64-pc-windows-msvc", binaries, notices)

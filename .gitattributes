@@ -1,0 +1,4 @@
+# Binary assets: never converted by core.autocrlf.
+*.rgba binary
+*.ico binary
+*.png binary

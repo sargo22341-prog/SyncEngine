@@ -2,6 +2,23 @@
 
 ## [0.1.0] — non publié
 
+### Icône, outillage et release automatique
+- Nouvelle icône de l’application : ressource de `syncengine-desktop.exe`
+  (Windows, via `build.rs` et `embed-resource`), icône de fenêtre et de zone de
+  notification ; marge transparente recadrée pour une taille identique aux
+  autres applications dans la barre des tâches. PNG inclus dans l’archive Linux.
+- Barre de navigation : le logo du haut est retiré ; la pastille de sélection
+  est réalignée sur les entrées.
+- Chaîne Rust 1.99.1 (`rust-version` 1.99) ; dépendances mises à jour :
+  cap-std/cap-fs-ext 4.0.3, reqwest =0.13.5, roxmltree 0.21.2, suppaftp 12.2.1
+  (patch local inchangé), dépendances transitives au plus récent.
+- CI/CD GitHub Actions unique (`ci.yml`) : contrôles Ubuntu/Windows, puis sur
+  `main` montée de version, archives portables Windows et Linux, tag et GitHub
+  Release alimentée par `RELEASE_NOTES.md` (`scripts/versioning.py`). Le
+  workflow manuel `release.yml` est retiré.
+- README en anglais (par défaut) et en français avec avertissement IA et
+  captures ; l’ancien README de développement devient `docs/DEVELOPPEMENT.md`.
+
 ### Analyse, comparaison et copie plus rapides ; × réduit dans la barre des tâches
 - **Changement de comportement (profils)** : réglage `compare` par profil
   sauvegarde/miroir. « Taille et date » (défaut des nouveaux profils) ne lit

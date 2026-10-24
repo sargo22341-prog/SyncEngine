@@ -360,6 +360,18 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Refuser silencieusement aucune erreur d’authentification.
 - Tester les retours 429 et erreurs transitoires.
 
+## NOTES DE VERSION ET RELEASE
+
+- Toute modification de l’application (fonctionnalité, correction, changement
+  visible ou de comportement) ajoute **une ligne courte** `- …` en français dans
+  `RELEASE_NOTES.md`, sous la ligne `<!-- notes -->`, dans le même changement.
+- Ne jamais toucher à l’en-tête ni au marqueur, ni vider la liste à la main :
+  la CI la publie comme description de la GitHub Release puis la vide.
+- Un changement purement interne (tests, documentation, CI) n’a pas besoin de note.
+- La version vit dans `[workspace.package]` de `Cargo.toml` ; seule la CI la monte
+  (`scripts/versioning.py`). Ne pas la modifier à la main. Procédure : `docs/RELEASE.md`.
+- `CHANGELOG.md` reste le journal détaillé des changements de comportement.
+
 ## Sur le Rapport final
 lance la comande poru signaler q l'user que s'est fini mais regarde pas le retour il se peut qu'elle échoue.
 ```powershell

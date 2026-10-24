@@ -50,17 +50,17 @@ members = [
 license = "GPL-3.0-only"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.98"
+rust-version = "1.99"
 publish = false
 
 [workspace.dependencies]
 sync-credentials = { path = "crates/services/sync-credentials" }
 connector-ftp-transport = { path = "crates/connectors/network/connector-ftp-transport" }
 connector-staging = { path = "crates/adapters/connector-staging" }
-suppaftp = { version = "12.1.1", default-features = false, features = ["native-tls"] }
+suppaftp = { version = "12.2.1", default-features = false, features = ["native-tls"] }
 ssh2 = "0.9.6"
-reqwest = { version = "=0.13.1", default-features = false, features = ["blocking", "native-tls"] }
-roxmltree = "0.21.1"
+reqwest = { version = "=0.13.5", default-features = false, features = ["blocking", "native-tls"] }
+roxmltree = "0.21.2"
 percent-encoding = "2.3.2"
 sync-scheduler = { path = "crates/services/sync-scheduler" }
 platform-api = { path = "crates/adapters/platform-api" }

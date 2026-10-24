@@ -38,6 +38,10 @@ serde_json.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+[build-dependencies]
+# Windows executable icon (resource compiled by rc.exe / llvm-rc).
+embed-resource = "3.0.12"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56.0"
 

@@ -1,5 +1,5 @@
 # Chaîne Rust figée (ADR 0001). Mettre à jour par une décision explicite.
 [toolchain]
-channel = "1.98.1"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

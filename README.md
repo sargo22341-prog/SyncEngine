@@ -1,129 +1,164 @@
-# SyncEngine — Kit de contexte pour sessions IA
+<p align="center">
+  <strong>English</strong> ·
+  <a href="README.fr.md">Français</a>
+</p>
 
-État vérifié : [audit des phases 01 à 10](docs/AUDIT_PHASES_01_10.md).
-Branche locale unique `main`, historique des phases conservé. Corrections,
-contrats, procédures et preuves : [durcissement 01–10](docs/DURCISSEMENT_01_10.md).
-Les documents `CONTEXTE.md`, `prompts/` et `visuels/` restent volontairement privés
-et ignorés par Git ; ils ne sont pas nécessaires au binaire distribué.
+<p align="center">
+  <img src="./docs/icon/syncengine.png" width="120" alt="SyncEngine logo" />
+</p>
 
-SyncEngine fournit une CLI Rust et une [interface native Rust (iced)](apps/desktop/README.md) pour les
-sauvegardes, miroirs et synchronisations bidirectionnelles locales. Un agent
-sans GUI exécute les profils programmés. La phase 08 fournit cinq connecteurs
-réseau expérimentaux, activés séparément :
-[SFTP](crates/connectors/network/connector-sftp/README.md) et
-[WebDAV HTTPS](crates/connectors/network/connector-webdav/README.md),
-[FTP](crates/connectors/network/connector-ftp/README.md),
-[FTPS](crates/connectors/network/connector-ftps/README.md) et
-[SMB natif](crates/connectors/network/connector-smb/README.md).
-Sources/destinations selon capacités documentées, SMB Linux lecture seule.
-Factories Rust : [registre statique](crates/adapters/connector-registry/README.md).
-La phase 09 ajoute une [source OneDrive expérimentale en lecture seule](crates/connectors/cloud/connector-onedrive/README.md),
-avec jetons fournis par un service externe et tests HTTPS isolés ; aucun compte
-Microsoft réel validé. Les profils, la façade, la CLI et l’agent utilisent les
-connecteurs compilés (`--features network,onedrive`). Le build par défaut reste
-local seul. La GUI propose aussi la programmation des profils avec autorisation
-explicite ; l’installation des tâches natives reste une étape distincte.
+<h1 align="center">SyncEngine</h1>
 
-Phase 06 : profils persistants, assistant, simulation, exécution confirmée,
-annulation, progression agrégée, historique et paramètres d’affichage.
-Construction et exemple : [README desktop](apps/desktop/README.md).
+<p align="center">
+  A native backup, mirror and two-way sync tool for Windows and Linux:<br />
+  simulate first, then copy — and never lose a file to a guess.
+</p>
 
-La phase 05 ajoute la synchronisation bidirectionnelle locale : baseline
-SQLite, historique, tombstones et conflits conservés en place. Entrée réelle :
-`cargo run -p sync-session --example local -- SOURCE DESTINATION ETAT`
-(simulation par défaut, `--execute` pour appliquer). Voir le
-[README de phase 05](crates/application/sync-session/README.md) pour les dossiers
-requis, les protections, les versions et la reprise après interruption.
-La CLI historique conserve ses commandes backup/mirror.
+<p align="center">
+  <a href="https://github.com/sargo22341-prog/SyncEngine/releases/latest"><img src="./docs/images/badge_github.png" height="80" alt="Get it on GitHub" /></a>
+</p>
 
-## Entrée rapide
-1. Lire `CONTEXTE.md`, puis `AGENTS.md`, puis `docs/CONTRATS.md`.
-2. Choisir **un seul** fichier `prompts/PHASE_XX_*.md` et le transmettre à une session IA avec les trois documents précédents.
-3. Conserver `main`, conformément au choix du propriétaire ; ne pas modifier simultanément le même contrat dans plusieurs sessions.
-4. Demander à l'IA de générer du code réel, des tests et un compte rendu, sans prétendre avoir testé ce qu'elle n'a pas exécuté.
-5. En fin de phase, exécuter les contrôles et compléter `docs/ETAT_PROJET.md`.
+## Disclaimer
 
-## Images de contexte
-- `visuels/01_profils.svg`, `02_differences.svg`, `03_profil.svg`, `04_progression.svg` : **maquettes originales** schématiques, non captures SyncBack.
-- `visuels/REFERENCES_SYNCBACK.md` : liens vers **captures et documentations authentiques** publiées par 2BrightSparks. Les images tierces ne sont pas redistribuées dans ce kit.
+> [!WARNING]
+> This application was **developed with the help of artificial intelligence**.
+> The code, tests and documentation were largely produced by AI and then checked by automated
+> tests, but not everything has been reviewed line by line or validated in every real-world
+> situation. SyncEngine writes, replaces and can delete files: try it on copies first, keep
+> independent backups, and see the [known limitations](#known-limitations).
 
-## Conventions
-- Noms du produit (`SyncEngine`) et de l'interface : provisoires.
-- Cibles : Windows 64 bits, Ubuntu et Debian 64 bits, support Linux plus large ultérieur.
-- Crates intégrés à la compilation (option A), pas de plugins DLL/SO chargeables à chaud.
-- 100 % Rust : interface native iced ([ADR 0009](docs/adr/0009-interface-native-iced.md)), métier, transferts et connecteurs ; aucun frontend web.
-- `AGENTS.md` s'applique au dépôt et reste sous 400 lignes.
+## Overview
 
-## CLI des phases 01 à 04 (exécution sécurisée locale)
-Le workspace comprend les contrats, la découverte, les stratégies sauvegarde/miroir et les moteurs `sync-copy`, `sync-verify`, `sync-versioning`, `sync-journal`, `sync-executor`. `scan`, `compare` et `preview` restent sans mutation ; **`execute` modifie réellement la destination**, après confirmation. La source est ouverte en lecture seule. Les contrats de phase 04 sont soumis à revue (ADR 0004).
+**SyncEngine** keeps folders in step with one another, in the spirit of SyncBack or
+FreeFileSync, with a strong bias towards data safety: every run starts with a **simulation**
+that shows exactly what will be copied, replaced or deleted, and nothing is written until you
+confirm that precise plan.
 
-Prérequis : `docs/BUILD.md`. Exemples :
+It is written entirely in Rust: a native desktop interface ([iced](https://iced.rs), no web
+view), a command-line tool and a headless agent, all sharing the same engines.
+
+Main features:
+
+- **three modes**, each with its own rules:
+  - **backup**: source → destination, never deletes anything;
+  - **mirror**: makes the destination identical to the source, deletions only with an explicit
+    policy, a separate confirmation and a cap on mass deletions;
+  - **two-way sync** between two local folders, with a reliable previous state, tombstones for
+    deletions and conflicts kept side by side instead of overwritten;
+- **simulation before writing**: the plan shown is the plan executed, with a count per action
+  (copy, replace, delete, conflict, ignore, keep), a reason for every path, filters and search;
+- **safety guards**: a missing drive, an unreadable folder or a partial scan is never treated as
+  "empty" and never leads to a deletion; a destination nested in its source is refused;
+  preconditions are checked again right before each write;
+- **verified copies**: files are written to a temporary file then checked (BLAKE3 content or
+  size), optional versioning of replaced and deleted files, a journal that survives a crash;
+- **fast comparison**: by size and date (only directory listings are read), or by content;
+- **profiles and groups**: a seven-step wizard (no JSON), groups with drag and drop, profiles
+  with or without a group, filters (include, exclude, excluded folders);
+- **live progress** (operations, bytes, throughput), cancellation at any time with the partial
+  state kept and logged, and a **history** of every run;
+- **scheduling** through a headless agent that keeps running when the window is closed, with
+  explicit authorization per profile;
+- **experimental network connectors**: SFTP, WebDAV over HTTPS, FTP, FTPS and SMB, plus a
+  **read-only OneDrive source**; they are labelled as experimental in the interface;
+- dark and light themes following the system, keyboard shortcuts, notification-area icon;
+- **no account, no telemetry, no cloud service** required.
+
+### Preview
+
+| Overview | Simulation | Copy in progress |
+| --- | --- | --- |
+| ![Overview of the profiles, grouped and ungrouped](docs/images/overview.png) | ![Simulation of a mirror with one deletion](docs/images/simulation.png) | ![Real copy in progress with live throughput](docs/images/execution.png) |
+
+The screenshots use made-up folders, profiles and files. The interface is in French for now.
+
+## Installation
+
+Each version is published on the repository's GitHub releases as a **portable archive**: unzip
+it in a folder of your own and start `syncengine-desktop`. The three executables (interface,
+command line, agent) must stay side by side.
+
+| System | File |
+| --- | --- |
+| Windows 11 x86_64 | `SyncEngine_X.Y.Z_x86_64-pc-windows-msvc.zip` |
+| Linux x86_64 (built on Ubuntu 24.04) | `SyncEngine_X.Y.Z_x86_64-unknown-linux-gnu.tar.gz` |
+
+Check the download against `SHA256SUMS` (`sha256sum -c SHA256SUMS` on Linux,
+`Get-FileHash -Algorithm SHA256` in PowerShell). The binaries are **not signed**: Windows
+SmartScreen may warn on first launch.
+
+No administrator rights are needed. Profiles, history and settings live in
+`%APPDATA%\org.syncengine.desktop` (Windows) or `~/.local/share/org.syncengine.desktop` (Linux);
+removing the program never deletes them.
+
+### Building from source
+
+Requirements: the Rust toolchain pinned in `rust-toolchain.toml` (installed automatically by
+`rustup`) and, on Debian/Ubuntu, `build-essential pkg-config libssl-dev zlib1g-dev`.
+Details: [docs/BUILD.md](docs/BUILD.md).
+
 ```sh
-cargo run -p syncengine-cli -- scan ./mon-dossier --exclude "*.tmp" --exclude-dir "**/node_modules"
-cargo run -p syncengine-cli -- compare ./source ./destination          # différences seulement
-cargo run -p syncengine-cli -- compare ./source ./destination --hash --all
-cargo run -p syncengine-cli -- preview ./source ./destination           # plan de sauvegarde
-cargo run -p syncengine-cli -- preview ./source ./destination --mode mirror --allow-delete --max-delete 100
-cargo run -p syncengine-cli -- preview ./source ./destination --mode mirror --json > plan.json
-cargo test --workspace --all-features
+cargo run -p syncengine-desktop                                       # local folders
+cargo build --release -p syncengine-desktop -p syncengine-cli -p syncengine-agent --features network,onedrive
 ```
-Lecture de `compare` : `<` gauche seulement, `>` droite seulement, `!=` différent, `??` incertain (dossier illisible, date non fiable, collision de casse…), `=` équivalent (avec `--all`). Codes de sortie : 0 rien à signaler, 1 différences, 2 usage, 3 inventaire incomplet ou constats incertains, 4 échec (un dossier inaccessible n'est jamais traité comme vide).
 
-Lecture de `preview` : une ligne par chemin — `COPIER`, `REMPLACER`, `CONSERVER`, `SUPPRIMER`, `CONFLIT` (rien n'est écrit), `IGNORER` (incertitude, lien, suppression refusée…) — avec son motif. Une sauvegarde ne supprime jamais ; un miroir ne supprime qu'avec `--allow-delete`, et jamais si un inventaire est incomplet, si la source est vide ou au-delà de 50 % des entrées de la destination (réglable). Codes : 0 rien à faire, 1 opérations prévues, 2 usage (dont destination imbriquée dans la source), 3 conflits, chemins ignorés ou inventaire incomplet, 4 échec (aucun plan).
+## Command line
 
-Contrats compilés : `docs/CONTRATS.md` ; décisions : `docs/adr/` ; état de passation : `docs/ETAT_PROJET.md`.
-
-### Exécuter et diagnostiquer (phase 04)
-Les dossiers source/destination doivent exister et ne pas être imbriqués.
-Chaque exécution exige `--confirm` et un **nouveau** fichier `--journal`,
-hors de ces deux arbres. Exemple de sauvegarde puis diagnostic :
+The same engines are available without the interface:
 
 ```sh
-cargo run -p syncengine-cli -- execute ./source ./destination --confirm --journal ./execution-01.jsonl --progress
-cargo run -p syncengine-cli -- journal ./execution-01.jsonl
+syncengine preview ./source ./destination                  # plan, nothing is written
+syncengine preview ./source ./destination --mode mirror --allow-delete --max-delete 100
+syncengine execute ./source ./destination --confirm --journal ./run-01.jsonl --progress
+syncengine journal ./run-01.jsonl                          # diagnose a run
 ```
 
-Pour conserver les fichiers remplacés/supprimés, créer un dossier séparé
-`./versions`, puis ajouter `--versions-dir ./versions`. Un miroir avec
-suppressions exige la politique `--mode mirror --allow-delete` **et** la
-confirmation `--confirm-delete` ; les plafonds de preview restent applicables.
+Every command, exit code and safeguard: [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md) (in French).
 
-Exécuter un plan enregistré (dans l'heure, sans changer les arbres) :
+## Known limitations
 
-```sh
-cargo run -p syncengine-cli -- preview ./source ./destination --hash --json > plan.json
-cargo run -p syncengine-cli -- execute ./source ./destination --plan ./plan.json --confirm --journal ./execution-02.jsonl
-```
+- The interface is only available in **French**.
+- Binaries are **not signed** and there is no installer yet: portable archives only.
+- Network connectors and the OneDrive source are **experimental**; they were tested against
+  isolated test servers, not against real providers or a real Microsoft account. SMB is
+  read-only on Linux. Two-way sync is limited to two local folders.
+- Remote servers do not offer global transactions: an interrupted run against a server can
+  leave a partial state (always logged). Avoid other programs writing to the same folders
+  during a run.
+- Installing native scheduled tasks (Windows Task Scheduler, systemd) is a separate step; see
+  [the agent guide](apps/agent/README.md).
+- Linux builds are checked on Ubuntu 24.04 in CI; Debian is not compiled natively.
+- `cargo audit` reports warnings (unmaintained or unsound crates) inherited from the graphical
+  toolkit; no known vulnerability. Details: [docs/RELEASE.md](docs/RELEASE.md).
 
-Le fichier doit être du JSON UTF-8 (sous Windows PowerShell 5.1, utiliser
-une écriture UTF-8 explicite plutôt que la redirection UTF-16 par défaut).
-Les options de planification et de filtrage ne se combinent pas avec `--plan`.
-Chaque précondition est revérifiée avant mutation. `--verify content`
-(défaut) relit le contenu déposé et vérifie BLAKE3 ; `--verify size` ne
-détecte pas une corruption de même taille. `--json` produit le rapport.
-Codes `execute` : 0 succès, 2 usage, 3 réserves/refus, 4 échec/annulation ;
-`journal` : 0 succès, 3 réserves ou interruption, 4 échec.
+## Stack
 
-Les clients natifs du meme compte partagent desormais un verrou d'execution.
-Les parents locaux sont ouverts par handles confines, sans suivi des liens ;
-CreateNew n'utilise plus de repli rename pouvant ecraser une cible concurrente.
-Ctrl+C/signaux supportes demandent l'annulation cooperative. Le journal indique
-le temporaire avant le premier octet transfere (une reservation vide peut
-preceder cet enregistrement). Retention explicite et sauvegarde/restauration :
-[guide de durcissement](docs/DURCISSEMENT_01_10.md). Les ecrivains externes et
-l'atomicite distante restent soumis aux capacites reelles des serveurs.
+| Layer | Technology |
+| --- | --- |
+| Language | Rust (edition 2024), workspace of single-purpose crates |
+| Interface | iced 0.14 (wgpu, tiny-skia fallback), rfd, tray-icon |
+| Hashing | BLAKE3 |
+| State | SQLite (rusqlite, versioned migrations) |
+| Network | ssh2 (SFTP), reqwest + native-tls (WebDAV, OneDrive), SuppaFTP (FTP/FTPS) |
+| Platforms | Windows x86_64 (MSVC), Linux x86_64 (GNU) |
 
-## Phase 07 — scheduler et agent
+## Contributing
 
-Agent local sans GUI, programmations UTC et adaptateurs Windows/Linux :
-[utilisation, installation et reprise](apps/agent/README.md).
-Contrats et limites : [ADR 0007](docs/adr/0007-scheduler-agent.md).
+Contribution rules (humans and AI agents): [`AGENTS.md`](AGENTS.md). Every change to the
+application adds a short line to [`RELEASE_NOTES.md`](RELEASE_NOTES.md); the CI turns those lines
+into the next GitHub release ([docs/RELEASE.md](docs/RELEASE.md)). Architecture decisions are in
+[`docs/adr/`](docs/adr), the current state of the project in
+[`docs/ETAT_PROJET.md`](docs/ETAT_PROJET.md).
 
-Phase 10 : [livraison, installation et risques](docs/RELEASE.md). Candidats 0.1.0 internes ; publication encore bloquée par les validations documentées.
+## License
 
-## Licence
+Copyright © 2026 sargo.
 
-SyncEngine est distribué sous **GPL-3.0-only** ; voir [LICENSE](LICENSE).
-Les dépendances conservent leurs licences et notices propres. Les candidats
-incluent leur inventaire ; une redistribution doit également fournir le code
-source correspondant selon la GPL.
+SyncEngine is free software, distributed under the **GNU General Public License, version 3 only**
+(GPL-3.0-only): you may use, study, modify and redistribute it, provided that what you distribute
+stays under the same license, with its source code. It comes with no warranty. Full text:
+[`LICENSE`](LICENSE). Dependencies keep their own licenses; each release ships their notices
+(`THIRD_PARTY_NOTICES.txt`).
+
+SyncEngine is an independent project, not affiliated with SyncBack, FreeFileSync, Microsoft or
+any storage provider.

@@ -89,7 +89,8 @@ def portable(bundle, target, binaries=None, notices=None):
     suffix = ".exe" if "windows" in target else ""
     members = [(binaries / (name + suffix), name + suffix) for name in BINARIES]
     members += [(notices / name, "notices/" + name) for name in ("license-inventory.json", "THIRD_PARTY_NOTICES.txt")]
-    members += [(ROOT / "LICENSE", "LICENSE"), (ROOT / "scripts/state_maintenance.py", "tools/state_maintenance.py")]
+    members += [(ROOT / "LICENSE", "LICENSE"), (ROOT / "scripts/state_maintenance.py", "tools/state_maintenance.py"),
+                (ROOT / "apps/desktop/assets/syncengine.png", "syncengine.png")]
     for path, _ in members:
         if not path.is_file() or path.is_symlink():
             raise ValueError(f"missing portable member: {path.name}; run prepare")

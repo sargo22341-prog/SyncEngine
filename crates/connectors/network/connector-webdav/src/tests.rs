@@ -225,6 +225,10 @@ fn server(
                     Err(e) => return Err(e),
                 }
             };
+            // Windows sockets inherit the listener's non-blocking mode: a
+            // request not yet arrived would end the fixture with WouldBlock
+            // and reset the connection (intermittent wrong error kinds).
+            stream.set_nonblocking(false)?;
             stream.set_read_timeout(Some(Duration::from_secs(3)))?;
             let mut bytes = Vec::new();
             let mut one = [0; 1];

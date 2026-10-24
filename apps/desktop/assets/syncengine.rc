@@ -1,0 +1,2 @@
+// Application icon of the Windows executable (see build.rs).
+1 ICON "syncengine.ico"

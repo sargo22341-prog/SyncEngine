@@ -124,26 +124,7 @@ impl App {
             .now
             .saturating_duration_since(self.started)
             .as_secs_f32();
-        let mut col = column![
-            container(charts::mark(
-                Mark {
-                    from: p.accent,
-                    to: theme::mix(p.accent, p.info, 0.6),
-                    turn: 0.0
-                },
-                44.0
-            ))
-            .height(Length::Fixed(RAIL_ITEM))
-            .center_y(Length::Fixed(RAIL_ITEM)),
-            container(
-                Space::new()
-                    .width(Length::Fixed(32.0))
-                    .height(Length::Fixed(2.0))
-            )
-            .style(theme::bar(p.border)),
-            ui::vspace(6.0),
-        ]
-        .align_x(Alignment::Center);
+        let mut col = column![ui::vspace(6.0)].align_x(Alignment::Center);
         for (nav, glyph, hint) in items {
             let active = self.nav == nav;
             let mut icon = if nav == Nav::Activity && self.job.is_some() {
@@ -246,7 +227,8 @@ impl App {
         let pill_y = if self.nav == Nav::Settings {
             -100.0
         } else {
-            RAIL_ITEM + 8.0 + index.clamp(0.0, 3.5) * RAIL_ITEM + 12.0
+            // 6 px top gap, then the pill centered in its 56 px item.
+            6.0 + index.clamp(0.0, 3.5) * RAIL_ITEM + 12.0
         };
         let indicator = pin(container(Space::new())
             .width(Length::Fixed(4.0))
