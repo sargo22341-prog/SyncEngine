@@ -128,7 +128,9 @@ def github_output(**values):
 
 def release(part, notes_output, root=ROOT):
     """Bump, move the notes out and commit locally; returns (version, commit)."""
-    git = ["git", "-C", str(root)]
+    # Files are rewritten with LF on purpose (identical commit on every OS); under
+    # core.autocrlf=true Git would only warn about the future CRLF checkout.
+    git = ["git", "-c", "core.safecrlf=false", "-C", str(root)]
     if subprocess.run([*git, "status", "--porcelain", "--untracked-files=no"], check=True,
                       capture_output=True, text=True).stdout.strip():
         raise ValueError("tracked files modified: the version commit must start from HEAD")

@@ -3,6 +3,17 @@
 Changements de comportement, par version. Les notes courtes de la prochaine
 release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
+## [Non publié]
+
+### Corrections
+- Connecteur local (Windows) : la publication d'un fichier (renommage du
+  fichier temporaire sur la cible, retrait du temporaire) est retentée environ
+  1,3 s quand un antivirus ou l'indexeur tient brièvement un fichier ouvert
+  (erreurs 5, 32, 33). Un refus persistant reste signalé en échec.
+- `scripts/state_maintenance.py backup` canonicalise le dossier d'état avant le
+  contrôle d'imbrication : une destination à l'intérieur de l'état, désignée par
+  un chemin court Windows (8.3) ou un lien, est refusée comme les autres.
+
 ## [0.1.0]
 
 Première version.

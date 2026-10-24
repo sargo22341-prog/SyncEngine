@@ -149,6 +149,40 @@ fn replace_requires_an_existing_regular_file() {
     assert_eq!(names(dir.path()), ["dossier", "f.txt"]);
 }
 
+/// Un antivirus ou un indexeur ouvre brièvement un fichier fraîchement écrit
+/// sans `FILE_SHARE_DELETE` : le remplacement attend sa libération au lieu
+/// d'échouer avec « accès refusé ».
+#[cfg(windows)]
+#[test]
+fn replace_waits_for_a_brief_foreign_lock() {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("f.txt");
+    fs::write(&target, b"ancien").unwrap();
+    let holder = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&target)
+        .unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        drop(holder);
+    });
+    let connector = writable(dir.path());
+    write_file(
+        &connector,
+        "f.txt",
+        b"remplace",
+        CommitMode::ReplaceExisting,
+        WriteOptions::new(),
+    )
+    .unwrap();
+    release.join().unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"remplace");
+    assert_eq!(names(dir.path()), ["f.txt"]);
+}
+
 #[test]
 fn abort_and_drop_remove_the_staging_file() {
     let dir = TempDir::new().unwrap();

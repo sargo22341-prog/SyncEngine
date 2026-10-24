@@ -51,6 +51,36 @@ fn sync_directory(
     let _ = (dir, path, op);
     Ok(())
 }
+/// Windows: antivirus/indexers briefly open a just-closed file without
+/// FILE_SHARE_DELETE, so renaming or removing it fails with ACCESS_DENIED (5),
+/// SHARING_VIOLATION (32) or LOCK_VIOLATION (33). A failed attempt changes
+/// nothing, so it is retried a bounded number of times (about 1.3 s in total).
+/// A persistent denial (ACL, read-only target) is still reported afterwards.
+/// Other platforms run the operation exactly once.
+fn retry_transient_lock<T>(
+    cancel: &CancellationToken,
+    mut operation: impl FnMut() -> io::Result<T>,
+) -> io::Result<T> {
+    #[cfg(windows)]
+    {
+        let mut delay = std::time::Duration::from_millis(10);
+        for _ in 0..7 {
+            match operation() {
+                Err(e) if matches!(e.raw_os_error(), Some(5 | 32 | 33)) => {
+                    if cancel.is_cancelled() {
+                        return Err(e);
+                    }
+                    std::thread::sleep(delay);
+                    delay = delay.saturating_mul(2);
+                }
+                result => return result,
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = cancel;
+    operation()
+}
 pub(crate) fn create_directory(
     root: &Dir,
     path: &ResourcePath,
@@ -192,8 +222,7 @@ impl LocalWriter {
                 self.parent
                     .hard_link(&self.staging_name, &self.parent, &self.target_name)
                     .map_err(|e| io_error(e, op, &self.target))?;
-                self.parent
-                    .remove_file(&self.staging_name)
+                retry_transient_lock(&self.cancel, || self.parent.remove_file(&self.staging_name))
                     .map_err(|e| io_error(e, op, &self.staging))?;
             }
             CommitMode::ReplaceExisting => {
@@ -220,9 +249,11 @@ impl LocalWriter {
                         "target type changed",
                     ));
                 }
-                self.parent
-                    .rename(&self.staging_name, &self.parent, &self.target_name)
-                    .map_err(|e| io_error(e, op, &self.target))?;
+                retry_transient_lock(&self.cancel, || {
+                    self.parent
+                        .rename(&self.staging_name, &self.parent, &self.target_name)
+                })
+                .map_err(|e| io_error(e, op, &self.target))?;
             }
             _ => {
                 return Err(local_error(

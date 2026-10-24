@@ -114,6 +114,8 @@ def copy_new(source, target):
 
 
 def backup(state, output):
+    # Canonical form (Windows 8.3 short names, symlinked temp roots) before nesting checks.
+    state = state.resolve(strict=True)
     output = reserve_output(state, output)
     files = {}
     for source in tree(state):

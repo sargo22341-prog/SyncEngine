@@ -24,6 +24,7 @@ const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(windows)]
 const RUN_VALUE: &str = "SyncEngine";
 
+#[cfg(windows)]
 fn os(error: impl std::fmt::Display) -> Failure {
     Failure::new("unavailable", format!("intégration système : {error}"))
 }

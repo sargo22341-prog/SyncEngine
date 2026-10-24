@@ -61,7 +61,10 @@ qu'appliquée à l'aveugle.
 - Une destination placée à l'intérieur de la source (ou l'inverse) est refusée.
 - Chaque précondition est revérifiée juste avant chaque écriture.
 - Chaque fichier est écrit dans un fichier temporaire, vérifié (empreinte ou
-  taille), puis publié ; l'original n'est jamais effacé d'abord.
+  taille), puis publié ; l'original n'est jamais effacé d'abord. Sous Windows,
+  si un antivirus ou l'indexeur tient brièvement le fichier ouvert, la
+  publication est retentée pendant environ une seconde avant d'être signalée
+  en échec.
 - Les fichiers remplacés ou supprimés sont conservés dans le dossier d'état
   (`versions/<exécution>/`).
 - Un journal durable est tenu pendant l'exécution : après une coupure, l'état

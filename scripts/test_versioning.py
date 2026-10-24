@@ -137,7 +137,7 @@ def repository(root, release_notes):
     root.mkdir(exist_ok=True)
     workspace(root)
     (root / "RELEASE_NOTES.md").write_text(release_notes)
-    git = ["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+    git = ["git", "-c", "core.safecrlf=false", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
            "-c", "commit.gpgsign=false", "-C", str(root)]
     subprocess.run([*git, "init", "--quiet"], check=True)
     subprocess.run([*git, "add", "."], check=True)
