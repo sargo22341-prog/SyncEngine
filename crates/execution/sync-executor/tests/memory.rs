@@ -383,6 +383,48 @@ fn silent_corruption_is_caught_by_content_verification() {
 }
 
 #[test]
+fn content_verification_rereads_through_the_writer_when_supported() {
+    let source = source();
+    // The writer rereads its own staging: no reopening by path is needed.
+    let destination = MemoryConnector::new("destination")
+        .writable()
+        .with_read_back();
+    let plan = backup_plan(&source, &destination);
+    let report = execute(
+        &plan,
+        &source,
+        &destination,
+        confirmed(),
+        &mut MemoryJournal::new(),
+    )
+    .unwrap();
+    assert!(is_done(&report, "a.txt"));
+    assert_eq!(destination.content("a.txt").unwrap(), b"alpha");
+    assert_eq!(destination.read_opens(), 0);
+
+    // Same guarantee as the path-based reread: corruption is refused.
+    let destination = MemoryConnector::new("destination")
+        .writable()
+        .with_read_back()
+        .corrupt_writes_to("a.txt");
+    let report = execute(
+        &plan,
+        &source,
+        &destination,
+        confirmed(),
+        &mut MemoryJournal::new(),
+    )
+    .unwrap();
+    match status(&report, "a.txt") {
+        OutcomeStatus::Failed { error } => assert_eq!(error.class(), ErrorClass::Integrity),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(destination.content("a.txt"), None);
+    no_partial(&destination);
+    assert_eq!(destination.read_opens(), 0);
+}
+
+#[test]
 fn cancellation_stops_between_operations_and_reports_partial_state() {
     let source = MemoryConnector::new("source")
         .file("1.txt", b"1", ts(10))

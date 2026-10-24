@@ -26,6 +26,7 @@ fn fixture(
         remote_source: None,
         remote_destination: None,
         allow_delete: false,
+        compare: sync_profiles::CompareMethod::Content,
     };
     app.profile_save(profile.clone())?;
     Ok((temp, app, profile))

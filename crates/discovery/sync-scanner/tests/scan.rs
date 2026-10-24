@@ -604,3 +604,122 @@ fn scanner_never_requests_mutations() {
         .is_ok()
     );
 }
+
+fn hashes(inventory: &sync_scanner::Inventory) -> Vec<(String, Option<ContentHash>)> {
+    inventory
+        .entries()
+        .map(|e| (e.path().as_str().to_owned(), e.metadata().hash().cloned()))
+        .collect()
+}
+
+#[test]
+fn parallel_hashing_gives_the_sequential_inventory_and_issue_order() {
+    let mut connector = MemoryConnector::new("mem");
+    for i in 0..40 {
+        connector = connector.file(&format!("d{}/f{i:02}", i % 3), &[i as u8; 300], ts(i));
+    }
+    let connector = connector
+        .fail(
+            "d1/f04",
+            StorageOperation::Read,
+            StorageErrorKind::PermissionDenied,
+        )
+        .fail_read_after("d2/f05", 10, StorageErrorKind::Disconnected);
+    let run = |workers: usize| {
+        scan(
+            &connector,
+            &Filter::include_all(),
+            &ScanOptions::new()
+                .with_hash(HashAlgorithm::Blake3)
+                .with_hash_workers(std::num::NonZeroUsize::new(workers).unwrap()),
+            &CancellationToken::new(),
+        )
+        .unwrap()
+    };
+    let sequential = run(1);
+    let parallel = run(4);
+    assert_eq!(hashes(&sequential), hashes(&parallel));
+    assert_eq!(sequential.issues(), parallel.issues());
+    assert_eq!(sequential.stats(), parallel.stats());
+    assert_eq!(parallel.stats().hashed, 38);
+    assert_eq!(parallel.issues().len(), 2);
+}
+
+#[test]
+fn selected_hashing_reads_only_the_requested_files() -> Result<(), Box<dyn std::error::Error>> {
+    let connector = sample();
+    let listed = scan_all(&connector)?;
+    assert_eq!(connector.read_opens(), 0);
+    let wanted = [path("docs/b.md"), path("absent"), path("vide")];
+    let options = ScanOptions::new()
+        .with_hash(HashAlgorithm::Blake3)
+        .with_hash_workers(std::num::NonZeroUsize::new(2).unwrap_or(std::num::NonZeroUsize::MIN));
+    let inventory = sync_scanner::hash_selected(
+        &connector,
+        listed,
+        &wanted,
+        &options,
+        &CancellationToken::new(),
+        &|_, _| {},
+    )?;
+    // Only the one requested regular file was opened and hashed.
+    assert_eq!(connector.read_opens(), 1);
+    let hashed: Vec<_> = hashes(&inventory)
+        .into_iter()
+        .filter(|(_, h)| h.is_some())
+        .map(|(p, _)| p)
+        .collect();
+    assert_eq!(hashed, vec!["docs/b.md".to_owned()]);
+    assert_eq!(
+        inventory.get(&path("docs/b.md")).unwrap().metadata().hash(),
+        Some(&ContentHash::new(
+            HashAlgorithm::Blake3,
+            blake3::hash(b"bravo").as_bytes().to_vec()
+        )?)
+    );
+    assert_eq!(inventory.stats().hashed, 1);
+    // Not every file carries a hash: the inventory does not claim one.
+    assert_eq!(inventory.hash_algorithm(), None);
+    assert!(inventory.is_complete());
+    Ok(())
+}
+
+#[test]
+fn selected_hashing_requires_an_algorithm_and_keeps_partial_work_on_cancel() {
+    let connector = sample();
+    let listed = scan_all(&connector).unwrap();
+    assert!(matches!(
+        sync_scanner::hash_selected(
+            &connector,
+            listed.clone(),
+            &[path("a.txt")],
+            &ScanOptions::new(),
+            &CancellationToken::new(),
+            &|_, _| {},
+        ),
+        Err(ScanError::HashingNotSupported { .. })
+    ));
+    let token = CancellationToken::new();
+    token.cancel();
+    match sync_scanner::hash_selected(
+        &connector,
+        listed,
+        &[path("a.txt")],
+        &ScanOptions::new().with_hash(HashAlgorithm::Blake3),
+        &token,
+        &|_, _| {},
+    ) {
+        Err(ScanError::Cancelled { partial }) => {
+            assert_eq!(partial.len(), 6);
+            assert!(
+                partial
+                    .get(&path("a.txt"))
+                    .unwrap()
+                    .metadata()
+                    .hash()
+                    .is_none()
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}

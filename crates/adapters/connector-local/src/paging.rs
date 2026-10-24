@@ -10,7 +10,7 @@ use connector_api::{
     StorageOperation,
 };
 use std::sync::{
-    Mutex,
+    Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
 use sync_core::{CancellationToken, ResourcePath, TimestampPrecision};
@@ -27,7 +27,8 @@ struct Cursor {
 impl Pages {
     pub(crate) fn list(
         &self,
-        root: &Dir,
+        root: &Arc<Dir>,
+        handles: Option<&confined::Handles>,
         path: &ResourcePath,
         token: Option<&PageToken>,
         precision: TimestampPrecision,
@@ -52,7 +53,7 @@ impl Pages {
             }
         } else {
             *slot = None;
-            let dir = confined::directory(root, path, op)?;
+            let dir = confined::directory_via(root, handles, path, op)?;
             let reader = dir.entries().map_err(|e| io_error(e, op, path))?.peekable();
             *slot = Some(Cursor {
                 path: path.clone(),

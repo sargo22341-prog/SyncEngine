@@ -57,8 +57,9 @@ impl Application {
         let query = query.to_lowercase();
         let matches = || {
             cached.plan.operations().iter().filter(|op| {
+                // No per-path lowercase copy when there is nothing to search.
                 action.is_none_or(|a| op.action() == a)
-                    && op.path().as_str().to_lowercase().contains(&query)
+                    && (query.is_empty() || op.path().as_str().to_lowercase().contains(&query))
             })
         };
         Ok(

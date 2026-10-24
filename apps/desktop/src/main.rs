@@ -20,6 +20,7 @@ mod profile;
 mod schedules;
 mod shell;
 mod theme;
+mod tray;
 mod ui;
 mod ui_prefs;
 mod update;

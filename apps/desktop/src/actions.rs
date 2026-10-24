@@ -65,7 +65,10 @@ impl App {
             job.samples.push_back(Sample {
                 at: self.now,
                 bytes: snapshot.bytes_done,
-                scanned: snapshot.entries_scanned,
+                // Listing and content reading both count as analysis work.
+                scanned: snapshot
+                    .entries_scanned
+                    .saturating_add(snapshot.entries_hashed),
             });
             while job.samples.len() > 150 {
                 job.samples.pop_front();
@@ -437,6 +440,7 @@ impl App {
                     None => Task::none(),
                 },
                 "r" => self.refresh(),
+                "q" => self.update(Message::Quit),
                 "t" => {
                     let next = if self.wants_light() {
                         ThemeChoice::Dark

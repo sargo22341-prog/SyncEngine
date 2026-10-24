@@ -372,6 +372,36 @@ pub fn compare(
     })
 }
 
+/// Fichiers dont seul le contenu peut départager les deux côtés : fichier
+/// ordinaire des deux côtés, tailles **égales** (ou inconnues d'un côté),
+/// sans empreinte commune déjà disponible. Triés par chemin.
+///
+/// Des tailles connues et différentes établissent déjà la différence, et un chemin
+/// présent d'un seul côté n'a rien à départager : relire ces fichiers ne
+/// changerait aucun constat de [`compare`]. Calculer les empreintes de ces
+/// seuls candidats ([`sync_scanner::hash_selected`]) donne donc les mêmes
+/// constats qu'un scan avec empreinte de tous les fichiers, sans relire le
+/// reste (même principe que la comparaison par contenu de FreeFileSync).
+#[must_use]
+pub fn content_candidates(left: &Inventory, right: &Inventory) -> Vec<ResourcePath> {
+    left.entries()
+        .filter(|l| l.kind() == EntryKind::File)
+        .filter_map(|l| {
+            let r = right.get(l.path())?;
+            let same_size = r.kind() == EntryKind::File
+                && match (l.metadata().size(), r.metadata().size()) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                };
+            let shared_hash = matches!(
+                (l.metadata().hash(), r.metadata().hash()),
+                (Some(a), Some(b)) if a.algorithm() == b.algorithm()
+            );
+            (same_size && !shared_hash).then(|| l.path().clone())
+        })
+        .collect()
+}
+
 fn case_sensitive(inventory: &Inventory) -> bool {
     inventory.capabilities().case_sensitivity == CaseSensitivity::Sensitive
 }

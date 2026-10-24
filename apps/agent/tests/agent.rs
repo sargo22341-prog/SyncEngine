@@ -22,6 +22,7 @@ fn fixture() -> Result<(tempfile::TempDir, Profile), Error> {
         remote_source: None,
         remote_destination: None,
         allow_delete: false,
+        compare: sync_profiles::CompareMethod::Content,
     };
     Application::open_with_lock_root(
         temp.path().join("state"),

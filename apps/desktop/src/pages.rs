@@ -7,7 +7,7 @@ use crate::model::{self, Outcome};
 use crate::shell::{mode_color, mode_glyph, outcome_color};
 use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
-use crate::ui_prefs::ThemeChoice;
+use crate::ui_prefs::{CloseAction, ThemeChoice};
 use iced::widget::{Space, button, column, container, grid, mouse_area, row, scrollable, toggler};
 use iced::{Alignment, Color, Length, Padding};
 use sync_profiles::Profile;
@@ -256,8 +256,7 @@ impl App {
             ui::divider(p),
             row![
                 icons::icon(Glyph::Clock, 13.0, schedule.0),
-                ui::colored(schedule.0, schedule.1, 12.0),
-                ui::fill(),
+                container(ui::colored(schedule.0, schedule.1, 12.0)).width(Length::Fill),
                 ui::caption(p, last),
                 ui::icon_button(
                     p,
@@ -675,6 +674,69 @@ impl App {
                 "Démarrage automatique de l’interface disponible sous Windows ; sous Linux, utilisez l’autostart de votre bureau.",
             )
         };
+        let minimize = self.prefs.close == CloseAction::Minimize;
+        let tray_line: El<'a, Message> = match &self.tray {
+            Ok(_) => ui::caption(
+                p,
+                "Icône présente dans la zone de notification : clic pour afficher la fenêtre, clic droit › « Quitter SyncEngine ».",
+            ),
+            Err(e) => row![
+                icons::icon(Glyph::Alert, 14.0, p.warning),
+                ui::colored(
+                    p.muted,
+                    format!(
+                        "Icône de notification indisponible ({}). Quittez avec Ctrl+Q ou le bouton ci-contre.",
+                        model::ellipsize(e, 120)
+                    ),
+                    12.0
+                )
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        };
+        let window_section: El<'a, Message> = column![
+            row![
+                column![
+                    ui::strong(p.text, "Le bouton × réduit SyncEngine", 14.0),
+                    ui::caption(
+                        p,
+                        if minimize {
+                            "La fenêtre reste dans la barre des tâches ; les tâches en cours continuent."
+                        } else {
+                            "Le bouton × quitte l’application ; une tâche en cours est d’abord annulée proprement."
+                        }
+                    ),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                toggler(minimize)
+                    .on_toggle(|on| Message::CloseBehavior(if on {
+                        CloseAction::Minimize
+                    } else {
+                        CloseAction::Quit
+                    }))
+                    .size(22)
+                    .style(theme::switch(*p, false)),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            row![
+                container(tray_line).width(Length::Fill),
+                ui::kbd(p, "Ctrl+Q"),
+                ui::action(
+                    p,
+                    Tone::Secondary,
+                    Some(Glyph::Power),
+                    "Quitter SyncEngine",
+                    Some(Message::Quit)
+                ),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(16)
+        .into();
         let providers = self.ws.providers.iter().map(|k| {
             let label = draft::Provider::ALL
                 .iter()
@@ -684,11 +746,11 @@ impl App {
         });
         let guarantees = [
             "Plan simulé identique au plan exécuté ; toute modification exige une nouvelle simulation.",
-            "Empreintes BLAKE3 et vérification du contenu copié.",
+            "Copie vérifiée par empreinte BLAKE3 ; comparaison par taille et date ou par contenu, au choix de chaque profil.",
             "Versions conservées avant remplacement ou suppression.",
             "Suppressions désactivées par défaut ; source vide et plafond de 50 % toujours bloqués.",
             "Un verrou par compte sérialise CLI, interface et agent.",
-            "Fermer pendant une tâche demande son annulation ; la fenêtre attend l’état durable.",
+            "Quitter pendant une tâche demande son annulation ; SyncEngine attend l’état durable.",
         ]
         .into_iter()
         .fold(column![].spacing(8), |c, g| {
@@ -702,7 +764,10 @@ impl App {
         let col = column![
             column![
                 ui::title(p, "Réglages", 26.0),
-                ui::muted(p, "Apparence, démarrage et informations sur cette version.")
+                ui::muted(
+                    p,
+                    "Apparence, fenêtre, démarrage et informations sur cette version."
+                )
             ]
             .spacing(4),
             section(
@@ -737,6 +802,7 @@ impl App {
                 .spacing(18)
                 .into()
             ),
+            section("Fenêtre", window_section),
             section("Démarrage", startup),
             section(
                 "Clavier",

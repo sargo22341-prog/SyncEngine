@@ -255,6 +255,31 @@ impl ClassifiedError for VerifyError {
     }
 }
 
+/// Compare un contenu relu (octets, empreinte BLAKE3) à celui transféré.
+///
+/// # Errors
+/// [`Mismatch::Size`] puis [`Mismatch::Content`], dans cet ordre.
+pub fn check_reread(
+    expected: &ContentHash,
+    expected_bytes: u64,
+    found: &ContentHash,
+    found_bytes: u64,
+) -> Result<(), Mismatch> {
+    if found_bytes != expected_bytes {
+        return Err(Mismatch::Size {
+            expected: expected_bytes,
+            found: Some(found_bytes),
+        });
+    }
+    if found != expected {
+        return Err(Mismatch::Content {
+            expected: expected.clone(),
+            found: found.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// Relit `path` en flux sur `connector` et vérifie qu'il contient exactement
 /// `expected_bytes` octets d'empreinte `expected` (BLAKE3).
 ///
@@ -303,14 +328,7 @@ pub fn verify_content(
                     .with_path(path.clone()),
             )
         })?;
-    if &found == expected {
-        Ok(())
-    } else {
-        Err(VerifyError::Mismatch(Mismatch::Content {
-            expected: expected.clone(),
-            found,
-        }))
-    }
+    check_reread(expected, expected_bytes, &found, bytes).map_err(VerifyError::Mismatch)
 }
 
 #[cfg(test)]

@@ -2,6 +2,35 @@
 
 ## [0.1.0] — non publié
 
+### Analyse, comparaison et copie plus rapides ; × réduit dans la barre des tâches
+- **Changement de comportement (profils)** : réglage `compare` par profil
+  sauvegarde/miroir. « Taille et date » (défaut des nouveaux profils) ne lit
+  que les dossiers ; « Contenu » (défaut des profils existants, sans
+  changement silencieux) ne relit plus que les fichiers de même taille des
+  deux côtés — mêmes constats qu’avant, sans relire le reste. Le bidirectionnel
+  garde le contenu de tous les fichiers. `profiles.sqlite` passe en v3
+  (migration additive, lignes existantes intactes ; un ancien exécutable refuse
+  la v3).
+- Simulation : source et destination analysées en parallèle (un thread
+  chacune, comme FreeFileSync), empreintes lues 4 fichiers à la fois par côté,
+  poignées de répertoires réutilisées pendant le scan (lecture seule ; l’exécution
+  revérifie toujours chaque chemin depuis la racine), contrôle de la racine en
+  une ouverture sous Windows. Progression des empreintes affichée (x / y).
+- Exécution : relecture de vérification par l’accès du fichier temporaire
+  (sans le rouvrir par son chemin), un `fsync` de journal en moins par copie
+  (l’issue d’une opération est rendue durable par l’enregistrement suivant ;
+  reprise inchangée).
+- Mesures (Windows 11, SSD NVMe, antivirus actif, 220 000 petits fichiers) :
+  simulation taille et date ≈ 4 s ; simulation par contenu d’arbres
+  identiques ≈ 5 min 50 au lieu d’environ 38 min estimées ; copie de 9 220
+  fichiers 37 s au lieu de 72 s. Détails dans `docs/ETAT_PROJET.md`.
+- Interface : le bouton × réduit SyncEngine dans la barre des tâches (réglage
+  pour revenir à la fermeture) ; icône de la zone de notification avec
+  « Ouvrir » et « Quitter SyncEngine » ; `Ctrl+Q` et bouton « Quitter » dans
+  les réglages. Barre d’outils de la simulation sur deux lignes : « Exécuter ce
+  plan… », « Annuler » et les chemins longs ne sont plus écrasés dans une
+  fenêtre étroite.
+
 ### Interface native Rust (iced) — remplace Tauri/TypeScript
 - Nouvelle interface `syncengine-desktop` en iced 0.14, sans TypeScript, npm,
   WebView ni script PowerShell : rail de navigation, barre de profils groupés,

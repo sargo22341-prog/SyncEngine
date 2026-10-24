@@ -235,6 +235,35 @@ impl StagedCopy {
         self.writer.staging_path()
     }
 
+    /// Relit le dépôt par l'accès du writer (sans le rouvrir par son chemin)
+    /// et renvoie le nombre d'octets relus et leur empreinte BLAKE3 ;
+    /// `Ok(None)` si le connecteur ne le permet pas
+    /// ([`connector_api::ContentWriter::read_back`]).
+    ///
+    /// # Errors
+    /// Lecture impossible ou annulation ; seul [`StagedCopy::abort`] suit.
+    pub fn reread(
+        &mut self,
+        buffer_size: usize,
+    ) -> Result<Option<(u64, ContentHash)>, StorageError> {
+        let mut buffer = vec![0u8; buffer_size.max(1)];
+        let mut hasher = blake3::Hasher::new();
+        let mut bytes: u64 = 0;
+        let supported = self.writer.read_back(&mut buffer, &mut |chunk| {
+            hasher.update(chunk);
+            bytes = bytes.saturating_add(chunk.len() as u64);
+        })?;
+        if !supported {
+            return Ok(None);
+        }
+        let hash = ContentHash::new(HashAlgorithm::Blake3, hasher.finalize().as_bytes().to_vec())
+            .map_err(|_| {
+            StorageError::new(StorageErrorKind::Permanent, StorageOperation::Read)
+                .with_message("empreinte BLAKE3 de longueur inattendue")
+        })?;
+        Ok(Some((bytes, hash)))
+    }
+
     /// Valide le dépôt à la cible (voir [`connector_api::ContentWriter::commit`]).
     ///
     /// # Errors

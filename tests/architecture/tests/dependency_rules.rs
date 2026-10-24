@@ -339,11 +339,21 @@ const DECIDING: &[&str] = &[
 ];
 
 /// Paquets de présentation : seuls autorisés à dépendre d'une boîte à
-/// outils graphique (iced, dialogues natifs) ou de l'ancienne pile Tauri.
+/// outils graphique (iced, dialogues natifs, icône de notification) ou de
+/// l'ancienne pile Tauri.
 const PRESENTATION: &[&str] = &["syncengine-desktop"];
 
 /// Préfixes de crates graphiques réservés à la couche de présentation.
-const GUI_TOOLKITS: &[&str] = &["iced", "rfd", "tauri", "winit", "wgpu"];
+const GUI_TOOLKITS: &[&str] = &[
+    "iced",
+    "rfd",
+    "tauri",
+    "winit",
+    "wgpu",
+    "tray-icon",
+    "muda",
+    "ksni",
+];
 
 struct Package {
     name: String,

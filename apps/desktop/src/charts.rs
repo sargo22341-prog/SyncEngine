@@ -343,9 +343,17 @@ pub(crate) fn mark<'a, M: 'a>(mark: Mark, size: f32) -> Element<'a, M> {
         .into()
 }
 
-/// Window icon: a rasterized version of [`Mark`] (RGBA, 64×64).
+/// Side of the square application icon rasters.
+pub(crate) const ICON_SIZE: u32 = 64;
+
+/// Window icon: a rasterized version of [`Mark`].
 pub(crate) fn window_icon() -> Option<iced::window::Icon> {
-    const N: u32 = 64;
+    iced::window::icon::from_rgba(icon_rgba(), ICON_SIZE, ICON_SIZE).ok()
+}
+
+/// [`Mark`] rasterized as straight RGBA, [`ICON_SIZE`]² (window and tray).
+pub(crate) fn icon_rgba() -> Vec<u8> {
+    const N: u32 = ICON_SIZE;
     let (from, to) = ([0x58_u8, 0x65, 0xf2], [0x8b_u8, 0x5c, 0xf6]);
     let mut rgba = Vec::with_capacity((N * N * 4) as usize);
     let n = N as f32;
@@ -377,5 +385,5 @@ pub(crate) fn window_icon() -> Option<iced::window::Icon> {
             rgba.extend_from_slice(&[c[0] as u8, c[1] as u8, c[2] as u8, (cover * 255.0) as u8]);
         }
     }
-    iced::window::icon::from_rgba(rgba, N, N).ok()
+    rgba
 }

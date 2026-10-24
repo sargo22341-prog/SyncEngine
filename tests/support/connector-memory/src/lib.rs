@@ -77,6 +77,7 @@ pub struct MemoryConnector {
     read_faults: BTreeMap<ResourcePath, StreamFault>,
     write_faults: BTreeMap<ResourcePath, StreamFault>,
     corrupted_writes: Vec<ResourcePath>,
+    read_back: bool,
     touch_on_read: BTreeMap<ResourcePath, Timestamp>,
     issues: BTreeMap<ResourcePath, Vec<ListingIssue>>,
     extra_entries: BTreeMap<ResourcePath, Vec<FileEntry>>,
@@ -132,6 +133,7 @@ impl MemoryConnector {
             read_faults: BTreeMap::new(),
             write_faults: BTreeMap::new(),
             corrupted_writes: Vec::new(),
+            read_back: false,
             touch_on_read: BTreeMap::new(),
             issues: BTreeMap::new(),
             extra_entries: BTreeMap::new(),
@@ -142,6 +144,15 @@ impl MemoryConnector {
             read_opens: AtomicUsize::new(0),
             mutations: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// Les writers relisent leur dépôt eux-mêmes
+    /// ([`ContentWriter::read_back`]) au lieu de laisser l'appelant le
+    /// rouvrir par son chemin (comportement par défaut du contrat).
+    #[must_use]
+    pub fn with_read_back(mut self) -> Self {
+        self.read_back = true;
+        self
     }
 
     /// Déclare les mutations (création de répertoire, écriture, suppression).
@@ -688,6 +699,7 @@ impl StorageConnector for MemoryConnector {
             written: 0,
             fault: self.write_faults.get(at).copied(),
             corrupt: self.corrupted_writes.contains(at),
+            read_back: self.read_back,
             cancel: cancel.clone(),
             finished: false,
             mutations: Arc::clone(&self.mutations),
@@ -779,6 +791,7 @@ struct MemoryWriter {
     written: usize,
     fault: Option<StreamFault>,
     corrupt: bool,
+    read_back: bool,
     cancel: CancellationToken,
     finished: bool,
     mutations: Arc<AtomicUsize>,
@@ -832,6 +845,28 @@ impl ContentWriter for MemoryWriter {
 
     fn staging_path(&self) -> Option<&ResourcePath> {
         Some(&self.staging)
+    }
+
+    fn read_back(
+        &mut self,
+        buffer: &mut [u8],
+        sink: &mut dyn FnMut(&[u8]),
+    ) -> Result<bool, StorageError> {
+        if !self.read_back {
+            return Ok(false);
+        }
+        if self.cancel.is_cancelled() {
+            return Err(self.error(StorageErrorKind::Cancelled, &self.staging));
+        }
+        let content = lock(&self.state)
+            .nodes
+            .get(&self.staging)
+            .map(|node| node.content.clone())
+            .ok_or_else(|| self.error(StorageErrorKind::NotFound, &self.staging))?;
+        for chunk in content.chunks(buffer.len().max(1)) {
+            sink(chunk);
+        }
+        Ok(true)
     }
 
     fn commit(mut self: Box<Self>, mode: CommitMode) -> Result<FileEntry, StorageError> {

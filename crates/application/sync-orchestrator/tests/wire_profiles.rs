@@ -42,6 +42,7 @@ fn profile_cycle(tls: bool) -> Result<(), Box<dyn std::error::Error>> {
         remote_destination: None,
         filter: sync_filter::FilterRules::new().include_file("file"),
         allow_delete: false,
+        compare: sync_profiles::CompareMethod::Content,
     };
     app.profile_save(p.clone())?;
     let view = app.preview(p.id.clone())?;

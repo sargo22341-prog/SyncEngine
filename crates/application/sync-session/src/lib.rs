@@ -13,7 +13,7 @@ use sync_filter::Filter;
 use sync_history::{History, HistoryError, RetentionPolicy};
 use sync_journal::JournalSink;
 use sync_plan::{ExecutionPlan, PlanPolicy, StateBinding, SyncMode};
-use sync_scanner::{ScanError, ScanOptions, scan};
+use sync_scanner::{Inventory, RECOMMENDED_HASH_WORKERS, ScanError, ScanOptions};
 use sync_versioning::VersionStore;
 use thiserror::Error;
 
@@ -85,6 +85,9 @@ pub fn preview(
 /// Builds the ordinary bidirectional preview with presentation-only scan stats.
 /// `side` identifies the scanned endpoint; the callback must return promptly.
 /// It never authorizes mutations or changes baseline publication.
+/// Both endpoints are scanned concurrently (one thread each, hashes read
+/// [`RECOMMENDED_HASH_WORKERS`] files at a time per endpoint), so the
+/// callback can be invoked from two threads at once.
 /// # Errors
 /// Same validation, scan and persistence errors as [`preview`].
 #[expect(
@@ -99,19 +102,39 @@ pub fn preview_observed(
     filter: &Filter,
     policy: &PlanPolicy,
     cancel: &CancellationToken,
-    observe: &dyn Fn(bool, &sync_scanner::ScanStats, usize),
+    observe: &(dyn Fn(bool, &sync_scanner::ScanStats, usize) + Sync),
 ) -> Result<ExecutionPlan, SessionError> {
-    let options = ScanOptions::new().with_hash(HashAlgorithm::Blake3);
-    let left = sync_scanner::scan_observed(source, filter, &options, cancel, &|stats, issues| {
-        observe(false, stats, issues)
-    })?;
-    let right =
-        sync_scanner::scan_observed(destination, filter, &options, cancel, &|stats, issues| {
-            observe(true, stats, issues)
-        })?;
+    let (left, right) = scan_both(source, destination, filter, cancel, observe)?;
     let identity = binding(&left, &right, context)?;
     let baseline = history.baseline(&identity)?;
     Ok(BidirectionalStrategy.build_plan(&left, &right, context, baseline.as_ref(), policy)?)
+}
+
+/// Hashed inventories of both endpoints, scanned concurrently. Each scan
+/// keeps its own guarantees; the source error wins when both fail.
+fn scan_both(
+    source: &dyn StorageConnector,
+    destination: &dyn StorageConnector,
+    filter: &Filter,
+    cancel: &CancellationToken,
+    observe: &(dyn Fn(bool, &sync_scanner::ScanStats, usize) + Sync),
+) -> Result<(Inventory, Inventory), ScanError> {
+    let options = ScanOptions::new()
+        .with_hash(HashAlgorithm::Blake3)
+        .with_hash_workers(RECOMMENDED_HASH_WORKERS);
+    let scan = |connector: &dyn StorageConnector, side: bool| {
+        sync_scanner::scan_observed(connector, filter, &options, cancel, &|stats, issues| {
+            observe(side, stats, issues)
+        })
+    };
+    let (left, right) = std::thread::scope(|threads| {
+        let left = threads.spawn(|| scan(source, false));
+        let right = scan(destination, true);
+        (left.join(), right)
+    });
+    // A panicking scan thread is re-raised: no inventory is fabricated.
+    let left = left.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    Ok((left?, right?))
 }
 
 /// One exact preview plan to execute. The caller must prevent simultaneous
@@ -210,10 +233,14 @@ pub fn execute(
             source_location: identity.source,
             destination_location: identity.destination,
         };
-        let options = ScanOptions::new().with_hash(HashAlgorithm::Blake3);
         let result = (|| -> Result<_, SessionError> {
-            let left = scan(request.source, &filter, &options, request.cancel)?;
-            let right = scan(request.destination, &filter, &options, request.cancel)?;
+            let (left, right) = scan_both(
+                request.source,
+                request.destination,
+                &filter,
+                request.cancel,
+                &|_, _, _| {},
+            )?;
             Ok(converged_baseline(
                 &left,
                 &right,

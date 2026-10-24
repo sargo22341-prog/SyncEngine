@@ -501,3 +501,96 @@ fn paginates_without_reusing_or_crossing_cursors() -> Result<(), Box<dyn std::er
     assert!(c.next_page().is_none());
     Ok(())
 }
+
+fn reusing(root: &Path) -> LocalConnector {
+    LocalConnector::new(root, LocalOptions::new().with_handle_reuse()).unwrap()
+}
+
+fn read_all(connector: &LocalConnector, at: &str) -> Vec<u8> {
+    let mut reader = connector
+        .open_read(&p(at), &CancellationToken::new())
+        .unwrap();
+    let (mut content, mut buf) = (Vec::new(), [0u8; 512]);
+    loop {
+        let read = reader.read(&mut buf).unwrap();
+        if read == 0 {
+            return content;
+        }
+        content.extend_from_slice(&buf[..read]);
+    }
+}
+
+#[test]
+fn handle_reuse_observes_exactly_what_a_full_walk_observes() {
+    let dir = tree();
+    let (plain, reuse) = (connector(dir.path()), reusing(dir.path()));
+    // Twice: the second pass goes through cached handles.
+    for _ in 0..2 {
+        for at in ["", "docs", "docs/sub", "vide", "docs/sub", "docs"] {
+            assert_eq!(sorted(&list(&plain, at)), sorted(&list(&reuse, at)), "{at}");
+        }
+        for at in ["a.txt", "docs/b.md", "docs/sub/c.bin", "docs/sub", "vide"] {
+            let cancel = CancellationToken::new();
+            assert_eq!(
+                plain.stat(&p(at), &cancel).unwrap(),
+                reuse.stat(&p(at), &cancel).unwrap()
+            );
+        }
+        assert_eq!(read_all(&reuse, "docs/sub/c.bin"), [7u8; 3000]);
+        assert_eq!(read_all(&reuse, "docs/b.md"), b"bravo!");
+    }
+    let cancel = CancellationToken::new();
+    for missing in ["absent.txt", "docs/absent", "absent/x"] {
+        assert_eq!(
+            reuse.stat(&p(missing), &cancel).unwrap_err().kind(),
+            StorageErrorKind::NotFound,
+            "{missing}"
+        );
+    }
+    // A file is never a directory, cached or not.
+    assert_eq!(
+        reuse.list(&p("a.txt"), None, &cancel).unwrap_err().kind(),
+        StorageErrorKind::Permanent
+    );
+}
+
+#[test]
+fn handle_reuse_never_traverses_a_link() {
+    let outside = TempDir::new().unwrap();
+    fs::write(outside.path().join("secret.txt"), b"hors racine").unwrap();
+    let dir = tree();
+    link_dir(outside.path(), &dir.path().join("lien"));
+    let reuse = reusing(dir.path());
+    let cancel = CancellationToken::new();
+    let root: Vec<_> = sorted(&list(&reuse, ""));
+    assert!(root.contains(&("lien".to_owned(), EntryKind::Symlink)));
+    for _ in 0..2 {
+        assert_eq!(
+            reuse.list(&p("lien"), None, &cancel).unwrap_err().kind(),
+            StorageErrorKind::Permanent
+        );
+        assert!(reuse.stat(&p("lien/secret.txt"), &cancel).is_err());
+        assert!(reuse.open_read(&p("lien/secret.txt"), &cancel).is_err());
+    }
+}
+
+#[test]
+fn handle_reuse_is_ignored_when_mutations_are_enabled() {
+    let dir = tree();
+    let writable = LocalConnector::new(
+        dir.path(),
+        LocalOptions::new().with_mutations().with_handle_reuse(),
+    )
+    .unwrap();
+    let cancel = CancellationToken::new();
+    list(&writable, "docs/sub");
+    assert!(writable.stat(&p("docs/b.md"), &cancel).is_ok());
+    // No handle is kept: the directory can be renamed (Windows refuses to
+    // rename a directory with an open handle) and the old path is gone.
+    fs::rename(dir.path().join("docs"), dir.path().join("moved")).unwrap();
+    assert_eq!(
+        writable.stat(&p("docs/b.md"), &cancel).unwrap_err().kind(),
+        StorageErrorKind::NotFound
+    );
+    assert!(writable.stat(&p("moved/b.md"), &cancel).is_ok());
+}

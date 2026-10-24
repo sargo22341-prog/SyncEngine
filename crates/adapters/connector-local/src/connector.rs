@@ -31,6 +31,7 @@ pub struct LocalOptions {
     timestamp_precision: Option<TimestampPrecision>,
     case_sensitivity: Option<CaseSensitivity>,
     mutations: bool,
+    reuse_handles: bool,
 }
 
 impl LocalOptions {
@@ -62,6 +63,22 @@ impl LocalOptions {
     #[must_use]
     pub fn with_mutations(mut self) -> Self {
         self.mutations = true;
+        self
+    }
+
+    /// Réutilise, pour `list`, `stat` et `open_read`, les poignées des
+    /// répertoires déjà atteints par un parcours confiné (au plus 64,
+    /// les plus récentes) au lieu de reparcourir chaque ancêtre depuis la
+    /// racine : un scan ouvre alors chaque répertoire une seule fois.
+    ///
+    /// **Sans effet si les mutations sont autorisées.** Réservé aux scans de
+    /// prévisualisation : une poignée suit l'objet répertoire, pas son nom ;
+    /// un répertoire renommé pendant le scan reste lu à son nouvel
+    /// emplacement. L'exécution reconstruit ses connecteurs sans cette
+    /// option et revérifie chaque précondition par un parcours complet.
+    #[must_use]
+    pub fn with_handle_reuse(mut self) -> Self {
+        self.reuse_handles = true;
         self
     }
 }
@@ -126,6 +143,7 @@ pub struct LocalConnector {
     capabilities: StorageCapabilities,
     precision: TimestampPrecision,
     pages: crate::paging::Pages,
+    handles: Option<crate::confined::Handles>,
 }
 
 impl LocalConnector {
@@ -174,6 +192,8 @@ impl LocalConnector {
             capabilities,
             precision,
             pages: crate::paging::Pages::default(),
+            handles: (options.reuse_handles && !options.mutations)
+                .then(crate::confined::Handles::default),
         })
     }
 
@@ -196,27 +216,25 @@ impl LocalConnector {
     /// Vérifie la racine : son absence est une indisponibilité de
     /// l'extrémité (montage absent), jamais un répertoire vide.
     fn check_root(&self, operation: StorageOperation) -> Result<(), StorageError> {
+        use cap_fs_ext::MetadataExt;
         let root = ResourcePath::root();
+        // Windows : l'identité (volume, index) n'est lisible que par une
+        // poignée. Une seule ouverture suffit quand la racine est un
+        // répertoire ; tout échec est reclassé par le chemin général.
+        #[cfg(windows)]
+        if let Ok(metadata) = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
+            .and_then(|dir| dir.dir_metadata())
+            && metadata.is_dir()
+        {
+            return self.check_identity(operation, metadata.dev(), metadata.ino());
+        }
         match fs::metadata(&self.root) {
             Ok(metadata) if metadata.is_dir() => {
-                use cap_fs_ext::MetadataExt;
                 #[cfg(windows)]
                 let metadata = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
                     .and_then(|dir| dir.dir_metadata())
                     .map_err(|e| io_error(e, operation, &root))?;
-                let granted = self
-                    .anchor(operation)?
-                    .dir_metadata()
-                    .map_err(|e| io_error(e, operation, &root))?;
-                if metadata.dev() != granted.dev() || metadata.ino() != granted.ino() {
-                    return Err(local_error(
-                        StorageErrorKind::Disconnected,
-                        operation,
-                        &root,
-                        "root identity changed; reconnect required",
-                    ));
-                }
-                Ok(())
+                self.check_identity(operation, metadata.dev(), metadata.ino())
             }
             Ok(_) => Err(local_error(
                 StorageErrorKind::Permanent,
@@ -233,6 +251,30 @@ impl LocalConnector {
             .with_source(error)),
             Err(error) => Err(io_error(error, operation, &root)),
         }
+    }
+
+    /// La racine désignée par le chemin est-elle toujours celle ouverte ?
+    fn check_identity(
+        &self,
+        operation: StorageOperation,
+        dev: u64,
+        ino: u64,
+    ) -> Result<(), StorageError> {
+        use cap_fs_ext::MetadataExt;
+        let root = ResourcePath::root();
+        let granted = self
+            .anchor(operation)?
+            .dir_metadata()
+            .map_err(|e| io_error(e, operation, &root))?;
+        if dev != granted.dev() || ino != granted.ino() {
+            return Err(local_error(
+                StorageErrorKind::Disconnected,
+                operation,
+                &root,
+                "root identity changed; reconnect required",
+            ));
+        }
+        Ok(())
     }
 
     /// Contrôles communs avant une mutation : capacité déclarée, pas
@@ -288,6 +330,7 @@ impl StorageConnector for LocalConnector {
         self.check_root(operation)?;
         self.pages.list(
             self.anchor(operation)?,
+            self.handles.as_ref(),
             directory,
             page,
             self.precision,
@@ -310,7 +353,7 @@ impl StorageConnector for LocalConnector {
             root.dir_metadata()
                 .map_err(|e| io_error(e, operation, path))?
         } else {
-            crate::confined::parent(root, path, operation)?
+            crate::confined::parent_via(root, self.handles.as_ref(), path, operation)?
                 .symlink_metadata(path.segments().last().unwrap_or(""))
                 .map_err(|e| io_error(e, operation, path))?
         };
@@ -335,7 +378,12 @@ impl StorageConnector for LocalConnector {
                 "la racine n'est pas un fichier",
             ));
         }
-        let parent = crate::confined::parent(self.anchor(operation)?.as_ref(), path, operation)?;
+        let parent = crate::confined::parent_via(
+            self.anchor(operation)?,
+            self.handles.as_ref(),
+            path,
+            operation,
+        )?;
         let name = path.segments().last().unwrap_or("");
         let meta = parent
             .symlink_metadata(name)

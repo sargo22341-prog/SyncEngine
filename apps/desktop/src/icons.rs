@@ -52,6 +52,7 @@ pub(crate) enum Glyph {
     Layers,
     Calendar,
     Refresh,
+    Power,
 }
 
 /// Canvas program drawing one glyph.
@@ -317,6 +318,10 @@ fn draw(glyph: Glyph, d: &mut Pen<'_>) {
         Glyph::Refresh => {
             d.arc(12.0, 12.0, 7.5, -60.0, 240.0);
             d.arc_head(12.0, 12.0, 7.5, 240.0, true);
+        }
+        Glyph::Power => {
+            d.arc(12.0, 13.0, 7.5, -45.0, 225.0);
+            d.line((12.0, 3.5), (12.0, 11.0));
         }
         Glyph::Backup => {
             d.rect(4.0, 12.0, 16.0, 8.0, 2.0);

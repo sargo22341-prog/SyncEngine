@@ -359,3 +359,42 @@ fn reserved_parent_cannot_redirect_publication_or_cleanup_outside_root() {
         b"verified"
     );
 }
+
+#[test]
+fn staged_content_can_be_reread_through_the_writer_before_commit() {
+    let dir = TempDir::new().unwrap();
+    let connector = writable(dir.path());
+    let cancel = CancellationToken::new();
+    let mut writer = connector
+        .open_write(&p("f.bin"), &WriteOptions::new(), &cancel)
+        .unwrap();
+    let content: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
+    writer.write(&content[..7000]).unwrap();
+    writer.write(&content[7000..]).unwrap();
+    writer.finish().unwrap();
+    let mut reread = Vec::new();
+    let mut buffer = [0u8; 4096];
+    assert!(
+        writer
+            .read_back(&mut buffer, &mut |chunk| reread.extend_from_slice(chunk))
+            .unwrap()
+    );
+    assert_eq!(reread, content);
+    // Reading back publishes nothing; the commit still does.
+    assert!(!dir.path().join("f.bin").exists());
+    writer.commit(CommitMode::CreateNew).unwrap();
+    assert_eq!(fs::read(dir.path().join("f.bin")).unwrap(), content);
+    assert_eq!(names(dir.path()), ["f.bin"]);
+
+    // Cancellation is honoured while rereading.
+    let token = CancellationToken::new();
+    let mut writer = connector
+        .open_write(&p("g.bin"), &WriteOptions::new(), &token)
+        .unwrap();
+    writer.write(b"abc").unwrap();
+    token.cancel();
+    let error = writer.read_back(&mut buffer, &mut |_| {}).unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::Cancelled);
+    writer.abort().unwrap();
+    assert_eq!(names(dir.path()), ["f.bin"]);
+}

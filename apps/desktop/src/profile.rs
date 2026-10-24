@@ -98,7 +98,11 @@ impl App {
         .align_y(Alignment::Center);
 
         let color = mode_color(p, profile.mode);
-        let mut pills = row![ui::pill(color, model::mode_label(profile.mode))].spacing(8);
+        let mut pills = row![
+            ui::pill(color, model::mode_label(profile.mode)),
+            ui::pill(p.muted, model::compare_label(profile.compare)),
+        ]
+        .spacing(8);
         match (self.schedule_of(id), self.schedule_valid(id)) {
             (Some(s), Some(true)) => {
                 pills = pills.push(ui::pill(p.info, draft::trigger_label(&s.schedule.trigger)))
@@ -208,13 +212,17 @@ impl App {
         container(
             row![
                 ui::glyph_box(provider.glyph(), p.accent, 42.0),
-                column![
-                    ui::eyebrow(p.faint, label),
-                    ui::mono(p.text, model::ellipsize(&location, 44), 13.0),
-                    ui::caption(p, model::provider_label(remote.as_ref())),
-                ]
-                .spacing(3)
-                .width(Length::Fill),
+                // Clipped: a long unwrapped path never runs under the button.
+                container(
+                    column![
+                        ui::eyebrow(p.faint, label),
+                        ui::mono(p.text, model::ellipsize(&location, 44), 13.0),
+                        ui::caption(p, model::provider_label(remote.as_ref())),
+                    ]
+                    .spacing(3),
+                )
+                .width(Length::Fill)
+                .clip(true),
                 ui::icon_button(
                     p,
                     Glyph::Copy,
@@ -252,7 +260,10 @@ impl App {
                 ui::glyph_box(Glyph::Eye, p.accent, 64.0),
                 column![
                     ui::title(p, "Inspectez avant d’écrire", 19.0),
-                    ui::muted(p, "La simulation lit les deux côtés, calcule les empreintes et vous montre chaque opération prévue. Aucun fichier n’est modifié tant que vous n’avez pas confirmé ce plan précis."),
+                    ui::muted(p, match profile.compare {
+                        sync_profiles::CompareMethod::SizeAndDate => "La simulation lit les dossiers des deux côtés, compare tailles et dates et vous montre chaque opération prévue. Aucun fichier n’est modifié tant que vous n’avez pas confirmé ce plan précis.",
+                        sync_profiles::CompareMethod::Content => "La simulation lit les deux côtés, compare le contenu des fichiers de même taille par empreinte et vous montre chaque opération prévue. Aucun fichier n’est modifié tant que vous n’avez pas confirmé ce plan précis.",
+                    }),
                 ]
                 .spacing(6)
                 .width(Length::Fill),
@@ -278,7 +289,13 @@ impl App {
         let elapsed = self.now.saturating_duration_since(job.started);
         let turn = elapsed.as_secs_f32();
         let (title, color) = match job.kind {
-            JobKind::Preview => ("Simulation : lecture et empreintes", p.accent),
+            JobKind::Preview if s.hash_target > 0 => {
+                ("Simulation : comparaison du contenu", p.accent)
+            }
+            JobKind::Preview if s.entries_hashed > 0 => {
+                ("Simulation : lecture et empreintes", p.accent)
+            }
+            JobKind::Preview => ("Simulation : lecture des dossiers", p.accent),
             JobKind::Execute => ("Exécution réelle en cours", p.success),
         };
         let progress = match job.kind {
@@ -291,7 +308,9 @@ impl App {
                         .filter(|n| *n > 0)
                         .map(|n| s.entries_done as f32 / n as f32)
                 }),
-            JobKind::Preview => None,
+            // Known only for the content phase (files of equal size).
+            JobKind::Preview => (s.hash_target > 0)
+                .then(|| (s.entries_hashed as f32 / s.hash_target as f32).min(1.0)),
         };
         let percent = progress.map(|v| format!("{:.0} %", (v * 100.0).min(100.0)));
         let ring = iced::widget::stack![
@@ -337,7 +356,7 @@ impl App {
         let rate = values.iter().rev().take(5).sum::<f32>() / values.len().clamp(1, 5) as f32;
         let rate_label = match job.kind {
             JobKind::Execute => format!("{}/s", model::bytes(rate as u64)),
-            JobKind::Preview => format!("{} entrées/s", model::count(rate as u64)),
+            JobKind::Preview => format!("{} éléments/s", model::count(rate as u64)),
         };
         let stat = |label: &'static str, value: String, c: Color| -> El<'a, Message> {
             column![ui::title(p, value, 20.0), ui::colored(c, label, 12.0)]
@@ -350,6 +369,19 @@ impl App {
                 stat(
                     "entrées analysées",
                     model::count(s.entries_scanned),
+                    p.muted
+                ),
+                stat(
+                    "empreintes calculées",
+                    if s.hash_target > 0 {
+                        format!(
+                            "{} / {}",
+                            model::count(s.entries_hashed),
+                            model::count(s.hash_target)
+                        )
+                    } else {
+                        model::count(s.entries_hashed)
+                    },
                     p.muted
                 ),
                 stat(
@@ -415,10 +447,12 @@ impl App {
         }
         body = body.push(
             row![
-                ui::caption(p, if job.cancel_requested { "Annulation coopérative demandée : l’opération en cours se termine proprement." } else { "Vous pouvez annuler à tout moment ; l’état partiel est conservé et journalisé." }),
-                ui::fill(),
+                // Fill: the explanation wraps instead of squeezing the button.
+                container(ui::caption(p, if job.cancel_requested { "Annulation coopérative demandée : l’opération en cours se termine proprement." } else { "Vous pouvez annuler à tout moment ; l’état partiel est conservé et journalisé." }))
+                    .width(Length::Fill),
                 ui::action(p, Tone::Secondary, Some(Glyph::Stop), "Annuler", (!job.cancel_requested).then_some(Message::Cancel)),
             ]
+            .spacing(12)
             .align_y(Alignment::Center),
         );
         container(row![ring, body].spacing(24).align_y(Alignment::Center))
@@ -572,8 +606,12 @@ impl App {
         let mut col = column![
             row![
                 ui::glyph_box(Glyph::Eye, p.info, 30.0),
-                ui::eyebrow(p.info, "Simulation — aucun fichier n’a été modifié"),
-                ui::fill(),
+                // The label yields (wraps) first in a narrow window.
+                container(ui::eyebrow(
+                    p.info,
+                    "Simulation — aucun fichier n’a été modifié"
+                ))
+                .width(Length::Fill),
                 ui::caption(p, format!("{} à transférer", model::bytes(s.bytes))),
             ]
             .spacing(10)
@@ -632,7 +670,10 @@ impl App {
         } else {
             Tone::Success
         };
-        let toolbar = row![
+        // Two lines so nothing is squeezed to a sliver in a narrow window:
+        // search + actions (the field yields its width first), then the
+        // action filters, which wrap when they no longer fit.
+        let actions = row![
             container(
                 text_input("Filtrer par chemin…", &preview.query)
                     .on_input(Message::PlanQuery)
@@ -640,13 +681,9 @@ impl App {
                     .size(13)
                     .style(theme::input(*p, false))
             )
-            .width(Length::Fixed(260.0)),
-            filter_chip("Tout", None),
-            filter_chip("Copies", Some(Action::Copy)),
-            filter_chip("Remplacements", Some(Action::Replace)),
-            filter_chip("Suppressions", Some(Action::Delete)),
-            filter_chip("Conflits", Some(Action::Conflict)),
-            ui::fill(),
+            .width(Length::FillPortion(3))
+            .max_width(320.0),
+            Space::new().width(Length::FillPortion(1)),
             ui::icon_button(
                 p,
                 Glyph::Close,
@@ -674,6 +711,18 @@ impl App {
         ]
         .spacing(8)
         .align_y(Alignment::Center);
+        let filters = row![
+            filter_chip("Tout", None),
+            filter_chip("Copies", Some(Action::Copy)),
+            filter_chip("Remplacements", Some(Action::Replace)),
+            filter_chip("Suppressions", Some(Action::Delete)),
+            filter_chip("Conflits", Some(Action::Conflict)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .wrap()
+        .vertical_spacing(8);
+        let toolbar = column![actions, filters].spacing(10);
 
         let mut list = column![
             row![

@@ -5,7 +5,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 use sync_plan::{Action, SyncMode};
-use sync_profiles::{Profile, RemoteEndpoint};
+use sync_profiles::{CompareMethod, Profile, RemoteEndpoint};
 
 /// Counts computed by the planner for one preview.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -291,6 +291,13 @@ pub(crate) fn mode_label(mode: SyncMode) -> &'static str {
         SyncMode::Mirror => "Miroir",
         SyncMode::Bidirectional => "Bidirectionnel",
         _ => "Mode inconnu",
+    }
+}
+
+pub(crate) fn compare_label(compare: CompareMethod) -> &'static str {
+    match compare {
+        CompareMethod::SizeAndDate => "Taille et date",
+        CompareMethod::Content => "Contenu (BLAKE3)",
     }
 }
 

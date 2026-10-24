@@ -24,6 +24,8 @@ network = ["sync-orchestrator/network"]
 [dependencies]
 iced = { version = "0.14.0", features = ["canvas", "smol"] }
 rfd = "0.17.2"
+# Notification-area icon; KSNI (D-Bus) backend on Linux: no GTK/AppIndicator.
+tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
 sync-orchestrator.workspace = true
 sync-profiles.workspace = true
 sync-core.workspace = true

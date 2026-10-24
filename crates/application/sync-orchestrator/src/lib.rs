@@ -14,6 +14,7 @@ pub use runs::Run;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, MutexGuard};
 use sync_core::{
     CancellationToken, ExecutionId, HashAlgorithm, PlanId, ProfileId, ResourcePath, Timestamp,
@@ -26,8 +27,8 @@ use sync_journal::{FileJournal, JournalError, JournalRecord, JournalSink};
 use sync_plan::{
     DeletionGuard, DeletionPolicy, ExecutionPlan, OverwritePolicy, PlanPolicy, SyncMode,
 };
-use sync_profiles::{Preferences, Profile, Profiles};
-use sync_scanner::ScanOptions;
+use sync_profiles::{CompareMethod, Preferences, Profile, Profiles};
+use sync_scanner::{Inventory, RECOMMENDED_HASH_WORKERS, ScanError, ScanOptions, ScanStats};
 use sync_versioning::VersionStore;
 
 /// Serializable, redacted IPC error. A failed execution may have partial work;
@@ -105,6 +106,11 @@ pub struct JobSnapshot {
     pub entries_scanned: u64,
     /// Nonfatal scan anomalies; unknown coverage never authorizes deletion.
     pub scan_issues: u64,
+    /// Content hashes computed during preview (both endpoints).
+    pub entries_hashed: u64,
+    /// Hashes this preview must compute when known in advance (files of equal
+    /// size on both sides, content comparison); 0 when unknown or none.
+    pub hash_target: u64,
     /// Failed/refused execution observations, after durable journal writes.
     pub operation_errors: u64,
 }
@@ -346,16 +352,14 @@ impl Application {
         let result = (|| {
             let profile = self.profile(&id)?;
             let (source, destination) = self.roots(&profile)?;
-            let left = endpoints::build(
+            let left = endpoints::build_for_scan(
                 Path::new(&source),
                 profile.remote_source.as_ref(),
-                false,
                 &cancel,
             )?;
-            let right = endpoints::build(
+            let right = endpoints::build_for_scan(
                 Path::new(&destination),
                 profile.remote_destination.as_ref(),
-                false,
                 &cancel,
             )?;
             let now = Timestamp::now().map_err(io)?;
@@ -375,23 +379,15 @@ impl Application {
                 },
             );
             let filter = Filter::new(profile.filter.clone()).map_err(io)?;
-            let counts = std::cell::Cell::new([(0u64, 0u64); 2]);
-            let observe = |side: bool, stats: &sync_scanner::ScanStats, issues: usize| {
-                let mut values = counts.get();
-                values[usize::from(side)] = (
-                    stats
-                        .files
-                        .saturating_add(stats.directories)
-                        .saturating_add(stats.others),
-                    issues as u64,
-                );
-                counts.set(values);
+            // Presentation counters only, updated from both scan threads.
+            let progress = Progress::default();
+            let observe = |side: bool, stats: &ScanStats, issues: usize| {
+                progress.record(side, stats, issues);
                 let mut snapshot = self
                     .snapshot
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                snapshot.entries_scanned = values[0].0.saturating_add(values[1].0);
-                snapshot.scan_issues = values[0].1.saturating_add(values[1].1);
+                progress.publish(&mut snapshot);
             };
             let plan = if profile.mode == SyncMode::Bidirectional {
                 sync_session::preview_observed(
@@ -406,23 +402,70 @@ impl Application {
                 )
                 .map_err(io)?
             } else {
-                let options = ScanOptions::new().with_hash(HashAlgorithm::Blake3);
-                let a = sync_scanner::scan_observed(
-                    left.as_ref(),
-                    &filter,
-                    &options,
-                    &cancel,
-                    &|stats, issues| observe(false, stats, issues),
+                // Listings only, both endpoints at once (one thread each).
+                let listing = ScanOptions::new();
+                let (a, b) = both(
+                    || {
+                        sync_scanner::scan_observed(
+                            left.as_ref(),
+                            &filter,
+                            &listing,
+                            &cancel,
+                            &|stats, issues| observe(false, stats, issues),
+                        )
+                    },
+                    || {
+                        sync_scanner::scan_observed(
+                            right.as_ref(),
+                            &filter,
+                            &listing,
+                            &cancel,
+                            &|stats, issues| observe(true, stats, issues),
+                        )
+                    },
                 )
                 .map_err(io)?;
-                let b = sync_scanner::scan_observed(
-                    right.as_ref(),
-                    &filter,
-                    &options,
-                    &cancel,
-                    &|stats, issues| observe(true, stats, issues),
-                )
-                .map_err(io)?;
+                // Content: hash only files whose equal sizes leave the
+                // question open; other verdicts cannot change.
+                let (a, b) = match profile.compare {
+                    CompareMethod::SizeAndDate => (a, b),
+                    CompareMethod::Content => {
+                        let candidates = sync_compare::content_candidates(&a, &b);
+                        // Counters are cumulative: hashes already provided
+                        // by the listings are part of the target.
+                        progress.target(
+                            (2 * candidates.len() as u64)
+                                .saturating_add(a.stats().hashed)
+                                .saturating_add(b.stats().hashed),
+                        );
+                        let hashing = ScanOptions::new()
+                            .with_hash(HashAlgorithm::Blake3)
+                            .with_hash_workers(RECOMMENDED_HASH_WORKERS);
+                        both(
+                            || {
+                                sync_scanner::hash_selected(
+                                    left.as_ref(),
+                                    a,
+                                    &candidates,
+                                    &hashing,
+                                    &cancel,
+                                    &|stats, issues| observe(false, stats, issues),
+                                )
+                            },
+                            || {
+                                sync_scanner::hash_selected(
+                                    right.as_ref(),
+                                    b,
+                                    &candidates,
+                                    &hashing,
+                                    &cancel,
+                                    &|stats, issues| observe(true, stats, issues),
+                                )
+                            },
+                        )
+                        .map_err(io)?
+                    }
+                };
                 let comparison =
                     sync_compare::compare(&a, &b, &sync_compare::CompareOptions::new())
                         .map_err(io)?;
@@ -610,6 +653,54 @@ impl Application {
     /// Persistence/format failure.
     pub fn history(&self, id: ProfileId) -> Result<Vec<Run>, AppError> {
         runs::list(&self.state, &id)
+    }
+}
+
+/// Runs the source and destination halves of a preview concurrently (one
+/// thread each, like FreeFileSync's per-device traversal). Both always run to
+/// completion; the source error is reported first. A panic is re-raised.
+fn both(
+    source: impl FnOnce() -> Result<Inventory, ScanError> + Send,
+    destination: impl FnOnce() -> Result<Inventory, ScanError>,
+) -> Result<(Inventory, Inventory), ScanError> {
+    let (source, destination) = std::thread::scope(|threads| {
+        let source = threads.spawn(source);
+        let destination = destination();
+        (source.join(), destination)
+    });
+    let source = source.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    Ok((source?, destination?))
+}
+
+/// Latest per-endpoint scan counters, merged into the job snapshot.
+#[derive(Default)]
+struct Progress {
+    entries: [AtomicU64; 2],
+    issues: [AtomicU64; 2],
+    hashed: [AtomicU64; 2],
+    target: AtomicU64,
+}
+impl Progress {
+    fn record(&self, side: bool, stats: &ScanStats, issues: usize) {
+        let side = usize::from(side);
+        let entries = stats
+            .files
+            .saturating_add(stats.directories)
+            .saturating_add(stats.others);
+        self.entries[side].store(entries, Relaxed);
+        self.issues[side].store(issues as u64, Relaxed);
+        self.hashed[side].store(stats.hashed, Relaxed);
+    }
+    fn target(&self, hashes: u64) {
+        self.target.store(hashes, Relaxed);
+    }
+    fn publish(&self, snapshot: &mut JobSnapshot) {
+        let sum =
+            |pair: &[AtomicU64; 2]| pair[0].load(Relaxed).saturating_add(pair[1].load(Relaxed));
+        snapshot.entries_scanned = sum(&self.entries);
+        snapshot.scan_issues = sum(&self.issues);
+        snapshot.entries_hashed = sum(&self.hashed);
+        snapshot.hash_target = self.target.load(Relaxed);
     }
 }
 

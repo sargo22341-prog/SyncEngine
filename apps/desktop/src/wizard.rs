@@ -19,7 +19,7 @@ use iced::{Alignment, Length, Padding, Task};
 use std::path::PathBuf;
 use std::time::Instant;
 use sync_plan::SyncMode;
-use sync_profiles::Profile;
+use sync_profiles::{CompareMethod, Profile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
@@ -114,6 +114,7 @@ pub(crate) enum WizardMsg {
     RemovePattern(FilterList, usize),
     CaseInsensitive(bool),
     AllowDelete(bool),
+    Compare(CompareMethod),
     Schedule(ScheduleMsg),
     Name(String),
     Group(String),
@@ -301,6 +302,7 @@ impl Wizard {
                     self.draft.schedule.approve_deletions = false;
                 }
             }
+            WizardMsg::Compare(method) => self.draft.compare = method,
             WizardMsg::Schedule(m) => schedules::apply(&mut self.draft.schedule, m),
             WizardMsg::Name(v) => self.draft.name = v.chars().take(200).collect(),
             WizardMsg::Group(v) => self.draft.group = v.chars().take(200).collect(),
@@ -1063,6 +1065,68 @@ impl Wizard {
         .into()
     }
 
+    /// How one-way previews recognize identical files.
+    fn compare_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
+        if self.bidirectional() {
+            return ui::callout(
+                p,
+                p.info,
+                Glyph::TwoWay,
+                "Comparaison par contenu",
+                "Le bidirectionnel lit l’empreinte de chaque fichier : l’état de référence doit prouver qu’un fichier n’a pas changé.",
+            );
+        }
+        let current = self.draft.compare;
+        let tile = |method: CompareMethod,
+                    glyph: Glyph,
+                    title: &'static str,
+                    body: &'static str|
+         -> El<'a, Message> {
+            let on = current == method;
+            button(
+                row![
+                    ui::glyph_box(glyph, if on { p.accent } else { p.muted }, 36.0),
+                    column![ui::strong(p.text, title, 14.0), ui::caption(p, body)]
+                        .spacing(3)
+                        .width(Length::Fill),
+                    icons::icon(
+                        if on {
+                            Glyph::Check
+                        } else {
+                            Glyph::ChevronRight
+                        },
+                        16.0,
+                        if on { p.accent } else { p.faint }
+                    ),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            )
+            .padding(14)
+            .width(Length::Fill)
+            .style(theme::tile(*p, on, true))
+            .on_press(Message::Wizard(WizardMsg::Compare(method)))
+            .into()
+        };
+        column![
+            ui::strong(p.muted, "Comparaison des fichiers", 12.0),
+            tile(
+                CompareMethod::SizeAndDate,
+                Glyph::Bolt,
+                "Taille et date — rapide",
+                "Seuls les dossiers sont lus. Une modification qui garde la même taille et la même date passe inaperçue.",
+            ),
+            tile(
+                CompareMethod::Content,
+                Glyph::Shield,
+                "Contenu — empreintes BLAKE3",
+                "Relit les fichiers de même taille des deux côtés : plus lent, détecte tout changement de contenu.",
+            ),
+        ]
+        .spacing(8)
+        .into()
+    }
+
     fn safety_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         let guard = |title: &'static str, body: &'static str| -> El<'a, Message> {
             row![
@@ -1075,7 +1139,7 @@ impl Wizard {
         };
         let guards = column![
             guard("Simulation obligatoire", "Le plan exact affiché est le seul exécutable ; toute modification exige une nouvelle simulation."),
-            guard("Empreintes BLAKE3", "Comparaison et vérification du contenu copié."),
+            guard("Copie vérifiée", "Empreinte BLAKE3 calculée pendant la copie et contenu relu avant publication."),
             guard("Versions conservées", "Avant chaque remplacement ou suppression."),
             guard("Jamais de suppression déduite d’une panne", "Source inaccessible, inventaire incomplet ou source vide : suppressions refusées."),
         ]
@@ -1121,6 +1185,7 @@ impl Wizard {
         };
         column![
             deletion,
+            self.compare_view(p),
             container(guards)
                 .padding(18)
                 .width(Length::Fill)
@@ -1236,6 +1301,14 @@ impl Wizard {
                             }
                         ),
                         Step::Filters
+                    ),
+                    item(
+                        Glyph::Eye,
+                        format!(
+                            "Comparaison : {}",
+                            model::compare_label(d.effective_compare())
+                        ),
+                        Step::Safety
                     ),
                     item(
                         Glyph::Shield,

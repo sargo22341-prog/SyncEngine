@@ -10,8 +10,8 @@ use sync_events::{EmitOutcome, EventEmitter, EventKind, ProgressSnapshot};
 use sync_journal::{JournalError, JournalRecord, JournalTotals};
 use sync_plan::{Action, EntrySnapshot, Operation, PlanSide};
 use sync_verify::{
-    Mismatch, VerifyError, VerifyMode, check_transfer, check_written, compare_observation,
-    verify_content,
+    Mismatch, VerifyError, VerifyMode, check_reread, check_transfer, check_written,
+    compare_observation, verify_content,
 };
 use sync_versioning::VersioningError;
 
@@ -470,7 +470,8 @@ impl<'a> Run<'a> {
 
     /// Transfère dans un dépôt temporaire puis contrôle : taille et
     /// empreinte attendues, source inchangée après lecture, relecture du
-    /// dépôt (mode `content`).
+    /// dépôt (mode `content`) par l'accès du writer lorsque le connecteur le
+    /// permet, sinon en le rouvrant par son chemin.
     fn transfer(
         &mut self,
         op: &Operation,
@@ -534,7 +535,24 @@ impl<'a> Run<'a> {
                 other => other,
             });
         }
-        if self.req.options.verify == VerifyMode::Content
+        let mut staged = staged;
+        let reread = if self.req.options.verify == VerifyMode::Content {
+            match staged.reread(self.req.options.buffer_size) {
+                Ok(reread) => reread,
+                Err(error) => {
+                    self.abort(staged, op);
+                    return Err(self.storage(op, &error, PlanSide::Destination));
+                }
+            }
+        } else {
+            None
+        };
+        if let Some((bytes, hash)) = reread {
+            if let Err(mismatch) = check_reread(staged.hash(), staged.bytes(), &hash, bytes) {
+                self.abort(staged, op);
+                return Err(self.fail(op, &Fault::StagedContent(mismatch), None));
+            }
+        } else if self.req.options.verify == VerifyMode::Content
             && let Some(staging) = staged.staging_path().cloned()
             && let Err(error) = verify_content(
                 self.req.destination,

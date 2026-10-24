@@ -561,6 +561,11 @@ impl App {
         };
         let s = &job.snapshot;
         let detail = match job.kind {
+            JobKind::Preview if s.hash_target > 0 => format!(
+                "{} / {} empreintes",
+                model::count(s.entries_hashed),
+                model::count(s.hash_target)
+            ),
             JobKind::Preview => format!("{} entrées analysées", model::count(s.entries_scanned)),
             JobKind::Execute => format!(
                 "{} opérations · {}",
@@ -568,10 +573,14 @@ impl App {
                 model::bytes(s.bytes_done)
             ),
         };
-        let progress = job
-            .planned
-            .filter(|n| *n > 0)
-            .map(|n| (s.entries_done as f32 / n as f32).min(1.0));
+        let progress = match job.kind {
+            JobKind::Preview => (s.hash_target > 0)
+                .then(|| (s.entries_hashed as f32 / s.hash_target as f32).min(1.0)),
+            JobKind::Execute => job
+                .planned
+                .filter(|n| *n > 0)
+                .map(|n| (s.entries_done as f32 / n as f32).min(1.0)),
+        };
         container(
             row![
                 charts::ring(

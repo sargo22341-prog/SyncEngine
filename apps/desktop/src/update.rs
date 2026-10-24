@@ -6,6 +6,8 @@ use crate::backend::{self, Failure, Opened};
 use crate::draft::{ProfileDraft, ScheduleDraft};
 use crate::model::{self, Outcome};
 use crate::native;
+use crate::tray::TrayEvent;
+use crate::ui_prefs::CloseAction;
 use crate::wizard::Wizard;
 use iced::{Task, window};
 use std::time::Instant;
@@ -13,6 +15,15 @@ use sync_core::ProfileId;
 
 impl App {
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.dispatch(message);
+        let title = self.title();
+        if let Ok(tray) = &mut self.tray {
+            tray.set_tooltip(&title);
+        }
+        task
+    }
+
+    fn dispatch(&mut self, message: Message) -> Task<Message> {
         self.now = Instant::now();
         match message {
             Message::Booted(Ok(Opened(app, ws))) => {
@@ -63,26 +74,19 @@ impl App {
                 self.apply_theme();
                 Task::none()
             }
+            Message::WindowOpened(id) => {
+                self.window_id = Some(id);
+                Task::none()
+            }
             Message::CloseRequested(id) => {
-                if let Some(job) = &mut self.job {
-                    job.cancel_requested = true;
-                    self.close_after = Some(id);
-                    if let Some(app) = &self.backend
-                        && let Err(e) = app.cancel()
-                    {
-                        let f = Failure::from(e);
-                        self.fail(&f);
-                    }
-                    self.toast(
-                        ToastKind::Warning,
-                        "Fermeture après annulation",
-                        "La tâche en cours est annulée proprement ; la fenêtre se fermera dès que l’état est enregistré.",
-                    );
-                    Task::none()
-                } else {
-                    window::close(id)
+                self.window_id = Some(id);
+                match self.prefs.close {
+                    CloseAction::Minimize => window::minimize(id, true),
+                    CloseAction::Quit => self.quit(),
                 }
             }
+            Message::Tray(TrayEvent::Show) => self.show_window(),
+            Message::Tray(TrayEvent::Quit) | Message::Quit => self.quit(),
             Message::Nav(nav) => {
                 self.go(nav);
                 if nav == Nav::History {
@@ -639,6 +643,11 @@ impl App {
                 self.apply_theme();
                 Task::none()
             }
+            Message::CloseBehavior(action) => {
+                self.prefs.close = action;
+                self.save_prefs();
+                Task::none()
+            }
             Message::Compact(compact) => {
                 let Some(app) = &self.backend else {
                     return Task::none();
@@ -691,5 +700,43 @@ impl App {
             }
             Message::Noop => Task::none(),
         }
+    }
+}
+
+impl App {
+    /// Restores and focuses the main window (icon click, pending quit).
+    fn show_window(&self) -> Task<Message> {
+        match self.window_id {
+            Some(id) => Task::batch([window::minimize(id, false), window::gain_focus(id)]),
+            None => Task::none(),
+        }
+    }
+
+    /// Leaves the application. A running task is cancelled first and the
+    /// window closes only once its state is durable (see `Refreshed`).
+    fn quit(&mut self) -> Task<Message> {
+        let Some(id) = self.window_id else {
+            return iced::exit();
+        };
+        let Some(job) = &mut self.job else {
+            return window::close(id);
+        };
+        if self.close_after.is_some() {
+            return self.show_window();
+        }
+        job.cancel_requested = true;
+        self.close_after = Some(id);
+        if let Some(app) = &self.backend
+            && let Err(e) = app.cancel()
+        {
+            let f = Failure::from(e);
+            self.fail(&f);
+        }
+        self.toast(
+            ToastKind::Warning,
+            "Fermeture après annulation",
+            "La tâche en cours est annulée proprement ; SyncEngine se fermera dès que l’état est enregistré.",
+        );
+        self.show_window()
     }
 }

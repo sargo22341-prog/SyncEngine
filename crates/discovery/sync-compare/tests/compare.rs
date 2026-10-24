@@ -509,3 +509,102 @@ fn report_records_filter_and_connectors() {
     assert_eq!(report.left_connector().as_str(), "gauche");
     assert_eq!(report.right_connector().as_str(), "droite");
 }
+
+/// Fixture covering every case the lazy content comparison must settle.
+fn content_pair() -> (MemoryConnector, MemoryConnector) {
+    let left = MemoryConnector::new("l")
+        .file("same.txt", b"alpha", ts(100))
+        .file("touched.txt", b"bravo", ts(100))
+        .file("edited.txt", b"charlie", ts(100))
+        .file("kept-date.txt", b"delta", ts(100))
+        .file("grown.txt", b"echo", ts(100))
+        .file("left-only.txt", b"fox", ts(100))
+        .dir("dir");
+    let right = MemoryConnector::new("r")
+        .file("same.txt", b"alpha", ts(100))
+        // Same content, other date: content proves equivalence.
+        .file("touched.txt", b"bravo", ts(300))
+        // Same size, other content and date.
+        .file("edited.txt", b"CHARLIE", ts(300))
+        // Same size and date, other content: only content detects it.
+        .file("kept-date.txt", b"DELTA", ts(100))
+        // Different size: already a difference without reading.
+        .file("grown.txt", b"echo echo", ts(100))
+        .file("right-only.txt", b"golf", ts(100))
+        .dir("dir");
+    (left, right)
+}
+
+#[test]
+fn content_candidates_are_the_equal_size_files_on_both_sides() {
+    let (left, right) = content_pair();
+    let candidates = sync_compare::content_candidates(&inventory(&left), &inventory(&right));
+    assert_eq!(
+        candidates,
+        vec![
+            path("edited.txt"),
+            path("kept-date.txt"),
+            path("same.txt"),
+            path("touched.txt")
+        ]
+    );
+    // Unknown size on one side still needs the content to decide.
+    let a = inventory(&MemoryConnector::new("a").file_with_metadata(
+        "f",
+        b"x",
+        FileMetadata::unknown(),
+    ));
+    let b = inventory(&MemoryConnector::new("b").file("f", b"x", ts(1)));
+    assert_eq!(sync_compare::content_candidates(&a, &b), vec![path("f")]);
+}
+
+#[test]
+fn lazy_content_hashing_reaches_the_full_hashing_verdicts() {
+    let (left, right) = content_pair();
+    let hashed = ScanOptions::new().with_hash(HashAlgorithm::Blake3);
+    let full = compare(
+        &inventory_with(&left, &Filter::include_all(), &hashed),
+        &inventory_with(&right, &Filter::include_all(), &hashed),
+        &CompareOptions::new(),
+    )
+    .unwrap();
+    let (a, b) = (inventory(&left), inventory(&right));
+    let candidates = sync_compare::content_candidates(&a, &b);
+    let token = CancellationToken::new();
+    let a =
+        sync_scanner::hash_selected(&left, a, &candidates, &hashed, &token, &|_, _| {}).unwrap();
+    let b =
+        sync_scanner::hash_selected(&right, b, &candidates, &hashed, &token, &|_, _| {}).unwrap();
+    let lazy = compare(&a, &b, &CompareOptions::new()).unwrap();
+    let verdicts = |report: &sync_compare::ComparisonReport| {
+        report
+            .rows()
+            .iter()
+            .map(|row| (row.path().as_str().to_owned(), row.outcome().category()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(verdicts(&lazy), verdicts(&full));
+    assert_eq!(
+        outcome_of(&lazy, "touched.txt"),
+        ComparisonOutcome::Equivalent(EquivalenceBasis::ContentHash)
+    );
+    assert_eq!(
+        outcome_of(&lazy, "kept-date.txt").category(),
+        OutcomeCategory::Different
+    );
+    assert_eq!(
+        outcome_of(&lazy, "grown.txt"),
+        ComparisonOutcome::Different(vec![Difference::Size { left: 4, right: 9 }])
+    );
+    // Size and date alone miss the edit that keeps both.
+    let metadata = compare(
+        &inventory(&left),
+        &inventory(&right),
+        &CompareOptions::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        outcome_of(&metadata, "kept-date.txt"),
+        ComparisonOutcome::Equivalent(EquivalenceBasis::SizeAndModified)
+    );
+}

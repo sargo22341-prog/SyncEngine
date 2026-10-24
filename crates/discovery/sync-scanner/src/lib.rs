@@ -36,4 +36,6 @@ pub use inventory::{
     DirectoryState, IncompleteReason, Inventory, Presence, ScanIssue, ScanIssueKind, ScanStats,
     UnknownReason,
 };
-pub use scan::{ScanError, ScanOptions, scan, scan_observed};
+pub use scan::{
+    RECOMMENDED_HASH_WORKERS, ScanError, ScanOptions, hash_selected, scan, scan_observed,
+};

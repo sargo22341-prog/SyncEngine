@@ -90,6 +90,24 @@ pub trait ContentWriter: Send {
         Ok(())
     }
 
+    /// Relit depuis le début, après [`finish`](Self::finish), le contenu
+    /// déposé, par l'accès que ce writer détient déjà (sans rouvrir le dépôt
+    /// par son chemin), en passant chaque bloc lu à `sink`. Sert à la
+    /// vérification avant publication ; la cible reste intacte.
+    ///
+    /// `Ok(false)` : relecture directe non prise en charge (défaut) ; l'appelant
+    /// relit alors [`staging_path`](Self::staging_path) par `open_read`.
+    ///
+    /// # Errors
+    /// Lecture impossible ou annulation ; seul `abort` suit une erreur.
+    fn read_back(
+        &mut self,
+        _buffer: &mut [u8],
+        _sink: &mut dyn FnMut(&[u8]),
+    ) -> Result<bool, StorageError> {
+        Ok(false)
+    }
+
     /// Rend le contenu durable, puis le publie à la cible selon `mode`.
     ///
     /// En cas d'échec, le dépôt temporaire est retiré au mieux et la cible

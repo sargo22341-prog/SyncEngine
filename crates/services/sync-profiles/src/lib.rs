@@ -1,5 +1,5 @@
 //! Local and optional remote profile configuration, separate from observed synchronization state.
-//! SQLite migrations v0→v1→v2 is transactional; unknown/corrupt stores are refused.
+//! SQLite migrations v0→v1→v2→v3 are transactional; unknown/corrupt stores are refused.
 //! No secrets or scheduling configuration are stored here. All I/O is blocking.
 
 mod endpoints;
@@ -12,6 +12,31 @@ use sync_core::ProfileId;
 use sync_filter::{Filter, FilterRules};
 use sync_plan::SyncMode;
 use thiserror::Error;
+
+/// How a one-way preview establishes that two files present on both sides
+/// are identical. Never changes deletion safeguards nor execution checks
+/// (size and date preconditions, verified copy, versions).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompareMethod {
+    /// BLAKE3 content of the files whose sizes are equal on both sides
+    /// (different sizes already prove a difference). Rereads all common
+    /// content: slow on large trees, detects a change that keeps size and
+    /// date. Required by bidirectional profiles. Default of profiles saved
+    /// before this setting existed.
+    #[default]
+    Content,
+    /// Size and modification date at the coarser declared precision, like
+    /// FreeFileSync's default: only the directory listings are read. A
+    /// modification keeping both size and date is not detected.
+    SizeAndDate,
+}
+
+impl CompareMethod {
+    fn is_content(&self) -> bool {
+        *self == Self::Content
+    }
+}
 
 /// Editable configuration. Validation is repeated before every save and use.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +65,10 @@ pub struct Profile {
     pub filter: FilterRules,
     /// Explicit destructive policy; safeguards remain enabled.
     pub allow_delete: bool,
+    /// File identity rule of one-way previews. Omitted from the stored JSON
+    /// when `Content`, so such rows stay byte-for-byte those of version 2.
+    #[serde(default, skip_serializing_if = "CompareMethod::is_content")]
+    pub compare: CompareMethod,
 }
 
 impl Profile {
@@ -74,6 +103,11 @@ impl Profile {
         {
             return Err(ProfileError::Invalid(
                 "OneDrive source seule ; bidirectionnel distant non qualifi?",
+            ));
+        }
+        if self.mode == SyncMode::Bidirectional && self.compare != CompareMethod::Content {
+            return Err(ProfileError::Invalid(
+                "le bidirectionnel exige la comparaison par contenu",
             ));
         }
         match self.mode {
@@ -113,7 +147,7 @@ pub enum ProfileError {
 /// Versioned store. The caller places it outside synchronized trees.
 pub struct Profiles(Connection);
 impl Profiles {
-    /// Opens an identified store, migrating empty v0 or additive v1 to v2.
+    /// Opens an identified store, migrating empty v0 or additive v1/v2 to v3.
     /// # Errors
     /// Unreadable, corrupt, foreign or future database; migration failure.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ProfileError> {
@@ -136,12 +170,13 @@ impl Profiles {
                 return Err(ProfileError::Invalid("base étrangère"));
             }
             tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
-        } else if !matches!(version, 1 | 2) || app != 1_398_361_680 {
+        } else if !matches!(version, 1..=3) || app != 1_398_361_680 {
             return Err(ProfileError::Invalid("version ou application inconnue"));
         }
         // Additive JSON fields: legacy configurations remain byte-for-byte intact.
-        // Version 2 prevents old applications silently opening new remote profiles.
-        tx.execute_batch("PRAGMA user_version=2;")?;
+        // Version 2 prevents old applications silently opening new remote
+        // profiles, version 3 profiles compared by size and date (`compare`).
+        tx.execute_batch("PRAGMA user_version=3;")?;
         tx.commit()?;
         connection.execute_batch("PRAGMA synchronous=FULL;")?;
         Ok(Self(connection))

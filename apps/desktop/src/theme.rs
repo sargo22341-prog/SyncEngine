@@ -1,4 +1,4 @@
-//! Visual system: two hand-tuned palettes (dark « Discord-like », light
+//! Visual system: two hand-tuned palettes (dark « Frames X-like », light
 //! « classic Google-like ») blended continuously so that switching theme is an
 //! animated cross-fade. Every style function captures a `Palette` by value.
 
@@ -38,24 +38,24 @@ pub(crate) struct Palette {
 
 impl Palette {
     pub(crate) const DARK: Self = Self {
-        rail: color!(0x1e1f22),
-        sidebar: color!(0x2b2d31),
-        bg: color!(0x313338),
-        surface: color!(0x2b2d31),
-        surface_hi: color!(0x383a40),
-        border: color!(0x3f4147),
-        text: color!(0xdbdee1),
-        muted: color!(0x949ba4),
-        faint: color!(0x6d6f78),
-        accent: color!(0x5865f2),
-        accent_hi: color!(0x4752c4),
+        rail: color!(0x111111),
+        sidebar: color!(0x171717),
+        bg: color!(0x1a1a1a),
+        surface: color!(0x1f1f1f),
+        surface_hi: color!(0x2a2a2a),
+        border: color!(0x2e2e2e),
+        text: color!(0xf2f2f2),
+        muted: color!(0xa3a3a3),
+        faint: color!(0x6b6b6b),
+        accent: color!(0x2f7cf6),
+        accent_hi: color!(0x1f66d9),
         on_accent: color!(0xffffff),
-        success: color!(0x23a55a),
-        warning: color!(0xf0b232),
-        danger: color!(0xf23f43),
-        info: color!(0x00a8fc),
-        shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
-        scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.6),
+        success: color!(0x34c759),
+        warning: color!(0xf5a524),
+        danger: color!(0xef4444),
+        info: color!(0x4c9bff),
+        shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+        scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.65),
     };
 
     pub(crate) const LIGHT: Self = Self {

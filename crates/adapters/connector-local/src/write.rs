@@ -9,7 +9,7 @@ use connector_api::{
     CommitMode, ContentWriter, StorageError, StorageErrorKind, StorageOperation, WriteOptions,
 };
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use sync_core::{CancellationToken, EntryKind, FileEntry, ResourcePath, TimestampPrecision};
 pub(crate) const STAGING_PREFIX: &str = ".syncengine-";
@@ -148,7 +148,8 @@ impl LocalWriter {
                 )
             })?;
         let mut open = OpenOptions::new();
-        open.write(true).create_new(true);
+        // Readable too: verification rereads through this same handle.
+        open.read(true).write(true).create_new(true);
         let file = parent
             .open_with(&staging_name, &open)
             .map_err(|e| io_error(e, op, path))?
@@ -279,6 +280,35 @@ impl ContentWriter for LocalWriter {
     }
     fn staging_path(&self) -> Option<&ResourcePath> {
         Some(&self.staging)
+    }
+    fn read_back(
+        &mut self,
+        buffer: &mut [u8],
+        sink: &mut dyn FnMut(&[u8]),
+    ) -> Result<bool, StorageError> {
+        let op = StorageOperation::Read;
+        let file = self.file.as_mut().ok_or_else(|| {
+            local_error(
+                StorageErrorKind::Permanent,
+                op,
+                &self.staging,
+                "writer closed",
+            )
+        })?;
+        file.flush()
+            .and_then(|()| file.rewind())
+            .map_err(|e| io_error(e, op, &self.staging))?;
+        loop {
+            if self.cancel.is_cancelled() {
+                return Err(cancelled(op, &self.staging));
+            }
+            match file.read(buffer) {
+                Ok(0) => return Ok(true),
+                Ok(read) => sink(buffer.get(..read).unwrap_or_default()),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(io_error(e, op, &self.staging)),
+            }
+        }
     }
     fn commit(mut self: Box<Self>, mode: CommitMode) -> Result<FileEntry, StorageError> {
         let result = self.publish(mode);

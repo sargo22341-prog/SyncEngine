@@ -2,6 +2,9 @@
 
 use std::error::Error;
 use std::fmt;
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 
 use connector_api::{StorageConnector, StorageError, StorageErrorKind, StorageFeature};
 use sync_core::{
@@ -15,11 +18,22 @@ use crate::inventory::{DirectoryState, IncompleteReason, Inventory, ScanIssue, S
 /// Taille des blocs lus pour le calcul d'empreinte.
 const HASH_CHUNK: usize = 64 * 1024;
 
+/// Lectures d'empreinte simultanées recommandées pour un scan local
+/// interactif : sur 9 220 petits fichiers jamais lus (Windows 11, SSD NVMe,
+/// antivirus actif), 46 s avec 1 lecture, 15 s avec 4, 11 s avec 8. Quatre
+/// garde un nombre de fichiers ouverts modeste et limite la dispersion des
+/// lectures sur disque mécanique. Valeur par défaut de [`ScanOptions`] : 1.
+pub const RECOMMENDED_HASH_WORKERS: NonZeroUsize = match NonZeroUsize::new(4) {
+    Some(workers) => workers,
+    None => NonZeroUsize::MIN,
+};
+
 /// Options d'un scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanOptions {
     hash: Option<HashAlgorithm>,
     entry_limit: usize,
+    hash_workers: NonZeroUsize,
 }
 
 impl Default for ScanOptions {
@@ -27,6 +41,7 @@ impl Default for ScanOptions {
         Self {
             hash: None,
             entry_limit: 2_000_000,
+            hash_workers: NonZeroUsize::MIN,
         }
     }
 }
@@ -60,6 +75,24 @@ impl ScanOptions {
     #[must_use]
     pub fn hash(&self) -> Option<HashAlgorithm> {
         self.hash
+    }
+
+    /// Nombre de fichiers lus simultanément pour les empreintes (défaut : 1).
+    ///
+    /// Au-delà de 1, autant de fichiers sont ouverts en même temps sur ce
+    /// connecteur : utile sur SSD ou stockage à forte latence par fichier,
+    /// contre-productif sur un disque mécanique (lectures dispersées).
+    /// Le résultat (empreintes, anomalies et leur ordre) est identique.
+    #[must_use]
+    pub fn with_hash_workers(mut self, workers: NonZeroUsize) -> Self {
+        self.hash_workers = workers;
+        self
+    }
+
+    /// Lectures d'empreinte simultanées.
+    #[must_use]
+    pub fn hash_workers(&self) -> NonZeroUsize {
+        self.hash_workers
     }
 }
 
@@ -164,12 +197,7 @@ pub fn scan_observed(
 ) -> Result<Inventory, ScanError> {
     let capabilities = connector.capabilities();
     if let Some(algorithm) = options.hash {
-        let native = capabilities.native_hashes.contains(&algorithm);
-        let computable =
-            algorithm == HashAlgorithm::Blake3 && capabilities.supports(StorageFeature::Read);
-        if !native && !computable {
-            return Err(ScanError::HashingNotSupported { algorithm });
-        }
+        ensure_hashable(connector, algorithm)?;
     }
     let mut inventory = Inventory::new(
         connector.connector_id().clone(),
@@ -216,13 +244,107 @@ pub fn scan_observed(
         observe(&inventory.stats, inventory.issues.len());
     }
 
-    if let Some(algorithm) = options.hash
-        && hash_files(connector, &mut inventory, algorithm, cancel, observe) == HashPass::Cancelled
-    {
-        return Err(cancelled(inventory, &[]));
+    if let Some(algorithm) = options.hash {
+        let targets = missing_hashes(&inventory, algorithm, |_| true);
+        let pass = hash_files(
+            connector,
+            &mut inventory,
+            algorithm,
+            targets,
+            options.hash_workers,
+            cancel,
+            observe,
+        );
+        if pass == HashPass::Cancelled {
+            return Err(cancelled(inventory, &[]));
+        }
     }
     observe(&inventory.stats, inventory.issues.len());
     Ok(inventory)
+}
+
+/// Complète les empreintes de **certains** fichiers d'un inventaire déjà
+/// produit par [`scan`] (comparaison de contenu paresseuse : seuls les
+/// fichiers dont le contenu doit être départagé sont relus).
+///
+/// L'algorithme et le parallélisme sont ceux de `options`
+/// ([`ScanOptions::with_hash`], [`ScanOptions::with_hash_workers`]).
+/// Les chemins absents de l'inventaire, qui ne sont pas des fichiers
+/// ordinaires ou déjà munis d'une empreinte de cet algorithme sont ignorés.
+/// Mêmes règles que le scan : un fichier modifié pendant sa lecture ou
+/// illisible reste **sans** empreinte, avec une anomalie
+/// ([`ScanIssueKind::ChangedDuringHash`], [`ScanIssueKind::HashFailed`]).
+/// [`Inventory::hash_algorithm`] reste inchangé : l'empreinte n'est pas
+/// garantie pour tous les fichiers.
+///
+/// # Errors
+/// [`ScanError::HashingNotSupported`] si `options` ne demande aucune
+/// empreinte ou si celle-ci est impossible pour ce connecteur ;
+/// [`ScanError::Cancelled`] avec l'inventaire (empreintes déjà vérifiées
+/// conservées).
+pub fn hash_selected(
+    connector: &dyn StorageConnector,
+    mut inventory: Inventory,
+    paths: &[ResourcePath],
+    options: &ScanOptions,
+    cancel: &CancellationToken,
+    observe: &dyn Fn(&crate::ScanStats, usize),
+) -> Result<Inventory, ScanError> {
+    let algorithm = options.hash.ok_or(ScanError::HashingNotSupported {
+        algorithm: HashAlgorithm::Blake3,
+    })?;
+    ensure_hashable(connector, algorithm)?;
+    let wanted: std::collections::BTreeSet<&ResourcePath> = paths.iter().collect();
+    let targets = missing_hashes(&inventory, algorithm, |path| wanted.contains(path));
+    let pass = hash_files(
+        connector,
+        &mut inventory,
+        algorithm,
+        targets,
+        options.hash_workers,
+        cancel,
+        observe,
+    );
+    if pass == HashPass::Cancelled {
+        return Err(ScanError::Cancelled {
+            partial: Box::new(inventory),
+        });
+    }
+    observe(&inventory.stats, inventory.issues.len());
+    Ok(inventory)
+}
+
+fn ensure_hashable(
+    connector: &dyn StorageConnector,
+    algorithm: HashAlgorithm,
+) -> Result<(), ScanError> {
+    let capabilities = connector.capabilities();
+    let native = capabilities.native_hashes.contains(&algorithm);
+    let computable =
+        algorithm == HashAlgorithm::Blake3 && capabilities.supports(StorageFeature::Read);
+    if native || computable {
+        Ok(())
+    } else {
+        Err(ScanError::HashingNotSupported { algorithm })
+    }
+}
+
+/// Fichiers inclus sans empreinte `algorithm`, triés par chemin.
+fn missing_hashes(
+    inventory: &Inventory,
+    algorithm: HashAlgorithm,
+    keep: impl Fn(&ResourcePath) -> bool,
+) -> Vec<FileEntry> {
+    inventory
+        .entries
+        .values()
+        .filter(|entry| {
+            entry.kind() == EntryKind::File
+                && entry.metadata().hash().map(ContentHash::algorithm) != Some(algorithm)
+                && keep(entry.path())
+        })
+        .cloned()
+        .collect()
 }
 
 /// Marque les répertoires restants comme non parcourus et emballe l'inventaire.
@@ -367,76 +489,138 @@ enum HashPass {
     Cancelled,
 }
 
-/// Calcule les empreintes manquantes.
+/// Issue du calcul d'une empreinte.
+enum Hashed {
+    Ok(ContentHash),
+    Issue(ScanIssueKind),
+    Cancelled,
+}
+
+/// Calcule les empreintes manquantes de `targets` (triés), avec au plus
+/// `workers` lectures simultanées. Les résultats sont appliqués dans l'ordre
+/// des chemins, quel que soit l'ordre d'achèvement : inventaire et anomalies
+/// sont identiques en séquentiel et en parallèle.
 fn hash_files(
     connector: &dyn StorageConnector,
     inventory: &mut Inventory,
     algorithm: HashAlgorithm,
+    targets: Vec<FileEntry>,
+    workers: NonZeroUsize,
     cancel: &CancellationToken,
     observe: &dyn Fn(&crate::ScanStats, usize),
 ) -> HashPass {
-    let targets: Vec<ResourcePath> = inventory
-        .entries
-        .values()
-        .filter(|entry| {
-            entry.kind() == EntryKind::File
-                && entry.metadata().hash().map(ContentHash::algorithm) != Some(algorithm)
-        })
-        .map(|entry| entry.path().clone())
-        .collect();
     let can_compute = algorithm == HashAlgorithm::Blake3
         && connector.capabilities().supports(StorageFeature::Read);
-    let can_restat = connector.capabilities().supports(StorageFeature::Stat);
-    let mut buffer = vec![0u8; HASH_CHUNK];
-
-    for path in targets {
-        if cancel.is_cancelled() {
-            return HashPass::Cancelled;
-        }
-        if !can_compute {
+    if !can_compute {
+        for entry in targets {
             inventory.issues.push(ScanIssue::new(
-                path,
+                entry.path().clone(),
                 ScanIssueKind::HashFailed(StorageErrorKind::NotSupported),
             ));
-            continue;
         }
-        let Some(before) = inventory.entries.get(&path).cloned() else {
-            continue;
-        };
-        let outcome = blake3_of(connector, &path, &mut buffer, cancel);
-        let hash = match outcome {
-            Ok((hash, read)) => {
-                let size_matches = before.metadata().size().is_none_or(|size| size == read);
-                let unchanged =
-                    size_matches && (!can_restat || unchanged_since(connector, &before, cancel));
-                if unchanged {
-                    hash
-                } else {
-                    inventory
-                        .issues
-                        .push(ScanIssue::new(path, ScanIssueKind::ChangedDuringHash));
-                    continue;
+        return HashPass::Completed;
+    }
+    let can_restat = connector.capabilities().supports(StorageFeature::Stat);
+    let workers = workers.get().min(targets.len()).max(1);
+    let mut results: Vec<Option<Hashed>> = Vec::with_capacity(targets.len());
+    results.resize_with(targets.len(), || None);
+    let issues = inventory.issues.len();
+    let stats = &mut inventory.stats;
+    let mut record = |slot: &mut Option<Hashed>, outcome: Hashed| {
+        if matches!(outcome, Hashed::Ok(_)) {
+            stats.hashed += 1;
+            observe(stats, issues);
+        }
+        *slot = Some(outcome);
+    };
+    if workers == 1 {
+        let mut buffer = vec![0u8; HASH_CHUNK];
+        for (slot, entry) in results.iter_mut().zip(&targets) {
+            if cancel.is_cancelled() {
+                break;
+            }
+            let outcome = hash_one(connector, entry, can_restat, &mut buffer, cancel);
+            let stop = matches!(outcome, Hashed::Cancelled);
+            record(slot, outcome);
+            if stop {
+                break;
+            }
+        }
+    } else {
+        let next = AtomicUsize::new(0);
+        // Bounded hand-off: workers block instead of queueing results.
+        let (sender, receiver) = mpsc::sync_channel::<(usize, Hashed)>(workers * 4);
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let sender = sender.clone();
+                let (next, targets) = (&next, &targets);
+                scope.spawn(move || {
+                    let mut buffer = vec![0u8; HASH_CHUNK];
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(entry) = targets.get(index) else {
+                            break;
+                        };
+                        if cancel.is_cancelled() {
+                            break;
+                        }
+                        let outcome = hash_one(connector, entry, can_restat, &mut buffer, cancel);
+                        if sender.send((index, outcome)).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(sender);
+            for (index, outcome) in receiver {
+                if let Some(slot) = results.get_mut(index) {
+                    record(slot, outcome);
                 }
             }
-            Err(error) if error.kind() == StorageErrorKind::Cancelled => {
-                return HashPass::Cancelled;
-            }
-            Err(error) => {
-                inventory.issues.push(ScanIssue::new(
-                    path,
-                    ScanIssueKind::HashFailed(error.kind()),
-                ));
-                continue;
-            }
-        };
-        let metadata = before.metadata().clone().with_hash(hash);
-        if let Some(entry) = inventory.entries.get_mut(&path) {
-            *entry = before.with_metadata(metadata);
-            inventory.stats.hashed += 1;
-        }
-        observe(&inventory.stats, inventory.issues.len());
+        });
     }
-    HashPass::Completed
+    let mut pass = HashPass::Completed;
+    for (entry, outcome) in targets.into_iter().zip(results) {
+        match outcome {
+            Some(Hashed::Ok(hash)) => {
+                let path = entry.path().clone();
+                let metadata = entry.metadata().clone().with_hash(hash);
+                inventory
+                    .entries
+                    .insert(path, entry.with_metadata(metadata));
+            }
+            Some(Hashed::Issue(kind)) => inventory
+                .issues
+                .push(ScanIssue::new(entry.path().clone(), kind)),
+            Some(Hashed::Cancelled) | None => pass = HashPass::Cancelled,
+        }
+    }
+    if cancel.is_cancelled() {
+        pass = HashPass::Cancelled;
+    }
+    pass
+}
+
+/// Empreinte d'un fichier, écartée s'il a changé pendant sa lecture.
+fn hash_one(
+    connector: &dyn StorageConnector,
+    before: &FileEntry,
+    can_restat: bool,
+    buffer: &mut [u8],
+    cancel: &CancellationToken,
+) -> Hashed {
+    match blake3_of(connector, before.path(), buffer, cancel) {
+        Ok((hash, read)) => {
+            let size_matches = before.metadata().size().is_none_or(|size| size == read);
+            if size_matches && (!can_restat || unchanged_since(connector, before, cancel)) {
+                Hashed::Ok(hash)
+            } else {
+                Hashed::Issue(ScanIssueKind::ChangedDuringHash)
+            }
+        }
+        Err(error) if error.kind() == StorageErrorKind::Cancelled => Hashed::Cancelled,
+        Err(error) => Hashed::Issue(ScanIssueKind::HashFailed(error.kind())),
+    }
 }
 
 /// Lit tout le contenu en flux et renvoie l'empreinte BLAKE3 et le nombre

@@ -15,6 +15,7 @@ fn schedule(temp: &tempfile::TempDir) -> Result<Schedule, Box<dyn std::error::Er
         remote_source: None,
         remote_destination: None,
         allow_delete: false,
+        compare: sync_profiles::CompareMethod::Content,
     };
     Ok(Schedule {
         approved: profile,

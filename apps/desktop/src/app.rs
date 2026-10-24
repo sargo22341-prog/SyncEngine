@@ -5,11 +5,13 @@ use crate::anim::{Ease, Tween};
 use crate::backend::{
     self, Executed, Failure, HistoryPage, Opened, PlanPage, Saved, ScheduleView, Shared, Workspace,
 };
+use crate::charts;
 use crate::draft::ScheduleDraft;
 use crate::model::{self, PreviewView};
 use crate::native;
 use crate::theme::Palette;
-use crate::ui_prefs::{ThemeChoice, UiPrefs};
+use crate::tray::{self, Tray, TrayEvent};
+use crate::ui_prefs::{CloseAction, ThemeChoice, UiPrefs};
 use crate::wizard::{Wizard, WizardMsg};
 use iced::keyboard::{self, Key, Modifiers};
 use iced::{Point, Size, Subscription, Task, event, mouse, time, window};
@@ -173,7 +175,11 @@ pub(crate) enum Message {
     Key(Key, Option<usize>, Modifiers, bool),
     Resized(Size),
     SystemTheme(iced::theme::Mode),
+    WindowOpened(window::Id),
     CloseRequested(window::Id),
+    Tray(TrayEvent),
+    /// Explicit exit (icon menu, settings, Ctrl+Q), whatever the close setting.
+    Quit,
     Nav(Nav),
     Select(Option<ProfileId>),
     Search(String),
@@ -236,6 +242,7 @@ pub(crate) enum Message {
     // Settings.
     Theme(ThemeChoice),
     Compact(bool),
+    CloseBehavior(CloseAction),
     PreferencesSaved(Result<(), Failure>),
     StartupLoaded(Result<bool, Failure>),
     Startup(bool),
@@ -287,6 +294,10 @@ pub(crate) struct App {
     pub(crate) next_toast: u64,
     pub(crate) startup: Option<bool>,
     pub(crate) close_after: Option<window::Id>,
+    /// Main window, known once opened (minimize/restore/close target).
+    pub(crate) window_id: Option<window::Id>,
+    /// Notification-area icon, or why none could be created.
+    pub(crate) tray: Result<Tray, String>,
     pub(crate) busy_refresh: bool,
 }
 
@@ -338,6 +349,8 @@ impl App {
             next_toast: 0,
             startup: None,
             close_after: None,
+            window_id: None,
+            tray: Tray::create(charts::icon_rgba(), charts::ICON_SIZE),
             busy_refresh: false,
         };
         let light = app.wants_light();
@@ -577,7 +590,9 @@ impl App {
         });
         let mut subs = vec![
             input,
+            window::open_events().map(Message::WindowOpened),
             window::close_requests().map(Message::CloseRequested),
+            tray::events().map(Message::Tray),
             iced::system::theme_changes().map(Message::SystemTheme),
         ];
         if self.animating() {

@@ -608,6 +608,7 @@ fn shortcuts<'a>(p: &Palette) -> El<'a, Message> {
         ("Ctrl+1…5", "Changer de section"),
         ("Ctrl+T", "Basculer le thème"),
         ("Ctrl+R", "Actualiser"),
+        ("Ctrl+Q", "Quitter SyncEngine"),
         ("Échap", "Fermer menu, dialogue ou assistant"),
         ("F1", "Afficher cette aide"),
         ("Clic droit", "Actions contextuelles"),

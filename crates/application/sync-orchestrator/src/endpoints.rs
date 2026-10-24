@@ -74,6 +74,23 @@ impl sync_credentials::AccessTokenProvider for Tokens {
         sync_credentials::AccessToken::new(value)
     }
 }
+/// Read-only connector for a preview scan. A local endpoint reuses the
+/// directory handles it has already reached (one open per directory instead
+/// of one walk from the root per entry); execution builds fresh connectors
+/// with [`build`], which re-walk every path before each precondition.
+pub(super) fn build_for_scan(
+    local: &Path,
+    remote: Option<&RemoteEndpoint>,
+    cancel: &CancellationToken,
+) -> Result<Arc<dyn StorageConnector>, AppError> {
+    match remote {
+        None => Ok(Arc::new(
+            LocalConnector::new(local, LocalOptions::new().with_handle_reuse()).map_err(io)?,
+        )),
+        Some(_) => build(local, remote, false, cancel),
+    }
+}
+
 pub(super) fn build(
     local: &Path,
     remote: Option<&RemoteEndpoint>,

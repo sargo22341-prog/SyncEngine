@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use sync_core::ProfileId;
 use sync_filter::FilterRules;
 use sync_plan::SyncMode;
-use sync_profiles::{Profile, RemoteEndpoint};
+use sync_profiles::{CompareMethod, Profile, RemoteEndpoint};
 use sync_scheduler::{MissedJobs, Schedule, Trigger};
 
 /// Endpoint natures, in display order.
@@ -774,6 +774,8 @@ pub(crate) struct ProfileDraft {
     pub(crate) destination: EndpointDraft,
     pub(crate) filters: FilterDraft,
     pub(crate) allow_delete: bool,
+    /// One-way identity rule; bidirectional profiles always use content.
+    pub(crate) compare: CompareMethod,
     pub(crate) schedule: ScheduleDraft,
     pub(crate) had_schedule: bool,
 }
@@ -789,6 +791,8 @@ impl ProfileDraft {
             destination: EndpointDraft::local(),
             filters: FilterDraft::default(),
             allow_delete: false,
+            // New profiles: listings only, like FreeFileSync's default.
+            compare: CompareMethod::SizeAndDate,
             schedule: ScheduleDraft::default(),
             had_schedule: false,
         }
@@ -807,6 +811,7 @@ impl ProfileDraft {
             ),
             filters: FilterDraft::from_rules(&profile.filter),
             allow_delete: profile.allow_delete,
+            compare: profile.compare,
             schedule: ScheduleDraft::from_state(schedule),
             had_schedule: schedule.is_some(),
         }
@@ -826,6 +831,15 @@ impl ProfileDraft {
             (false, false) => format!("{a} vers {b}"),
             (false, true) => a,
             _ => "Nouveau profil".into(),
+        }
+    }
+
+    /// Bidirectional reference states need every content hash.
+    pub(crate) fn effective_compare(&self) -> CompareMethod {
+        if self.mode == Some(SyncMode::Bidirectional) {
+            CompareMethod::Content
+        } else {
+            self.compare
         }
     }
 
@@ -862,6 +876,7 @@ impl ProfileDraft {
             remote_destination,
             filter: self.filters.rules(),
             allow_delete: self.allow_delete && self.deletions_possible(),
+            compare: self.effective_compare(),
         };
         profile.validate().map_err(|e| match e {
             sync_profiles::ProfileError::Invalid(m) => describe(m),

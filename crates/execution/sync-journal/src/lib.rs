@@ -17,10 +17,17 @@
 //!
 //! # Durabilité
 //! [`FileJournal`] crée un fichier **nouveau** (jamais d'écrasement d'un
-//! journal existant) et force chaque enregistrement sur disque
-//! (`sync_data`) avant de rendre la main. Le coût est d'un `fsync` par
-//! enregistrement (quelques-uns par opération, jamais par octet) ; il n'a
-//! pas été mesuré sur de très grands plans.
+//! journal existant) et force sur disque (`sync_data`), avant de rendre la
+//! main, tout enregistrement qui **précède** une mutation ou clôt
+//! l'exécution. Une issue d'opération (`operation_finished`) est écrite
+//! sans attente : le `fsync` de l'enregistrement suivant (début de
+//! l'opération suivante, fin d'exécution) la rend durable avec elle, le
+//! fichier étant écrit séquentiellement. Un arrêt brutal entre-temps laisse
+//! l'opération « commencée sans issue », exactement comme un arrêt survenu
+//! juste avant l'écriture de cette issue : [`Replay::recovery`] la signale
+//! en cours (diagnostic explicite, dépôt temporaire éventuel à retirer),
+//! jamais comme réussie. Une copie coûte ainsi deux `fsync` de journal au
+//! lieu de trois.
 //!
 //! Les journaux ne sont pas une source de vérité sur l'état des données :
 //! ils disent ce que l'exécuteur a fait ou tenté, l'état réel se constate
@@ -307,12 +314,21 @@ impl FileJournal {
 
 impl JournalSink for FileJournal {
     fn append(&mut self, record: JournalRecord) -> Result<(), JournalError> {
+        // Write-ahead records must be durable before the caller mutates
+        // anything; an outcome rides on the next durable record (see module).
+        let durable = !matches!(record, JournalRecord::OperationFinished { .. });
         let entry = line(self.next_sequence, record);
         let mut text = serde_json::to_string(&entry).map_err(JournalError::Serialize)?;
         text.push('\n');
         self.file
             .write_all(text.as_bytes())
-            .and_then(|()| self.file.sync_data())
+            .and_then(|()| {
+                if durable {
+                    self.file.sync_data()
+                } else {
+                    Ok(())
+                }
+            })
             .map_err(JournalError::Io)?;
         self.next_sequence += 1;
         Ok(())
