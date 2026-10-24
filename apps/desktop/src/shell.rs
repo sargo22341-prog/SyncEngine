@@ -44,9 +44,16 @@ pub(crate) fn outcome_color(p: &Palette, o: Outcome) -> Color {
 impl App {
     pub(crate) fn view(&self) -> El<'_, Message> {
         let p = self.palette();
-        let Some(_) = &self.backend else {
-            return self.splash(&p);
+        let body = match &self.backend {
+            Some(_) => self.workspace(&p),
+            None => self.splash(&p),
         };
+        self.framed(&p, body)
+    }
+
+    /// Everything below the title bar once the local state is open.
+    fn workspace(&self, p: &Palette) -> El<'_, Message> {
+        let p = *p;
         let compact = self.ws.preferences.compact;
         let content = self.content(&p);
         let mut base = row![self.rail(&p)];
@@ -549,26 +556,21 @@ impl App {
                 model::count(s.hash_target)
             ),
             JobKind::Preview => format!("{} entrées analysées", model::count(s.entries_scanned)),
-            // Block-level bytes, as the main progress card.
-            JobKind::Execute => format!(
-                "{} opérations · {} copiés",
-                model::count(s.entries_done),
-                model::bytes(s.bytes_transferred)
-            ),
+            // Same weighted ratio as the main progress card.
+            JobKind::Execute => match job.progress() {
+                Some(f) => format!(
+                    "{} · {} copiés",
+                    model::percent(f),
+                    model::bytes(s.bytes_transferred)
+                ),
+                None => format!(
+                    "{} opérations · {} copiés",
+                    model::count(s.entries_done),
+                    model::bytes(s.bytes_transferred)
+                ),
+            },
         };
-        let progress = match job.kind {
-            JobKind::Preview => (s.hash_target > 0)
-                .then(|| (s.entries_hashed as f32 / s.hash_target as f32).min(1.0)),
-            JobKind::Execute => job
-                .planned_bytes
-                .filter(|b| *b > 0)
-                .map(|b| (s.bytes_transferred as f32 / b as f32).min(1.0))
-                .or_else(|| {
-                    job.planned
-                        .filter(|n| *n > 0)
-                        .map(|n| (s.entries_done as f32 / n as f32).min(1.0))
-                }),
-        };
+        let progress = job.progress();
         container(
             row![
                 charts::ring(

@@ -486,6 +486,25 @@ pub(crate) fn bytes(value: u64) -> String {
     }
 }
 
+/// `done / total` clamped to `0.0..=1.0`; `None` when the total is unknown (0).
+pub(crate) fn fraction(done: u64, total: u64) -> Option<f32> {
+    (total > 0).then(|| (done as f64 / total as f64).min(1.0) as f32)
+}
+
+/// Progress percentage: one decimal below 10 % so a long run visibly moves
+/// (« 1,4 % »), whole numbers above; never rounds up to 100 % before the end.
+pub(crate) fn percent(fraction: f32) -> String {
+    // Truncated, not rounded; the tiny margin only absorbs the f32
+    // representation error (0.42 is stored as 0.41999…).
+    const EPSILON: f64 = 1e-4;
+    let value = f64::from(fraction.clamp(0.0, 1.0)) * 100.0;
+    if value < 10.0 {
+        format!("{:.1} %", (value * 10.0 + EPSILON).floor() / 10.0).replace('.', ",")
+    } else {
+        format!("{:.0} %", (value + EPSILON).floor())
+    }
+}
+
 /// Integer with thin-space thousands separators (French typography).
 pub(crate) fn count(value: u64) -> String {
     let digits = value.to_string();
@@ -670,6 +689,26 @@ mod tests {
         ] {
             assert!(!ceiling_liftable(blocked));
         }
+    }
+
+    #[test]
+    fn progress_is_weighted_and_formatted_honestly() {
+        // Real run: 9 906 thumbnails (831 MB) of 41 098 copies totalling
+        // 58.4 GB. Volume dominates: the run is at 1.4 %, not 24 %.
+        let done = 831_288_005u64 + 9_906;
+        let total = 58_424_037_921u64 + 41_099;
+        let f = fraction(done, total).unwrap_or_default();
+        assert_eq!(percent(f), "1,4 %");
+        // A plan without bytes (folders, deletions) still moves.
+        assert_eq!(fraction(3, 4), Some(0.75));
+        assert_eq!(fraction(5, 0), None);
+        assert_eq!(fraction(9, 4), Some(1.0));
+        assert_eq!(percent(0.0), "0,0 %");
+        assert_eq!(percent(0.0999), "9,9 %");
+        assert_eq!(percent(0.42), "42 %");
+        // Never shows 100 % before the end.
+        assert_eq!(percent(0.9999), "99 %");
+        assert_eq!(percent(1.0), "100 %");
     }
 
     #[test]

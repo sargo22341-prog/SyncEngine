@@ -53,6 +53,11 @@ pub(crate) enum Glyph {
     Calendar,
     Refresh,
     Power,
+    /// Window controls of the integrated title bar (thin, Windows-like).
+    WinMinimize,
+    WinMaximize,
+    WinRestore,
+    WinClose,
 }
 
 /// Canvas program drawing one glyph.
@@ -102,6 +107,19 @@ pub(crate) fn bold<'a, M: 'a>(glyph: Glyph, size: f32, color: Color) -> Element<
             glyph,
             color,
             weight: 0.8,
+            rotation: 0.0,
+        },
+        size,
+    )
+}
+
+/// Hairline variant (1 px at 24 px) for the window controls.
+pub(crate) fn thin<'a, M: 'a>(glyph: Glyph, size: f32, color: Color) -> Element<'a, M> {
+    canvas(
+        Icon {
+            glyph,
+            color,
+            weight: 2.0,
             rotation: 0.0,
         },
         size,
@@ -318,6 +336,29 @@ fn draw(glyph: Glyph, d: &mut Pen<'_>) {
         Glyph::Refresh => {
             d.arc(12.0, 12.0, 7.5, -60.0, 240.0);
             d.arc_head(12.0, 12.0, 7.5, 240.0, true);
+        }
+        // Half-unit coordinates: at 24 px (see `thin`) the 1 px strokes land
+        // on pixel centers and stay crisp.
+        Glyph::WinMinimize => d.line((7.0, 12.5), (17.0, 12.5)),
+        Glyph::WinMaximize => {
+            d.poly(&[(7.5, 7.5), (16.5, 7.5), (16.5, 16.5), (7.5, 16.5)], true);
+        }
+        Glyph::WinRestore => {
+            d.poly(&[(7.5, 9.5), (14.5, 9.5), (14.5, 16.5), (7.5, 16.5)], true);
+            d.poly(
+                &[
+                    (9.5, 9.5),
+                    (9.5, 7.5),
+                    (16.5, 7.5),
+                    (16.5, 14.5),
+                    (14.5, 14.5),
+                ],
+                false,
+            );
+        }
+        Glyph::WinClose => {
+            d.line((7.0, 7.0), (17.0, 17.0));
+            d.line((17.0, 7.0), (7.0, 17.0));
         }
         Glyph::Power => {
             d.arc(12.0, 13.0, 7.5, -45.0, 225.0);

@@ -5,7 +5,28 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Interface
+- Fenêtre sans décorations système (`decorations: false`) : barre de titre
+  intégrée (`apps/desktop/src/titlebar.rs`) aux couleurs du thème, sans cadre
+  ni bordure Windows. Déplacement par la boucle native (`window::drag`, ancrage
+  conservé), double-clic agrandir/restaurer, clic droit menu système, boutons
+  réduire/agrandir/fermer au gabarit Windows 11 (fermer rouge au survol), titre
+  atténué quand la fenêtre perd le focus, poignées de redimensionnement
+  invisibles de 5 px sur les bords et coins (`window::drag_resize`), retirées
+  une fois la fenêtre agrandie. Le bouton fermer suit le même chemin que la
+  demande de fermeture système (réglage « réduire au lieu de quitter »).
+  Les coordonnées du curseur et la taille utilisées par les surcouches sont
+  désormais relatives à la zone sous la barre.
+
 ### Corrections
+- Progression d'exécution : un seul calcul (`Job::progress`) pour l'anneau et
+  la carte latérale, pondéré comme FreeFileSync
+  (`(octets + opérations) / (octets prévus + opérations prévues)`), au lieu des
+  seuls octets avec repli sur les opérations. Le pourcentage est tronqué (jamais
+  100 % avant la fin), avec une décimale sous 10 % (`model::percent`), et
+  l'anneau précise « du volume ». La statistique « volume validé » affiche
+  « copié / prévu ». Constat à l'origine : 9 906 opérations sur 41 099 pour
+  1 % affiché, valeur exacte (831 Mo sur 58,4 Go) mais illisible.
 - Garde-fou de suppression : le plafond relatif (50 % des entrées de la
   destination par défaut) ne s'applique qu'à partir de 10 suppressions
   (`MIN_DELETIONS_FOR_PERCENT`, seuil de FreeFileSync). Un miroir vers une

@@ -10,6 +10,7 @@ use crate::draft::ScheduleDraft;
 use crate::model::{self, PreviewView};
 use crate::native;
 use crate::theme::Palette;
+use crate::titlebar::{self, Chrome};
 use crate::tray::{self, Tray, TrayEvent};
 use crate::ui_prefs::{CloseAction, ThemeChoice, UiPrefs};
 use crate::wizard::{Wizard, WizardMsg};
@@ -76,6 +77,29 @@ pub(crate) struct Job {
     /// Planned mutations (execution only), for an honest progress ratio.
     pub(crate) planned: Option<u64>,
     pub(crate) planned_bytes: Option<u64>,
+}
+
+impl Job {
+    /// Overall progress in `0.0..=1.0`, `None` while unknown (scan phase).
+    ///
+    /// Execution weighs bytes and operations together, as FreeFileSync does
+    /// (`(bytes + items) / (bytes total + items total)`): volume dominates,
+    /// so thousands of thumbnails copied before a few large videos honestly
+    /// stay near the start, while a plan of folders or deletions only still
+    /// moves. Block-level bytes, like the throughput curve.
+    pub(crate) fn progress(&self) -> Option<f32> {
+        let s = &self.snapshot;
+        match self.kind {
+            JobKind::Execute => model::fraction(
+                s.bytes_transferred.saturating_add(s.entries_done),
+                self.planned_bytes
+                    .unwrap_or(0)
+                    .saturating_add(self.planned.unwrap_or(0)),
+            ),
+            // Known only for the content phase (files of equal size).
+            JobKind::Preview => model::fraction(s.entries_hashed, s.hash_target),
+        }
+    }
 }
 
 /// Exact cached preview plus its current filtered page.
@@ -182,6 +206,8 @@ pub(crate) enum Message {
     WindowOpened(window::Id),
     CloseRequested(window::Id),
     Tray(TrayEvent),
+    /// Integrated title bar and resize grips.
+    Chrome(Chrome),
     /// Explicit exit (icon menu, settings, Ctrl+Q), whatever the close setting.
     Quit,
     Nav(Nav),
@@ -302,6 +328,8 @@ pub(crate) struct App {
     pub(crate) close_after: Option<window::Id>,
     /// Main window, known once opened (minimize/restore/close target).
     pub(crate) window_id: Option<window::Id>,
+    /// Integrated frame state (maximized, focused, pending bar press).
+    pub(crate) frame: titlebar::Frame,
     /// Notification-area icon, or why none could be created.
     pub(crate) tray: Result<Tray, String>,
     pub(crate) busy_refresh: bool,
@@ -356,6 +384,7 @@ impl App {
             startup: None,
             close_after: None,
             window_id: None,
+            frame: titlebar::Frame::default(),
             tray: Tray::create(charts::icon_rgba(), charts::ICON_SIZE),
             busy_refresh: false,
         };
@@ -592,6 +621,12 @@ impl App {
                 ))
             }
             iced::Event::Window(window::Event::Resized(size)) => Some(Message::Resized(size)),
+            iced::Event::Window(window::Event::Focused) => {
+                Some(Message::Chrome(Chrome::Focused(true)))
+            }
+            iced::Event::Window(window::Event::Unfocused) => {
+                Some(Message::Chrome(Chrome::Focused(false)))
+            }
             _ => None,
         });
         let mut subs = vec![

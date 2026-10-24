@@ -10,4 +10,5 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
-
+- Fenêtre : barre de titre et bords intégrés aux couleurs de l'application (plus de cadre ni de bordure Windows) ; déplacer, agrandir (double-clic), réduire, fermer et redimensionner par les bords.
+- Progression d'exécution : le pourcentage pondère volume et opérations comme FreeFileSync, affiche une décimale sous 10 %, est étiqueté « du volume » et le volume validé s'affiche en « X / Y ».

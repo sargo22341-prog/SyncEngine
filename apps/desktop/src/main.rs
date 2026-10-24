@@ -21,6 +21,7 @@ mod schedules;
 mod shell;
 mod speed;
 mod theme;
+mod titlebar;
 mod tray;
 mod ui;
 mod ui_prefs;
@@ -41,6 +42,8 @@ fn main() -> iced::Result {
             min_size: Some(iced::Size::new(980.0, 640.0)),
             icon: charts::window_icon(),
             exit_on_close_request: false,
+            // Title bar and border are drawn by the application (`titlebar`).
+            decorations: false,
             ..iced::window::Settings::default()
         })
         .run()

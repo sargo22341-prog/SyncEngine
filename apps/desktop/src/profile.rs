@@ -300,22 +300,24 @@ impl App {
             JobKind::Preview => ("Simulation : lecture des dossiers", p.accent),
             JobKind::Execute => ("Exécution réelle en cours", p.success),
         };
-        let progress = match job.kind {
-            // Block-level bytes, like the curve: the ring moves inside a large file.
-            JobKind::Execute => job
-                .planned_bytes
-                .filter(|b| *b > 0)
-                .map(|b| (s.bytes_transferred as f32 / b as f32).min(1.0))
-                .or_else(|| {
-                    job.planned
-                        .filter(|n| *n > 0)
-                        .map(|n| s.entries_done as f32 / n as f32)
-                }),
-            // Known only for the content phase (files of equal size).
-            JobKind::Preview => (s.hash_target > 0)
-                .then(|| (s.entries_hashed as f32 / s.hash_target as f32).min(1.0)),
+        let progress = job.progress();
+        let percent = progress.map(model::percent);
+        // Says what the percentage measures: the volume, not the file count
+        // shown next to it.
+        let basis = match (job.kind, progress) {
+            (JobKind::Execute, Some(_)) => Some("du volume"),
+            (JobKind::Preview, Some(_)) => Some("des empreintes"),
+            (_, None) => None,
         };
-        let percent = progress.map(|v| format!("{:.0} %", (v * 100.0).min(100.0)));
+        let mut center = column![ui::title(
+            p,
+            percent.unwrap_or_else(|| format!("{:.0} s", elapsed.as_secs_f32())),
+            18.0
+        )]
+        .align_x(Alignment::Center);
+        if let Some(basis) = basis {
+            center = center.push(ui::caption(p, basis));
+        }
         let ring = iced::widget::stack![
             charts::ring(
                 Ring {
@@ -327,12 +329,7 @@ impl App {
                 },
                 104.0
             ),
-            container(ui::title(
-                p,
-                percent.unwrap_or_else(|| format!("{:.0} s", elapsed.as_secs_f32())),
-                18.0
-            ))
-            .center(Length::Fixed(104.0)),
+            container(center).center(Length::Fixed(104.0)),
         ];
         // Throughput over a 4 s sliding window (bytes/s, or entries/s while
         // scanning), as FreeFileSync: see `speed`.
@@ -406,7 +403,15 @@ impl App {
                     ),
                     p.muted
                 ),
-                stat("octets validés", model::bytes(s.bytes_done), p.muted),
+                stat(
+                    "volume validé",
+                    match job.planned_bytes.filter(|b| *b > 0) {
+                        Some(total) =>
+                            format!("{} / {}", model::bytes(s.bytes_done), model::bytes(total)),
+                        None => model::bytes(s.bytes_done),
+                    },
+                    p.muted
+                ),
                 stat(
                     "refus ou échecs",
                     model::count(s.operation_errors),

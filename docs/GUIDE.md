@@ -107,6 +107,20 @@ celui du cache de Windows/Linux. Le nombre d'opérations par seconde est
 affiché à côté (création de dossiers, petits fichiers). La relecture de
 vérification d'un fichier n'est pas comptée comme débit.
 
+Le pourcentage de l'anneau mesure **le volume** : (octets copiés + opérations
+terminées) / (octets prévus + opérations prévues), la formule de FreeFileSync.
+Il n'est jamais arrondi vers le haut et garde une décimale sous 10 %. Le
+compteur d'opérations affiché à côté avance, lui, au nombre de fichiers : si
+des milliers de miniatures passent avant quelques grosses vidéos, on peut lire
+par exemple 9 906 / 41 099 opérations pour 1,4 % (831 Mo sur 58,4 Go).
+Le volume validé s'affiche sous la forme « copié / prévu ».
+
+La fenêtre n'a pas de cadre système : la barre de titre et les bords sont
+dessinés par l'application. Glisser la barre déplace la fenêtre (ancrage
+Windows compris), un double-clic l'agrandit ou la restaure, un clic droit
+ouvre le menu système, et les bords et coins la redimensionnent. `Alt+F4`
+reste actif.
+
 Par défaut, le bouton **×** réduit la fenêtre : une tâche en cours continue.
 Pour quitter : icône de la zone de notification › « Quitter SyncEngine »,
 `Ctrl+Q`, ou Réglages › Fenêtre (où l'on peut aussi rétablir la fermeture

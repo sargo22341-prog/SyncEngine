@@ -6,6 +6,7 @@ use crate::backend::{self, Failure, Opened};
 use crate::draft::{ProfileDraft, ScheduleDraft};
 use crate::model::{self, Outcome};
 use crate::native;
+use crate::titlebar;
 use crate::tray::TrayEvent;
 use crate::ui_prefs::CloseAction;
 use crate::wizard::Wizard;
@@ -52,7 +53,12 @@ impl App {
                 Task::none()
             }
             Message::Cursor(p) => {
+                // Content coordinates: overlays are laid out below the bar.
+                let p = iced::Point::new(p.x, p.y - titlebar::HEIGHT);
                 self.cursor = p;
+                if self.frame.press.is_some() {
+                    return self.drag_window(p);
+                }
                 if let Some(d) = &mut self.drag
                     && !d.active
                     && (p.x - d.origin.x).hypot(p.y - d.origin.y) > 6.0
@@ -62,13 +68,17 @@ impl App {
                 }
                 Task::none()
             }
-            Message::Released => self.release(),
+            Message::Released => {
+                self.frame.press = None;
+                self.release()
+            }
             Message::Key(key, digit, modifiers, captured) => {
                 self.key(key, digit, modifiers, captured)
             }
             Message::Resized(size) => {
-                self.window = size;
-                Task::none()
+                self.window =
+                    iced::Size::new(size.width, (size.height - titlebar::HEIGHT).max(0.0));
+                self.sync_maximized()
             }
             Message::SystemTheme(mode) => {
                 self.system_dark = mode != iced::theme::Mode::Light;
@@ -77,8 +87,9 @@ impl App {
             }
             Message::WindowOpened(id) => {
                 self.window_id = Some(id);
-                Task::none()
+                self.sync_maximized()
             }
+            Message::Chrome(action) => self.chrome(action),
             Message::CloseRequested(id) => {
                 self.window_id = Some(id);
                 match self.prefs.close {
