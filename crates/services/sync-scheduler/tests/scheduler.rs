@@ -24,6 +24,7 @@ fn schedule(temp: &tempfile::TempDir) -> Result<Schedule, Box<dyn std::error::Er
         enabled: true,
         allow_deletions: false,
         missed: MissedJobs::RunOnce,
+        show_window: false,
     })
 }
 struct Mock {
@@ -343,7 +344,63 @@ fn migration_v1_preserves_authorization_and_completion() -> Result<(), Box<dyn s
     assert_eq!(
         rusqlite::Connection::open(&path)?
             .query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
-        2
+        3
+    );
+    Ok(())
+}
+/// Given a v2 store whose configuration predates `show_window`,
+/// when it is opened and dispatched, then the schedule still runs (the stored
+/// text is normalized, otherwise the compare-and-claim would never match).
+#[test]
+fn migration_v2_normalizes_config_so_claims_still_match() -> Result<(), Box<dyn std::error::Error>>
+{
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("db");
+    let s = schedule(&temp)?;
+    let mut legacy = serde_json::to_value(&s)?;
+    legacy
+        .as_object_mut()
+        .ok_or("object expected")?
+        .remove("show_window");
+    let old = rusqlite::Connection::open(&path)?;
+    old.execute_batch(include_str!("../migrations/001_initial.sql"))?;
+    old.execute_batch(include_str!("../migrations/002_session_wakes.sql"))?;
+    old.execute(
+        "INSERT INTO schedules(profile,config) VALUES(?1,?2)",
+        rusqlite::params![s.approved.id.as_str(), legacy.to_string()],
+    )?;
+    drop(old);
+    let mut db = Scheduler::open(&path)?;
+    assert_eq!(db.list()?[0].schedule, s);
+    assert!(!db.list()?[0].schedule.show_window);
+    let app = Mock {
+        calls: Cell::new(0),
+        status: JobStatus::Succeeded,
+    };
+    let receipts = db.dispatch(1000, Wake::Clock, &app, &CancellationToken::new())?;
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(app.calls.get(), 1);
+    Ok(())
+}
+/// The presentation flag round-trips and does not change dispatch.
+#[test]
+fn show_window_is_persisted() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let mut db = Scheduler::open(temp.path().join("db"))?;
+    let s = Schedule {
+        show_window: true,
+        ..schedule(&temp)?
+    };
+    db.save(&s)?;
+    assert!(db.list()?[0].schedule.show_window);
+    let app = Mock {
+        calls: Cell::new(0),
+        status: JobStatus::Succeeded,
+    };
+    assert_eq!(
+        db.dispatch(1000, Wake::Clock, &app, &CancellationToken::new())?
+            .len(),
+        1
     );
     Ok(())
 }

@@ -27,8 +27,33 @@ peut donc rester fermée.
 | `manager-start` | démarrage du gestionnaire systemd utilisateur (Linux seulement) |
 
 La précision est d'environ une minute. Si des échéances ont été manquées
-(machine éteinte), seule la dernière est exécutée, une fois ; `--skip-missed`
-les ignore.
+(machine éteinte, en veille ou session fermée), seule la dernière est exécutée,
+une fois, dès le passage suivant de l'agent ; `--skip-missed` les ignore (on
+attend alors la prochaine échéance).
+
+## Suivre une synchronisation planifiée
+
+Pendant une exécution, l'agent publie sa progression dans `agent-live.json`
+(dossier d'état), environ deux fois par seconde. Toute fenêtre ouverte
+l'affiche en direct : page Activité, carte en bas de la barre latérale et page
+du profil (analyse puis écritures, pourcentage, débit, refus ou échecs). Ce
+fichier sert uniquement à l'affichage : le résultat qui fait foi reste dans
+l'historique et la page Planification.
+
+Option **« Afficher la fenêtre de suivi pendant la synchronisation »**
+(`--show-window`, Windows seulement) : à chaque exécution, l'agent ouvre
+`syncengine-desktop` (placé à côté de lui) sur la page Activité ; si une
+fenêtre est déjà ouverte, même réduite dans la zone de notification, elle
+revient au premier plan. Ce n'est pas un consentement : elle ne change ni
+l'autorisation ni ce qui est exécuté. Sous Linux, une unité systemd n'a pas de
+session graphique garantie : l'option n'est pas proposée, mais une fenêtre
+ouverte suit quand même l'exécution.
+
+« Annuler » dans la fenêtre équivaut à `syncengine-agent cancel` : la tâche
+s'arrête proprement et les suivantes sont bloquées. La fenêtre lève ce blocage
+à la fin de la tâche ; si elle a été fermée entre-temps, la page Planification
+affiche « Planifications en pause » avec **Reprendre les planifications**
+(équivalent de `clear-cancel`).
 
 ## Commandes de l'agent
 
@@ -36,7 +61,7 @@ les ignore.
 
 ```sh
 syncengine-agent list ETAT
-syncengine-agent authorize ETAT PROFIL daily 2 30 --approve-writes [--approve-deletions] [--skip-missed]
+syncengine-agent authorize ETAT PROFIL daily 2 30 --approve-writes [--approve-deletions] [--skip-missed] [--show-window]
 syncengine-agent remove ETAT PROFIL                 # retire la planification, garde l'historique
 syncengine-agent tick ETAT clock                    # ce qu'appelle le planificateur
 syncengine-agent cancel ETAT                        # annule la tâche en cours et bloque les suivantes

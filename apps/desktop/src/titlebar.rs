@@ -80,7 +80,7 @@ impl App {
                 self.frame.press = Some(self.cursor);
                 Task::none()
             }
-            Chrome::Minimize => window::minimize(id, true),
+            Chrome::Minimize => self.minimize_window(id),
             Chrome::ToggleMaximize => {
                 self.frame.press = None;
                 window::toggle_maximize(id)

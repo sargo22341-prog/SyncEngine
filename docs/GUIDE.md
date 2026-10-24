@@ -121,7 +121,10 @@ Windows compris), un double-clic l'agrandit ou la restaure, un clic droit
 ouvre le menu système, et les bords et coins la redimensionnent. `Alt+F4`
 reste actif.
 
-Par défaut, le bouton **×** réduit la fenêtre : une tâche en cours continue.
+Réduire la fenêtre la retire de la barre des tâches : elle reste dans la zone
+de notification, d'où un clic sur l'icône la rouvre (sans icône disponible,
+elle est simplement réduite). Par défaut, le bouton **×** la réduit aussi : une
+tâche en cours continue.
 Pour quitter : icône de la zone de notification › « Quitter SyncEngine »,
 `Ctrl+Q`, ou Réglages › Fenêtre (où l'on peut aussi rétablir la fermeture
 classique).
@@ -156,6 +159,9 @@ chemin absolu avant de lancer l'interface.
 | `run-….jsonl` | journal de chaque exécution |
 | `versions/` | copies des fichiers remplacés ou supprimés |
 | `desktop-ui.json` | thème, groupes repliés, comportement du bouton × |
+| `agent-live.json` | progression publiée par l'agent pour l'affichage (pas une source de vérité) |
+| `cancel.request` | demande d'arrêt de l'agent, présente tant que les planifications sont en pause |
+| `desktop.lock`, `window.lock` | verrous : commande en cours, fenêtre ouverte |
 
 Aucun mot de passe ni jeton n'y est stocké. Le dossier d'état doit être sur un
 disque local, hors des dossiers synchronisés. Supprimer le programme ne

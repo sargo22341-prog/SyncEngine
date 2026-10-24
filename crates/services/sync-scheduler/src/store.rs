@@ -5,6 +5,25 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::path::Path;
 use sync_core::{CancellationToken, ProfileId};
+/// Rewrites every stored configuration in the current serialized form (v3 adds
+/// `show_window`). Required because a claim compares the stored text with the
+/// re-serialized schedule: an old text would never match and never run.
+/// A malformed row aborts the migration; nothing is reset.
+fn normalize_configs(tx: &rusqlite::Transaction<'_>) -> Result<(), SchedulerError> {
+    let rows: Vec<(String, String)> = {
+        let mut stmt = tx.prepare("SELECT profile,config FROM schedules")?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?
+    };
+    for (profile, config) in rows {
+        let schedule: Schedule = serde_json::from_str(&config)?;
+        tx.execute(
+            "UPDATE schedules SET config=?2 WHERE profile=?1",
+            params![profile, serde_json::to_string(&schedule)?],
+        )?;
+    }
+    Ok(())
+}
 /// Latest durable claim and receipt. A nonempty running slot blocks this profile
 /// until explicit diagnosis/acknowledgement; it is never silently retried.
 #[derive(Debug, Serialize)]
@@ -18,7 +37,7 @@ pub struct ScheduleState {
     /// Latest result only (bounded); detailed application history is separate.
     pub result: Option<Completion>,
 }
-/// SQLite v2 store (transactional v1 migration). One schedule per profile, one receipt per schedule.
+/// SQLite v3 store (transactional v1/v2 migrations). One schedule per profile, one receipt per schedule.
 /// Keep outside synchronized roots; back up with all application state at rest.
 pub struct Scheduler(Connection);
 impl Scheduler {
@@ -45,11 +64,15 @@ impl Scheduler {
                 return Err(SchedulerError::Invalid("foreign database"));
             }
             tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
-        } else if !(1..=2).contains(&version) || app != 1_398_361_682 {
+        } else if !(1..=3).contains(&version) || app != 1_398_361_682 {
             return Err(SchedulerError::Invalid("unknown scheduler schema"));
         }
         if version < 2 {
             tx.execute_batch(include_str!("../migrations/002_session_wakes.sql"))?;
+        }
+        if version < 3 {
+            normalize_configs(&tx)?;
+            tx.execute_batch(include_str!("../migrations/003_show_window.sql"))?;
         }
         tx.commit()?;
         db.execute_batch("PRAGMA synchronous=FULL;")?;

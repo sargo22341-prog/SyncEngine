@@ -17,6 +17,8 @@ impl Application {
 
     /// Authorizes the current complete profile, never a profile supplied by IPC.
     /// An edit invalidates authorization; native task installation is separate.
+    /// `show_window` only asks the agent to open the desktop window to follow
+    /// each run (Windows); it is not a consent and changes nothing else.
     /// # Errors
     /// Missing consent, unsupported trigger, busy, invalid or interrupted state.
     pub fn schedule_save(
@@ -26,6 +28,7 @@ impl Application {
         missed: MissedJobs,
         approve_writes: bool,
         approve_deletions: bool,
+        show_window: bool,
     ) -> Result<(), AppError> {
         let _gate = self.gate()?;
         if !approve_writes {
@@ -57,6 +60,7 @@ impl Application {
             created_at: Timestamp::now().map_err(io)?.secs(),
             enabled: true,
             allow_deletions: approve_deletions,
+            show_window,
         };
         Scheduler::open(self.state.join("scheduler.sqlite"))
             .map_err(io)?

@@ -80,6 +80,11 @@ pub struct Schedule {
     pub allow_deletions: bool,
     /// Missed occurrence policy.
     pub missed: MissedJobs,
+    /// Presentation only: the agent opens the desktop window so that each run
+    /// can be followed live. Never widens authorization nor changes execution.
+    /// Absent from configurations written before store v3 (read as `false`).
+    #[serde(default)]
+    pub show_window: bool,
 }
 impl Schedule {
     /// Validates configuration; no root access or mutation.

@@ -66,6 +66,7 @@ fn schedule(root: &Path, p: Profile, allow_deletions: bool) -> Result<(), Error>
         enabled: true,
         allow_deletions,
         missed: MissedJobs::RunOnce,
+        show_window: false,
     })?;
     Ok(())
 }
@@ -104,6 +105,12 @@ fn approved_profile_runs_in_headless_process_and_is_not_replayed() -> Result<(),
     );
     let history = with_app(temp.path(), |app| app.history(p.id.clone()))?;
     assert_eq!(history.len(), 1);
+    // The finished job stays readable by a window; the idle replay tick did
+    // not overwrite it.
+    let live = with_app(temp.path(), Application::agent_live)?.ok_or("live snapshot")?;
+    assert!(!live.snapshot.active);
+    assert_eq!(live.snapshot.profile, Some(p.id.clone()));
+    assert_eq!(live.snapshot.planned_bytes, 4);
     Ok(())
 }
 #[test]

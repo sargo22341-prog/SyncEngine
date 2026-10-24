@@ -364,6 +364,7 @@ impl Wizard {
                         missed: s.missed(),
                         approve_writes: s.approve_writes,
                         approve_deletions: s.approve_deletions && profile.allow_delete,
+                        show_window: s.show_window,
                     },
                     Ok(None) if self.draft.had_schedule => ScheduleChange::Remove,
                     _ => ScheduleChange::Keep,

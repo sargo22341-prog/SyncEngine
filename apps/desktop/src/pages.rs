@@ -186,7 +186,7 @@ impl App {
         let selected = self.selected.as_ref() == Some(&profile.id);
         let color = mode_color(p, profile.mode);
         let now = model::now_secs();
-        let running = self.job.as_ref().is_some_and(|j| j.profile == profile.id);
+        let running = self.running_on(&profile.id);
         let status: El<'a, Message> = if running {
             ui::pill(p.accent, "En cours")
         } else {
@@ -293,8 +293,12 @@ impl App {
             column![ui::title(p, "Activité", 26.0), ui::muted(p, "Suivi en direct des tâches de cette fenêtre et derniers résultats de tous les profils.")].spacing(4),
         ]
         .spacing(20);
-        if let Some(job) = &self.job {
+        let live: Vec<_> = [&self.job, &self.agent_job].into_iter().flatten().collect();
+        for job in &live {
             col = col.push(self.live_panel(p, job, true));
+        }
+        if !live.is_empty() {
+            // Live panels above; the last result returns once they end.
         } else if let Some(last) = &self.last_run {
             col = col.push(self.result_card(p, last));
         } else {
@@ -303,7 +307,7 @@ impl App {
                 p.info,
                 Glyph::Pulse,
                 "Aucune tâche en cours dans cette fenêtre",
-                "Lancez une simulation depuis un profil (F5). Les exécutions de l’agent apparaissent ci-dessous après actualisation.",
+                "Lancez une simulation depuis un profil (F5). Les synchronisations planifiées de l’agent s’affichent ici en direct.",
             ));
         }
         let now = model::now_secs();

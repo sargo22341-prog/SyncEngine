@@ -1,7 +1,9 @@
 //! Side effects behind messages: facade calls, drag and drop resolution,
 //! dialogs submission and keyboard shortcuts.
 
-use crate::app::{App, Dialog, Job, JobKind, Message, Nav, SEARCH_ID, Sample, ToastKind};
+use crate::app::{
+    AGENT_STALE_SECS, App, Dialog, Job, JobKind, Message, Nav, SEARCH_ID, Sample, ToastKind,
+};
 use crate::backend::{self, Failure, ScheduleView, Workspace};
 use crate::draft;
 use crate::model;
@@ -13,7 +15,7 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 use sync_core::ProfileId;
-use sync_orchestrator::{DeletionCeiling, JobSnapshot};
+use sync_orchestrator::{Application, DeletionCeiling, JobPhase, JobSnapshot, LiveJob};
 use sync_profiles::Profile;
 
 impl App {
@@ -81,6 +83,166 @@ impl App {
         }
     }
 
+    /// Reads the agent's published snapshot off the UI thread.
+    pub(crate) fn poll_agent(&mut self) -> Task<Message> {
+        let Some(app) = &self.backend else {
+            return Task::none();
+        };
+        if self.agent_polling {
+            return Task::none();
+        }
+        self.agent_polling = true;
+        Task::perform(
+            backend::call(app, Application::agent_live),
+            Message::AgentLive,
+        )
+    }
+
+    /// Follows a scheduled run from the agent's snapshot. An unreadable read
+    /// (file being replaced) keeps the current view; a missing, finished or
+    /// stale snapshot ends the follow-up with an explicit outcome.
+    pub(crate) fn agent_observed(
+        &mut self,
+        result: Result<Option<LiveJob>, Failure>,
+    ) -> Task<Message> {
+        self.agent_polling = false;
+        let Ok(live) = result else {
+            return Task::none();
+        };
+        let Some(live) = live
+            .clone()
+            .filter(|l| l.is_live(model::now_secs(), AGENT_STALE_SECS))
+        else {
+            return self.agent_ended(live.map(|l| l.snapshot));
+        };
+        let s = live.snapshot;
+        let Some(profile) = s.profile.clone() else {
+            return Task::none();
+        };
+        let kind = if s.phase == JobPhase::Executing {
+            JobKind::Execute
+        } else {
+            JobKind::Preview
+        };
+        let sample = Sample {
+            at: self.now,
+            bytes: s.bytes_transferred,
+            operations: s.entries_done,
+            scanned: s.entries_scanned.saturating_add(s.entries_hashed),
+        };
+        let mut task = Task::none();
+        match &mut self.agent_job {
+            Some(job) if job.profile == profile => {
+                if job.kind != kind {
+                    // Analysis then writes: rates restart with the new unit.
+                    job.kind = kind;
+                    job.samples.clear();
+                }
+                job.samples.push_back(sample);
+                while job.samples.len() > 2 && job.samples[1].at + speed::RETAIN <= self.now {
+                    job.samples.pop_front();
+                }
+            }
+            _ => {
+                let name = self
+                    .profile(&profile)
+                    .map_or_else(|| profile.to_string(), |p| p.name.clone());
+                if self
+                    .schedule_of(&profile)
+                    .is_some_and(|s| s.schedule.show_window)
+                {
+                    self.go(Nav::Activity);
+                    task = self.show_window();
+                }
+                self.agent_job = Some(Job {
+                    kind,
+                    profile,
+                    name,
+                    started: self.now,
+                    snapshot: JobSnapshot::default(),
+                    samples: VecDeque::from([sample]),
+                    cancel_requested: false,
+                    agent: true,
+                    planned: None,
+                    planned_bytes: None,
+                });
+            }
+        }
+        if let Some(job) = &mut self.agent_job {
+            if kind == JobKind::Execute {
+                job.planned = Some(s.planned_operations);
+                job.planned_bytes = Some(s.planned_bytes);
+            }
+            job.snapshot = s;
+        }
+        task
+    }
+
+    /// End of a followed scheduled run: says how it ended (from the final
+    /// snapshot when there is one), lifts this window's stop request and
+    /// reads durable history back.
+    fn agent_ended(&mut self, last: Option<JobSnapshot>) -> Task<Message> {
+        let Some(job) = self.agent_job.take() else {
+            return Task::none();
+        };
+        let name = job.name.clone();
+        let last = last.filter(|s| !s.active && s.profile.as_ref() == Some(&job.profile));
+        match last {
+            Some(s) if s.phase == JobPhase::Finished && s.operation_errors == 0 => self.toast(
+                ToastKind::Success,
+                "Synchronisation planifiée terminée",
+                format!("{name} : résultat détaillé dans l’historique."),
+            ),
+            Some(s) if s.phase == JobPhase::Finished => self.toast(
+                ToastKind::Warning,
+                "Synchronisation planifiée terminée avec des erreurs",
+                format!(
+                    "{name} : {} refus ou échecs, détaillés dans l’historique.",
+                    model::count(s.operation_errors)
+                ),
+            ),
+            Some(_) if job.cancel_requested => self.toast(
+                ToastKind::Warning,
+                "Synchronisation planifiée annulée",
+                format!("{name} : l’état partiel est conservé et journalisé."),
+            ),
+            Some(_) => self.toast(
+                ToastKind::Error,
+                "Synchronisation planifiée en échec",
+                format!("{name} : cause dans l’historique et la page Planification."),
+            ),
+            None => self.toast(
+                ToastKind::Warning,
+                "Suivi interrompu",
+                format!(
+                    "{name} : l’agent ne donne plus de nouvelles. Vérifiez la page Planification."
+                ),
+            ),
+        }
+        let mut tasks = vec![self.refresh()];
+        if job.cancel_requested
+            && let Some(app) = &self.backend
+        {
+            tasks.push(Task::perform(
+                backend::call(app, Application::agent_cancel_clear),
+                Message::AgentResumed,
+            ));
+        }
+        Task::batch(tasks)
+    }
+
+    /// Leaves a stop request for the followed scheduled run.
+    pub(crate) fn cancel_agent(&mut self) -> Task<Message> {
+        let (Some(job), Some(app)) = (&mut self.agent_job, &self.backend) else {
+            return Task::none();
+        };
+        job.cancel_requested = true;
+        Task::perform(
+            backend::call(app, Application::agent_cancel_request),
+            Message::AgentCancelSent,
+        )
+    }
+
     /// After a job: read durable state back (a pending close waits for it).
     pub(crate) fn finish_job_tasks(&mut self) -> Task<Message> {
         self.refresh()
@@ -105,6 +267,7 @@ impl App {
                 scanned: 0,
             }]),
             cancel_requested: false,
+            agent: false,
             planned: planned.map(|p| p.0),
             planned_bytes: planned.map(|p| p.1),
         });
@@ -338,18 +501,24 @@ impl App {
                 Some((id.clone(), p.name.clone(), p.allow_delete, had))
             })
             .collect();
-        let (missed, writes, deletions) = (
+        let (missed, writes, deletions, window) = (
             draft.missed(),
             draft.approve_writes,
             draft.approve_deletions,
+            draft.show_window,
         );
         let task = backend::blocking(move || {
             let mut done = Vec::new();
             for (id, name, allow_delete, had) in jobs {
                 let result = match &trigger {
-                    Some(t) => {
-                        app.schedule_save(id, t.clone(), missed, writes, deletions && allow_delete)
-                    }
+                    Some(t) => app.schedule_save(
+                        id,
+                        t.clone(),
+                        missed,
+                        writes,
+                        deletions && allow_delete,
+                        window,
+                    ),
                     None if had => app.schedule_remove(id),
                     None => Ok(()),
                 };

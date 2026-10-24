@@ -29,6 +29,11 @@ impl App {
         self.now = Instant::now();
         match message {
             Message::Booted(Ok(Opened(app, ws))) => {
+                // Without the marker the agent may open a second window: only
+                // a presentation nuisance, never a data risk.
+                self.presence = sync_orchestrator::hold_desktop_presence(app.state_directory())
+                    .ok()
+                    .flatten();
                 self.backend = Some(app);
                 self.apply_workspace(ws);
                 self.page_t.replay(0.0, 1.0, self.now);
@@ -76,6 +81,14 @@ impl App {
                 self.key(key, digit, modifiers, captured)
             }
             Message::Resized(size) => {
+                // Windows reports a minimized window (taskbar, Win+D, system
+                // menu) as resized to nothing: send it to the notification area.
+                if size.width == 0.0
+                    && size.height == 0.0
+                    && let Some(id) = self.window_id
+                {
+                    return self.minimize_window(id);
+                }
                 self.window =
                     iced::Size::new(size.width, (size.height - titlebar::HEIGHT).max(0.0));
                 self.sync_maximized()
@@ -93,12 +106,44 @@ impl App {
             Message::CloseRequested(id) => {
                 self.window_id = Some(id);
                 match self.prefs.close {
-                    CloseAction::Minimize => window::minimize(id, true),
+                    CloseAction::Minimize => self.minimize_window(id),
                     CloseAction::Quit => self.quit(),
                 }
             }
             Message::Tray(TrayEvent::Show) => self.show_window(),
             Message::Tray(TrayEvent::Quit) | Message::Quit => self.quit(),
+            Message::AgentTick => self.poll_agent(),
+            Message::AgentLive(result) => self.agent_observed(result),
+            Message::CancelAgent => self.cancel_agent(),
+            Message::AgentCancelSent(result) => {
+                match result {
+                    Ok(()) => self.toast(
+                        ToastKind::Info,
+                        "Arrêt demandé à l’agent",
+                        "La synchronisation planifiée s’arrête proprement à la fin de l’opération en cours.",
+                    ),
+                    Err(e) => {
+                        if let Some(job) = &mut self.agent_job {
+                            job.cancel_requested = false;
+                        }
+                        self.fail(&e);
+                    }
+                }
+                Task::none()
+            }
+            Message::ResumeAgent => match &self.backend {
+                Some(app) => Task::perform(
+                    backend::call(app, sync_orchestrator::Application::agent_cancel_clear),
+                    Message::AgentResumed,
+                ),
+                None => Task::none(),
+            },
+            Message::AgentResumed(result) => {
+                if let Err(e) = result {
+                    self.fail(&e);
+                }
+                self.refresh()
+            }
             Message::Nav(nav) => {
                 self.go(nav);
                 if nav == Nav::History {
@@ -717,11 +762,27 @@ impl App {
 }
 
 impl App {
-    /// Restores and focuses the main window (icon click, pending quit).
-    fn show_window(&self) -> Task<Message> {
+    /// Restores and focuses the main window (icon click, pending quit,
+    /// followed scheduled run), including from the notification area.
+    pub(crate) fn show_window(&self) -> Task<Message> {
         match self.window_id {
-            Some(id) => Task::batch([window::minimize(id, false), window::gain_focus(id)]),
+            Some(id) => Task::batch([
+                window::set_mode(id, window::Mode::Windowed),
+                window::minimize(id, false),
+                window::gain_focus(id),
+            ]),
             None => Task::none(),
+        }
+    }
+
+    /// Minimizing hides the window from the taskbar: it lives in the
+    /// notification area until restored from its icon. Without an icon the
+    /// window is only minimized, so that it can always be found again.
+    pub(crate) fn minimize_window(&self, id: window::Id) -> Task<Message> {
+        if self.tray.is_ok() {
+            window::set_mode(id, window::Mode::Hidden)
+        } else {
+            window::minimize(id, true)
         }
     }
 

@@ -178,6 +178,8 @@ pub(crate) struct Workspace {
     pub(crate) runs: HashMap<ProfileId, Vec<RunView>>,
     pub(crate) preferences: Preferences,
     pub(crate) providers: Vec<&'static str>,
+    /// A stop request blocks every scheduled run until lifted.
+    pub(crate) agent_stopped: bool,
 }
 
 fn load(app: &Application, previous: Vec<ScheduleView>) -> Result<Workspace, Failure> {
@@ -204,6 +206,7 @@ fn load(app: &Application, previous: Vec<ScheduleView>) -> Result<Workspace, Fai
         runs,
         preferences: app.preferences().map_err(Failure::from)?,
         providers: app.providers(),
+        agent_stopped: app.agent_cancel_pending(),
     })
 }
 
@@ -314,6 +317,7 @@ pub(crate) enum ScheduleChange {
         missed: MissedJobs,
         approve_writes: bool,
         approve_deletions: bool,
+        show_window: bool,
     },
 }
 
@@ -333,12 +337,14 @@ pub(crate) fn save(
                 missed,
                 approve_writes,
                 approve_deletions,
+                show_window,
             } => a.schedule_save(
                 id.clone(),
                 trigger,
                 missed,
                 approve_writes,
                 approve_deletions,
+                show_window,
             ),
         }
         .err()
@@ -382,6 +388,7 @@ pub(crate) fn regroup(
                         s.schedule.missed,
                         true,
                         s.schedule.allow_deletions,
+                        s.schedule.show_window,
                     )
                 {
                     result = Err(Failure::new(

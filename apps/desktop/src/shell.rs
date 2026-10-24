@@ -134,7 +134,7 @@ impl App {
         let mut col = column![ui::vspace(6.0)].align_x(Alignment::Center);
         for (nav, glyph, hint) in items {
             let active = self.nav == nav;
-            let mut icon = if nav == Nav::Activity && self.job.is_some() {
+            let mut icon = if nav == Nav::Activity && self.live_job().is_some() {
                 icons::spinning(
                     Glyph::Sync,
                     22.0,
@@ -466,7 +466,7 @@ impl App {
             .drag
             .as_ref()
             .is_some_and(|d| d.active && d.profile == profile.id);
-        let running = self.job.as_ref().is_some_and(|j| j.profile == profile.id);
+        let running = self.running_on(&profile.id);
         let color = mode_color(p, profile.mode);
         let mut right = row![].spacing(6).align_y(Alignment::Center);
         if self.schedule_of(&profile.id).is_some() {
@@ -537,16 +537,18 @@ impl App {
 
     /// Discord « voice connected »-style live panel at the bottom of the sidebar.
     fn job_card(&self, p: &Palette) -> El<'_, Message> {
-        let Some(job) = &self.job else {
+        let Some(job) = self.live_job() else {
             return Space::new().into();
         };
         let turn = self
             .now
             .saturating_duration_since(job.started)
             .as_secs_f32();
-        let (label, color) = match job.kind {
-            JobKind::Preview => ("Simulation en cours", p.accent),
-            JobKind::Execute => ("Exécution réelle", p.success),
+        let (label, color) = match (job.agent, job.kind) {
+            (true, JobKind::Preview) => ("Planifiée : analyse", p.accent),
+            (true, JobKind::Execute) => ("Planifiée : écritures", p.success),
+            (false, JobKind::Preview) => ("Simulation en cours", p.accent),
+            (false, JobKind::Execute) => ("Exécution réelle", p.success),
         };
         let s = &job.snapshot;
         let detail = match job.kind {
@@ -598,7 +600,7 @@ impl App {
                     } else {
                         "Annuler proprement"
                     },
-                    (!job.cancel_requested).then_some(Message::Cancel)
+                    (!job.cancel_requested).then_some(crate::profile::cancel_message(job))
                 ),
             ]
             .spacing(10)

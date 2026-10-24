@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use sync_core::ProfileId;
-use sync_orchestrator::JobSnapshot;
+use sync_orchestrator::{JobSnapshot, LiveJob};
 use sync_plan::Action;
 use sync_profiles::Profile;
 
@@ -74,6 +74,9 @@ pub(crate) struct Job {
     pub(crate) snapshot: JobSnapshot,
     pub(crate) samples: VecDeque<Sample>,
     pub(crate) cancel_requested: bool,
+    /// Scheduled run observed from the agent's published snapshot, not a job
+    /// of this window: cancelling it leaves a stop request for the agent.
+    pub(crate) agent: bool,
     /// Planned mutations (execution only), for an honest progress ratio.
     pub(crate) planned: Option<u64>,
     pub(crate) planned_bytes: Option<u64>,
@@ -240,6 +243,15 @@ pub(crate) enum Message {
     Execute,
     Executed(Result<Executed, Failure>),
     Cancel,
+    /// Periodic read of the agent's published snapshot.
+    AgentTick,
+    AgentLive(Result<Option<LiveJob>, Failure>),
+    /// Stop request for the scheduled run followed in this window.
+    CancelAgent,
+    AgentCancelSent(Result<(), Failure>),
+    /// Lifts a pending stop request so scheduled runs start again.
+    ResumeAgent,
+    AgentResumed(Result<(), Failure>),
     New(Option<String>),
     Edit(ProfileId),
     Duplicate(ProfileId),
@@ -307,6 +319,12 @@ pub(crate) struct App {
     pub(crate) hovered: Option<ProfileId>,
     pub(crate) lift: HashMap<ProfileId, Tween>,
     pub(crate) job: Option<Job>,
+    /// Scheduled run of the agent, followed live (see [`Job::agent`]).
+    pub(crate) agent_job: Option<Job>,
+    /// A read of the agent snapshot is in flight (no overlapping reads).
+    pub(crate) agent_polling: bool,
+    /// Presence lock of this window: the agent does not open a second one.
+    pub(crate) presence: Option<std::fs::File>,
     pub(crate) last_poll: Instant,
     pub(crate) preview: Option<PreviewState>,
     pub(crate) plan_generation: u64,
@@ -336,6 +354,10 @@ pub(crate) struct App {
 }
 
 pub(crate) const SEARCH_ID: &str = "profile-search";
+/// Command-line flag passed by `syncengine-agent` when it opens the window.
+pub(crate) const FOLLOW_AGENT_ARG: &str = "--suivre-agent";
+/// An active agent snapshot older than this (seconds) means the agent stopped.
+pub(crate) const AGENT_STALE_SECS: i64 = 10;
 
 impl App {
     pub(crate) fn boot() -> (Self, Task<Message>) {
@@ -364,6 +386,9 @@ impl App {
             hovered: None,
             lift: HashMap::new(),
             job: None,
+            agent_job: None,
+            agent_polling: false,
+            presence: None,
             last_poll: now,
             preview: None,
             plan_generation: 0,
@@ -392,6 +417,11 @@ impl App {
         app.theme_t = Tween::new(if light { 1.0 } else { 0.0 }, 450, Ease::InOutCubic);
         if let Some(e) = prefs_error {
             app.toast(ToastKind::Warning, "Préférences d’affichage", e);
+        }
+        // Started by the agent for a scheduled run: open on its live follow-up.
+        if std::env::args().skip(1).any(|a| a == FOLLOW_AGENT_ARG) {
+            app.nav = Nav::Activity;
+            app.nav_t = Tween::new(Nav::Activity.index() as f32, 260, Ease::OutBack);
         }
         let tasks = Task::batch([
             Task::perform(backend::open(), Message::Booted),
@@ -422,7 +452,10 @@ impl App {
                 format!("SyncEngine — exécution de {}", job.name)
             }
             Some(job) => format!("SyncEngine — simulation de {}", job.name),
-            None => "SyncEngine".into(),
+            None => match &self.agent_job {
+                Some(job) => format!("SyncEngine — synchronisation planifiée de {}", job.name),
+                None => "SyncEngine".into(),
+            },
         }
     }
 
@@ -487,6 +520,19 @@ impl App {
 
     pub(crate) fn busy(&self) -> bool {
         self.job.is_some()
+    }
+
+    /// Job shown live: the one of this window first, else the agent's.
+    pub(crate) fn live_job(&self) -> Option<&Job> {
+        self.job.as_ref().or(self.agent_job.as_ref())
+    }
+
+    /// Whether a live job (this window's or the agent's) runs on `id`.
+    pub(crate) fn running_on(&self, id: &ProfileId) -> bool {
+        [&self.job, &self.agent_job]
+            .into_iter()
+            .flatten()
+            .any(|j| &j.profile == id)
     }
 
     pub(crate) fn toast(
@@ -638,9 +684,15 @@ impl App {
         ];
         if self.animating() {
             subs.push(window::frames().map(Message::Frame));
-        } else if self.job.is_some() || self.backend.is_none() {
+        } else if self.live_job().is_some() || self.backend.is_none() {
             // Live spinners and polling at a power-friendly ~25 fps.
             subs.push(time::every(Duration::from_millis(40)).map(Message::Frame));
+        }
+        if self.backend.is_some() {
+            // Scheduled runs of the agent: about as often as it publishes
+            // while one is followed, rarely otherwise (one tiny file read).
+            let every = if self.agent_job.is_some() { 500 } else { 1500 };
+            subs.push(time::every(Duration::from_millis(every)).map(|_| Message::AgentTick));
         }
         Subscription::batch(subs)
     }

@@ -162,6 +162,22 @@ pub(crate) fn with_tip<'a, M: 'a>(
     .into()
 }
 
+/// « i » icon placed after a label: hovering it shows a longer, wrapped
+/// explanation written for people who do not know the synchronization logic.
+pub(crate) fn info_tip<'a, M: 'a>(p: &Palette, hint: &str) -> El<'a, M> {
+    tooltip(
+        container(icons::icon(Glyph::Info, 15.0, p.accent)).padding(2),
+        container(text(hint.to_owned()).size(12).line_height(1.45))
+            .padding(Padding::from([10, 12]))
+            .max_width(400.0)
+            .style(theme::tooltip(*p)),
+        tooltip::Position::Top,
+    )
+    .gap(6)
+    .delay(std::time::Duration::from_millis(150))
+    .into()
+}
+
 /// Rounded status pill with a dot.
 pub(crate) fn pill<'a, M: 'a>(color: Color, label: impl Into<String>) -> El<'a, M> {
     container(

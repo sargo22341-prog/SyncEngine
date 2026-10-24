@@ -631,6 +631,14 @@ pub(crate) struct ScheduleDraft {
     pub(crate) skip_missed: bool,
     pub(crate) approve_writes: bool,
     pub(crate) approve_deletions: bool,
+    /// Presentation preference, not a consent: kept from the existing schedule.
+    pub(crate) show_window: bool,
+}
+
+/// Whether the agent can open the follow-up window (see `syncengine-agent`):
+/// Windows tasks run in the interactive session, systemd units do not.
+pub(crate) fn window_supported() -> bool {
+    cfg!(windows)
 }
 
 impl Default for ScheduleDraft {
@@ -644,6 +652,7 @@ impl Default for ScheduleDraft {
             skip_missed: false,
             approve_writes: false,
             approve_deletions: false,
+            show_window: false,
         }
     }
 }
@@ -655,6 +664,7 @@ impl ScheduleDraft {
         let mut d = Self::default();
         let Some(schedule) = schedule else { return d };
         d.skip_missed = schedule.missed == MissedJobs::Skip;
+        d.show_window = schedule.show_window && window_supported();
         match schedule.trigger {
             Trigger::Interval { seconds } => {
                 d.kind = TriggerKind::Interval;

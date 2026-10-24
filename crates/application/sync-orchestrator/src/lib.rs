@@ -4,12 +4,17 @@
 //! Engines own every comparison, policy decision and file mutation.
 
 mod endpoints;
+mod live;
 mod pages;
 mod runs;
 mod scheduled;
 mod schedules;
 
 use connector_local::{LocalConnector, LocalOptions};
+pub use live::{
+    LIVE_FORMAT, LiveJob, agent_cancel_marker, clear_agent_cancel, desktop_present,
+    hold_desktop_presence, request_agent_cancel,
+};
 pub use runs::Run;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -72,7 +77,7 @@ fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>, AppError> {
 }
 
 /// Bounded latest observation. No event queue grows with transfer size.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobPhase {
     /// No job has started in this process.
@@ -89,7 +94,8 @@ pub enum JobPhase {
 }
 
 /// Bounded latest observation, independent of durable execution truth.
-#[derive(Debug, Clone, Default, Serialize)]
+/// Also published by the agent for other processes (see [`LiveJob`]).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JobSnapshot {
     /// True until the blocking command has completed, including final state writes.
     pub active: bool,
@@ -119,6 +125,14 @@ pub struct JobSnapshot {
     pub hash_target: u64,
     /// Failed/refused execution observations, after durable journal writes.
     pub operation_errors: u64,
+    /// Planned mutations (copies, replacements, deletions) of the executed
+    /// plan; 0 before execution. Lets an observer that did not see the preview
+    /// compute an honest progress ratio.
+    #[serde(default)]
+    pub planned_operations: u64,
+    /// Known bytes to transfer of the executed plan; 0 before execution.
+    #[serde(default)]
+    pub planned_bytes: u64,
 }
 
 /// Deletion ceilings applied by one preview of a profile that allows deletions.
@@ -639,7 +653,13 @@ impl Application {
             cancel,
         )?;
         let execution = ExecutionId::new(unique("run")?).map_err(io)?;
-        lock(&self.snapshot)?.execution = Some(execution.clone());
+        {
+            let summary = cached.plan.summary();
+            let mut snapshot = lock(&self.snapshot)?;
+            snapshot.execution = Some(execution.clone());
+            snapshot.planned_operations = summary.copy + summary.replace + summary.delete;
+            snapshot.planned_bytes = summary.bytes_to_transfer;
+        }
         let file =
             FileJournal::create(self.state.join(format!("{execution}.jsonl"))).map_err(io)?;
         let mut journal = ObservedJournal {

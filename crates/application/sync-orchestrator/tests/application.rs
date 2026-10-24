@@ -340,6 +340,7 @@ fn scheduled_conflicts_are_attention_and_do_not_advance_baseline()
         enabled: true,
         allow_deletions: false,
         missed: MissedJobs::RunOnce,
+        show_window: false,
     };
     let result = app.run(&schedule, &sync_core::CancellationToken::new());
     assert_eq!(result.status, JobStatus::Attention);
@@ -399,6 +400,7 @@ fn gui_schedule_approval_is_bound_to_current_profile_and_idle_window_allows_disp
             trigger.clone(),
             MissedJobs::RunOnce,
             false,
+            false,
             false
         )
         .is_err()
@@ -409,13 +411,22 @@ fn gui_schedule_approval_is_bound_to_current_profile_and_idle_window_allows_disp
             trigger.clone(),
             MissedJobs::RunOnce,
             true,
-            true
+            true,
+            false
         )
         .is_err()
     );
-    app.schedule_save(p.id.clone(), trigger, MissedJobs::RunOnce, true, false)?;
+    app.schedule_save(
+        p.id.clone(),
+        trigger,
+        MissedJobs::RunOnce,
+        true,
+        false,
+        true,
+    )?;
     let states = app.schedules()?;
     assert_eq!(states.len(), 1);
+    assert!(states[0].schedule.show_window);
     assert_eq!(states[0].schedule.approved, p);
     p.name = "changed".into();
     app.profile_save(p.clone())?;
@@ -725,5 +736,55 @@ fn snapshot_reports_block_level_transfer_progress() -> Result<(), Box<dyn std::e
     let end = app.snapshot()?;
     assert_eq!(end.bytes_done, SIZE);
     assert_eq!(end.bytes_transferred, SIZE);
+    Ok(())
+}
+
+/// Given an agent instance, when it is idle, then it publishes nothing; when a
+/// scheduled job ran, then a window reads the final snapshot with the planned
+/// totals, and an old active snapshot is not presented as running.
+#[test]
+fn agent_live_snapshot_is_published_only_for_a_started_job()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (temp, app, p) = fixture(SyncMode::Backup)?;
+    fs::write(p.source.join("file"), b"data")?;
+    assert!(!app.publish_live()?);
+    assert!(app.agent_live()?.is_none());
+    app.execute_scheduled(&p, false, &sync_core::CancellationToken::new())?;
+    assert!(app.publish_live()?);
+    let window =
+        Application::open_with_lock_root(temp.path().join("state"), temp.path().join("locks"))?;
+    let live = window.agent_live()?.ok_or("published snapshot")?;
+    assert_eq!(live.format, sync_orchestrator::LIVE_FORMAT);
+    assert!(!live.snapshot.active);
+    assert_eq!(live.snapshot.profile.as_ref(), Some(&p.id));
+    assert_eq!(live.snapshot.planned_operations, 1);
+    assert_eq!(live.snapshot.planned_bytes, 4);
+    assert!(!live.is_live(live.updated_at, 10), "finished job");
+    let mut running = live.clone();
+    running.snapshot.active = true;
+    assert!(running.is_live(running.updated_at + 10, 10));
+    assert!(!running.is_live(running.updated_at + 11, 10), "agent gone");
+    fs::write(temp.path().join("state/agent-live.json"), b"{")?;
+    assert_eq!(window.agent_live().err().ok_or("malformed")?.code, "format");
+    Ok(())
+}
+
+#[test]
+fn agent_stop_request_and_window_presence_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
+    let (temp, app, _) = fixture(SyncMode::Backup)?;
+    let state = temp.path().join("state");
+    assert!(!app.agent_cancel_pending());
+    app.agent_cancel_request()?;
+    assert!(app.agent_cancel_pending());
+    assert!(sync_orchestrator::agent_cancel_marker(&state).exists());
+    app.agent_cancel_clear()?;
+    app.agent_cancel_clear()?;
+    assert!(!app.agent_cancel_pending());
+    assert!(!sync_orchestrator::desktop_present(&state)?);
+    let held = sync_orchestrator::hold_desktop_presence(&state)?.ok_or("first window")?;
+    assert!(sync_orchestrator::desktop_present(&state)?);
+    assert!(sync_orchestrator::hold_desktop_presence(&state)?.is_none());
+    drop(held);
+    assert!(!sync_orchestrator::desktop_present(&state)?);
     Ok(())
 }

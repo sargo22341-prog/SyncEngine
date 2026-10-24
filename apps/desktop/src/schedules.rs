@@ -22,7 +22,30 @@ pub(crate) enum ScheduleMsg {
     Skip(bool),
     Writes(bool),
     Deletions(bool),
+    Window(bool),
 }
+
+/// Explanations behind the « i » of each option, for non-specialists.
+const SKIP_INFO: &str = "Si l’ordinateur est éteint, en veille ou si votre session Windows est fermée à l’heure prévue, la synchronisation de cette heure-là est manquée.
+
+Case cochée : elle est simplement oubliée. Rien ne se lance au rallumage ; on attend la prochaine heure prévue.
+
+Case décochée (conseillé pour une sauvegarde) : une seule synchronisation de rattrapage se lance dès que l’ordinateur est rallumé et la session ouverte, même si plusieurs heures ont été manquées.";
+const WRITES_INFO: &str = "Obligatoire pour planifier. À l’heure prévue, SyncEngine compare les deux dossiers puis copie et remplace aussitôt les fichiers nécessaires, sans vous demander de confirmer, même fenêtre fermée.
+
+C’est la vraie synchronisation, pas une simulation. Avant de remplacer un fichier, SyncEngine garde une copie de l’ancienne version, et chaque opération est notée dans l’historique.
+
+Cette case seule n’autorise aucune suppression.";
+const DELETIONS_INFO: &str = "Autorise aussi la synchronisation planifiée à effacer les fichiers qui ont disparu de l’autre côté (modes miroir et bidirectionnel).
+
+Les garde-fous restent actifs : aucune suppression si la source est vide ou illisible, si l’analyse est incomplète, ou si trop de fichiers devraient disparaître d’un coup (plus de la moitié de la destination, à partir de 10 suppressions).
+
+Sans cette case, une synchronisation qui devrait supprimer des fichiers ne fait rien du tout et s’affiche en échec dans la page Planification : vous décidez vous-même.";
+const WINDOW_INFO: &str = "À chaque synchronisation planifiée, SyncEngine ouvre sa fenêtre sur la page Activité : vous voyez en direct le pourcentage, le débit et les éventuelles erreurs, et vous pouvez l’annuler.
+
+Si la fenêtre est déjà ouverte ou réduite dans la zone de notification, elle revient simplement au premier plan.
+
+Sans cette case, la synchronisation se fait en arrière-plan, sans fenêtre ; son résultat apparaît ensuite dans l’historique. Nécessite une session Windows ouverte.";
 
 pub(crate) fn apply(d: &mut ScheduleDraft, msg: ScheduleMsg) {
     match msg {
@@ -52,7 +75,29 @@ pub(crate) fn apply(d: &mut ScheduleDraft, msg: ScheduleMsg) {
             }
         }
         ScheduleMsg::Deletions(v) => d.approve_deletions = v && d.approve_writes,
+        ScheduleMsg::Window(v) => d.show_window = v && draft::window_supported(),
     }
+}
+
+/// Checkbox followed by its « i » explanation.
+fn option<'a>(
+    p: &Palette,
+    value: bool,
+    label: &'a str,
+    on: Option<fn(bool) -> ScheduleMsg>,
+    info: &str,
+) -> El<'a, ScheduleMsg> {
+    row![
+        checkbox(value)
+            .label(label)
+            .on_toggle_maybe(on)
+            .text_size(13)
+            .style(theme::check(*p)),
+        ui::info_tip(p, info),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn stepper<'a>(
@@ -181,27 +226,40 @@ pub(crate) fn editor<'a>(
         _ => {}
     }
     if d.kind != TriggerKind::Manual {
+        if draft::window_supported() {
+            col = col.push(option(
+                p,
+                d.show_window,
+                "Afficher la fenêtre de suivi pendant la synchronisation",
+                Some(ScheduleMsg::Window),
+                WINDOW_INFO,
+            ));
+        }
         let mut consents = column![
-            checkbox(d.skip_missed)
-                .label("Ignorer les échéances manquées (sinon : une seule exécution de rattrapage)")
-                .on_toggle(ScheduleMsg::Skip)
-                .text_size(13)
-                .style(theme::check(*p)),
-            checkbox(d.approve_writes)
-                .label("J’autorise les écritures automatiques, sans confirmation dans la fenêtre")
-                .on_toggle(ScheduleMsg::Writes)
-                .text_size(13)
-                .style(theme::check(*p)),
+            option(
+                p,
+                d.skip_missed,
+                "Ignorer les échéances manquées (sinon : une seule exécution de rattrapage)",
+                Some(ScheduleMsg::Skip),
+                SKIP_INFO,
+            ),
+            option(
+                p,
+                d.approve_writes,
+                "J’autorise les écritures automatiques, sans confirmation dans la fenêtre",
+                Some(ScheduleMsg::Writes),
+                WRITES_INFO,
+            ),
         ]
         .spacing(10);
         if deletions {
-            consents = consents.push(
-                checkbox(d.approve_deletions)
-                    .label("J’autorise aussi les suppressions protégées (seuils et garde-fous maintenus)")
-                    .on_toggle_maybe(d.approve_writes.then_some(ScheduleMsg::Deletions))
-                    .text_size(13)
-                    .style(theme::check(*p)),
-            );
+            consents = consents.push(option(
+                p,
+                d.approve_deletions,
+                "J’autorise aussi les suppressions protégées (seuils et garde-fous maintenus)",
+                d.approve_writes.then_some(ScheduleMsg::Deletions),
+                DELETIONS_INFO,
+            ));
         }
         col = col.push(
             container(
@@ -356,6 +414,33 @@ impl App {
             .align_y(Alignment::Center),
         ]
         .spacing(20);
+        if self.ws.agent_stopped {
+            page = page.push(
+                container(
+                    row![
+                        icons::icon(Glyph::Stop, 18.0, p.warning),
+                        column![
+                            ui::strong(p.text, "Planifications en pause", 14.0),
+                            ui::muted(p, "Un arrêt a été demandé à l’agent : aucune synchronisation planifiée ne démarre tant que vous ne reprenez pas."),
+                        ]
+                        .spacing(2)
+                        .width(Length::Fill),
+                        ui::action(
+                            p,
+                            Tone::Primary,
+                            Some(Glyph::Refresh),
+                            "Reprendre les planifications",
+                            Some(Message::ResumeAgent)
+                        ),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                )
+                .padding(14)
+                .width(Length::Fill)
+                .style(theme::outline(*p, p.warning, 0.6)),
+            );
+        }
         if !self.ws.schedules_fresh && self.busy() {
             page = page.push(ui::callout(
                 p,
@@ -450,5 +535,21 @@ mod tests {
         assert!(!d.approve_writes && !d.approve_deletions);
         apply(&mut d, ScheduleMsg::Interval("12a3".into()));
         assert_eq!(d.interval_minutes, "123");
+    }
+
+    #[test]
+    fn window_preference_is_not_a_consent_and_needs_support() {
+        let mut d = ScheduleDraft::default();
+        assert!(!d.show_window, "never pre-ticked");
+        apply(&mut d, ScheduleMsg::Window(true));
+        assert_eq!(d.show_window, draft::window_supported());
+        apply(&mut d, ScheduleMsg::Kind(TriggerKind::Daily));
+        assert_eq!(
+            d.show_window,
+            draft::window_supported(),
+            "a new trigger resets consents, not the display preference"
+        );
+        apply(&mut d, ScheduleMsg::Window(false));
+        assert!(!d.show_window);
     }
 }

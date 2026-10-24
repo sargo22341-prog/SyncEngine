@@ -5,7 +5,46 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Planification
+- Option de présentation `Schedule::show_window` (« Afficher la fenêtre de
+  suivi pendant la synchronisation », `--show-window` côté agent). Ce n'est pas
+  un consentement : elle est reprise de la planification existante et ne change
+  ni l'autorisation ni l'exécution. Windows seulement : l'agent lance
+  `syncengine-desktop --suivre-agent` à côté de lui, sauf si une fenêtre est
+  déjà ouverte (verrou `window.lock` du dossier d'état) ; cette fenêtre revient
+  alors au premier plan. Sous Linux, une unité systemd n'a pas de session
+  graphique garantie et arrêterait la fenêtre avec elle : option non proposée.
+- Base des planifications en v3 : les configurations enregistrées sont
+  re-sérialisées pendant la migration (sinon la comparaison texte de la prise
+  de créneau ne correspondrait plus et la planification ne partirait jamais).
+  Un binaire antérieur refuse une base v3 (schéma inconnu), sans la modifier.
+- Progression partagée : pendant `tick`, l'agent publie environ deux fois par
+  seconde son `JobSnapshot` dans `agent-live.json` (fichier remplacé en bloc,
+  format versionné `LIVE_FORMAT`, présentation uniquement). Une instance qui
+  n'a démarré aucun travail n'écrit rien. `JobSnapshot` porte désormais
+  `planned_operations` et `planned_bytes` pour un pourcentage honnête sans la
+  simulation. API : `Application::publish_live`, `agent_live`,
+  `agent_cancel_request` / `agent_cancel_clear` / `agent_cancel_pending`.
+- `Application::schedule_save` prend un paramètre `show_window` (changement
+  d'API interne au dépôt ; tous les appelants sont mis à jour).
+
 ### Interface
+- La fenêtre suit en direct une synchronisation planifiée de l'agent (page
+  Activité, carte latérale, page du profil) : analyse puis écritures,
+  pourcentage, débit, refus ou échecs. Un instantané actif non rafraîchi depuis
+  10 s est considéré comme perdu (« Suivi interrompu »). En fin de tâche, une
+  notification donne l'issue et l'historique est relu.
+- « Annuler » sur une tâche de l'agent dépose la demande d'arrêt
+  (`cancel.request`), retirée automatiquement à la fin de cette tâche si la
+  fenêtre est restée ouverte ; sinon la page Planification signale la pause
+  et propose « Reprendre les planifications ».
+- Icône « i » (infobulle) après chaque option de planification, avec une
+  explication pour non-spécialistes (`ui::info_tip`).
+- Réduire la fenêtre (bouton, × en mode « réduire », barre des tâches, Win+D)
+  la masque (`window::Mode::Hidden`) : elle quitte la barre des tâches et reste
+  dans la zone de notification. Sans icône de notification, simple réduction.
+  Sous Windows, la réduction par le système est détectée par le
+  redimensionnement à 0 × 0 que signale la fenêtre.
 - Fenêtre sans décorations système (`decorations: false`) : barre de titre
   intégrée (`apps/desktop/src/titlebar.rs`) aux couleurs du thème, sans cadre
   ni bordure Windows. Déplacement par la boucle native (`window::drag`, ancrage

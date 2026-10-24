@@ -244,7 +244,11 @@ impl App {
     }
 
     fn sim_panel<'a>(&'a self, p: &Palette, profile: &'a Profile) -> El<'a, Message> {
-        if let Some(job) = self.job.as_ref().filter(|j| j.profile == profile.id) {
+        if let Some(job) = [&self.job, &self.agent_job]
+            .into_iter()
+            .flatten()
+            .find(|j| j.profile == profile.id)
+        {
             return self.live_panel(p, job, true);
         }
         if let Some(preview) = self
@@ -280,7 +284,8 @@ impl App {
         .into()
     }
 
-    /// Live job card (used on the profile page and the activity page).
+    /// Live job card (used on the profile page and the activity page), for a
+    /// job of this window or a scheduled run of the agent.
     pub(crate) fn live_panel<'a>(
         &'a self,
         p: &Palette,
@@ -291,6 +296,10 @@ impl App {
         let elapsed = self.now.saturating_duration_since(job.started);
         let turn = elapsed.as_secs_f32();
         let (title, color) = match job.kind {
+            JobKind::Preview if job.agent => ("Synchronisation planifiée : analyse", p.accent),
+            JobKind::Execute if job.agent => {
+                ("Synchronisation planifiée : écritures en cours", p.success)
+            }
             JobKind::Preview if s.hash_target > 0 => {
                 ("Simulation : comparaison du contenu", p.accent)
             }
@@ -444,10 +453,12 @@ impl App {
             row![
                 ui::eyebrow(
                     color,
-                    if job.kind == JobKind::Preview {
-                        "Simulation — aucun fichier modifié"
-                    } else {
-                        "Écritures réelles"
+                    match (job.agent, job.kind) {
+                        (true, JobKind::Preview) =>
+                            "Lancée par l’agent — analyse avant écritures, rien n’est encore modifié",
+                        (true, JobKind::Execute) => "Lancée par l’agent — écritures réelles",
+                        (false, JobKind::Preview) => "Simulation — aucun fichier modifié",
+                        (false, JobKind::Execute) => "Écritures réelles",
                     }
                 ),
                 ui::fill(),
@@ -471,7 +482,7 @@ impl App {
                 // Fill: the explanation wraps instead of squeezing the button.
                 container(ui::caption(p, if job.cancel_requested { "Annulation coopérative demandée : l’opération en cours se termine proprement." } else { "Vous pouvez annuler à tout moment ; l’état partiel est conservé et journalisé." }))
                     .width(Length::Fill),
-                ui::action(p, Tone::Secondary, Some(Glyph::Stop), "Annuler", (!job.cancel_requested).then_some(Message::Cancel)),
+                ui::action(p, Tone::Secondary, Some(Glyph::Stop), "Annuler", (!job.cancel_requested).then_some(cancel_message(job))),
             ]
             .spacing(12)
             .align_y(Alignment::Center),
@@ -1002,4 +1013,13 @@ fn op_row<'a>(p: &Palette, op: &'a OpView, compact: bool) -> El<'a, Message> {
         ..iced::widget::container::Style::default()
     })
     .into()
+}
+
+/// Cancels a job of this window, or asks the agent to stop its scheduled run.
+pub(crate) fn cancel_message(job: &Job) -> Message {
+    if job.agent {
+        Message::CancelAgent
+    } else {
+        Message::Cancel
+    }
 }
