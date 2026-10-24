@@ -35,7 +35,7 @@ pub trait ContentReader: Send {
 ///   est toujours relatif à cette racine, et le connecteur refait les
 ///   contrôles propres à son protocole ou à l'OS avant tout accès.
 ///
-/// # Modèle d'exécution (ADR 0002)
+/// # Modèle d'exécution
 /// Les opérations sont **synchrones et bloquantes**. Un appelant async doit
 /// les exécuter sur un fil dédié (`spawn_blocking` ou équivalent) ; un
 /// connecteur fondé sur un protocole async encapsule son propre exécuteur.

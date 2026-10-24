@@ -33,8 +33,8 @@
 //! ([`sync_journal`]).
 //!
 //! # Modèle d'exécution
-//! Synchrone et séquentiel (une opération à la fois), comme les connecteurs
-//! (ADR 0002) ; un appelant async l'exécute sur un fil dédié. L'annulation
+//! Synchrone et séquentiel (une opération à la fois), comme les connecteurs ;
+//! un appelant async l'exécute sur un fil dédié. L'annulation
 //! est coopérative ([`sync_core::CancellationToken`]) : consultée avant
 //! chaque opération et à chaque bloc transféré.
 //!

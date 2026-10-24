@@ -1,260 +1,33 @@
 # Journal des modifications
 
-## [0.1.0] — non publié
+Changements de comportement, par version. Les notes courtes de la prochaine
+release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
-### Icône, outillage et release automatique
-- Nouvelle icône de l’application : ressource de `syncengine-desktop.exe`
-  (Windows, via `build.rs` et `embed-resource`), icône de fenêtre et de zone de
-  notification ; marge transparente recadrée pour une taille identique aux
-  autres applications dans la barre des tâches. PNG inclus dans l’archive Linux.
-- Barre de navigation : le logo du haut est retiré ; la pastille de sélection
-  est réalignée sur les entrées.
-- Chaîne Rust 1.99.1 (`rust-version` 1.99) ; dépendances mises à jour :
-  cap-std/cap-fs-ext 4.0.3, reqwest =0.13.5, roxmltree 0.21.2, suppaftp 12.2.1
-  (patch local inchangé), dépendances transitives au plus récent.
-- CI/CD GitHub Actions unique (`ci.yml`) : contrôles Ubuntu/Windows, puis sur
-  `main` montée de version, archives portables Windows et Linux, tag et GitHub
-  Release alimentée par `RELEASE_NOTES.md` (`scripts/versioning.py`). Le
-  workflow manuel `release.yml` est retiré.
-- README en anglais (par défaut) et en français avec avertissement IA et
-  captures ; l’ancien README de développement devient `docs/DEVELOPPEMENT.md`.
+## [0.1.0]
 
-### Analyse, comparaison et copie plus rapides ; × réduit dans la barre des tâches
-- **Changement de comportement (profils)** : réglage `compare` par profil
-  sauvegarde/miroir. « Taille et date » (défaut des nouveaux profils) ne lit
-  que les dossiers ; « Contenu » (défaut des profils existants, sans
-  changement silencieux) ne relit plus que les fichiers de même taille des
-  deux côtés — mêmes constats qu’avant, sans relire le reste. Le bidirectionnel
-  garde le contenu de tous les fichiers. `profiles.sqlite` passe en v3
-  (migration additive, lignes existantes intactes ; un ancien exécutable refuse
-  la v3).
-- Simulation : source et destination analysées en parallèle (un thread
-  chacune, comme FreeFileSync), empreintes lues 4 fichiers à la fois par côté,
-  poignées de répertoires réutilisées pendant le scan (lecture seule ; l’exécution
-  revérifie toujours chaque chemin depuis la racine), contrôle de la racine en
-  une ouverture sous Windows. Progression des empreintes affichée (x / y).
-- Exécution : relecture de vérification par l’accès du fichier temporaire
-  (sans le rouvrir par son chemin), un `fsync` de journal en moins par copie
-  (l’issue d’une opération est rendue durable par l’enregistrement suivant ;
-  reprise inchangée).
-- Mesures (Windows 11, SSD NVMe, antivirus actif, 220 000 petits fichiers) :
-  simulation taille et date ≈ 4 s ; simulation par contenu d’arbres
-  identiques ≈ 5 min 50 au lieu d’environ 38 min estimées ; copie de 9 220
-  fichiers 37 s au lieu de 72 s. Détails dans `docs/ETAT_PROJET.md`.
-- Interface : le bouton × réduit SyncEngine dans la barre des tâches (réglage
-  pour revenir à la fermeture) ; icône de la zone de notification avec
-  « Ouvrir » et « Quitter SyncEngine » ; `Ctrl+Q` et bouton « Quitter » dans
-  les réglages. Barre d’outils de la simulation sur deux lignes : « Exécuter ce
-  plan… », « Annuler » et les chemins longs ne sont plus écrasés dans une
-  fenêtre étroite.
+Première version.
 
-### Interface native Rust (iced) — remplace Tauri/TypeScript
-- Nouvelle interface `syncengine-desktop` en iced 0.14, sans TypeScript, npm,
-  WebView ni script PowerShell : rail de navigation, barre de profils groupés,
-  vue d’ensemble, page profil, activité en direct, historique, planification,
-  réglages. Thèmes sombre (Discord) et clair (Google), suivi du thème système,
-  transitions animées. Voir `apps/desktop/README.md` et l’ADR 0009.
-- Assistant en sept étapes sans JSON (mode, source, destination, filtres avec
-  raccourcis, sécurité, planification, récapitulatif) ; nom proposé ;
-  « Enregistrer et simuler ».
-- Menus contextuels (profil, groupe, fond), glisser-déposer d’un profil vers un
-  groupe ou un nouveau groupe, double-clic pour modifier, raccourcis clavier
-  (dont Ctrl+1…5 indépendants de la disposition AZERTY).
-- Suivi d’exécution : anneau de progression, débit, compteurs ; fermeture
-  pendant une tâche = annulation coopérative puis fermeture après état durable.
-- Même répertoire d’état qu’avant ; `SYNCENGINE_STATE_DIR` pour un état isolé ;
-  préférences visuelles dans `desktop-ui.json` (v1). Aucun contrat moteur modifié.
-- Retrait des vendorisations GLib/GTK3, du test `glib_security` et de
-  `scripts/verify_vendor.py` (hors graphe sans Tauri). Candidat de livraison :
-  archive portable (`scripts/release.py portable`) ; installateurs à reconstruire.
+### Fonctionnalités
+- Modes sauvegarde, miroir et bidirectionnel (deux dossiers locaux, baseline,
+  tombstones, conflits conservés en place).
+- Simulation obligatoire ; seul le plan affiché est exécutable. Comparaison
+  par taille et date (défaut) ou par contenu BLAKE3.
+- Exécution vérifiée : fichier temporaire, contrôle d'empreinte ou de taille,
+  versions des fichiers remplacés ou supprimés, journal durable, annulation.
+- Garde-fous : aucune suppression sur inventaire incomplet ou source vide,
+  plafond de suppressions (50 % par défaut), destination imbriquée refusée,
+  verrou d'exécution commun à l'interface, la CLI et l'agent.
+- Interface native iced : profils et groupes, assistant en sept étapes,
+  historique, planification, thèmes clair et sombre, zone de notification.
+- CLI `syncengine` (`scan`, `compare`, `preview`, `execute`, `journal`,
+  `profile`) et agent planifié `syncengine-agent` (Planificateur de tâches
+  Windows, systemd utilisateur).
+- Connecteurs expérimentaux SFTP, WebDAV HTTPS, FTP, FTPS, SMB et source
+  OneDrive en lecture seule ; secrets lus dans `SYNCENGINE_SECRET_<réf>`.
+- Archives portables Windows et Linux publiées par la CI.
 
-### Finalisation et durcissement des phases 01 à 10
-- Profils distants typés et migration SQLite v1→v2 sans réécriture des profils
-  locaux ; features des fournisseurs existants propagées à CLI, GUI et agent.
-  OneDrive reste une source expérimentale en lecture seule, à jeton externe.
-- Planification accessible depuis la GUI ; autorisation liée au profil complet,
-  fenêtre inactive compatible avec l’agent, diagnostic des intentions inachevées.
-- Verrou OS commun également pris par CLI directe et exemple ; annulation par
-  signaux supportés, confinement local par handles, pagination et budgets de scan.
-- Journalisation du temporaire avant transfert et synchronisation des journaux ;
-  création locale sans fallback de renommage pouvant écraser une cible concurrente.
-- IPC paginé pour simulation et historique ; plan complet exécuté côté Rust.
-- Maintenance explicite des journaux/versions, sauvegarde SQLite cohérente et
-  restauration vérifiée dans un état neuf ; tests sur fixtures uniquement.
-- Tauri 2.12.5, retrait de `unic-*`, backport GLib vérifiable et macros maintenues ;
-  aucun ignore d’audit ni désactivation de lint. Notices et provenance incluses
-  dans les candidats ; licence du produit et signature non inventées.
-- Workflows complétés et recette NSIS réservée aux runners jetables. Exclusions
-  Git des documents préparatoires conservées comme décision du propriétaire.
-
-### Documentation (audit des phases 01 à 10)
-- Rapport de couverture des prompts, intégrations et contrôles Windows ;
-  distinction entre backends livrés, raccordements applicatifs et recette manquante.
-- Registre actualisé après consolidation de toutes les branches intégrées sur
-  `main` ; historique conservé, aucun changement de comportement applicatif.
-
-### Ajouté (phase 09 — source OneDrive expérimentale)
-- Connecteur Microsoft Graph en lecture seule, pagination serveur, métadonnées
-  et téléchargement en flux avec contrôle taille/ETag à EOF.
-- Port de jetons runtime externe et factory statique optionnelle ; aucun
-  login OAuth, secret persistant, destination cloud ou écran GUI annoncé.
-- Tests HTTPS isolés, limites de cohérence et conditions de recette documentées.
-
-### Ajouté (phase 08 — sources réseau expérimentales)
-- Complément de clôture : destinations SFTP/WebDAV, providers FTP/FTPS séparés,
-  adaptateur SMB natif (UNC Windows ; CIFS Linux lecture seule) et registre statique.
-- Dépôt finalisé avant vérification, spool disque borné en mémoire, original
-  préservé avant remplacement non atomique ; erreurs/cleanup/interruption explicites.
-- Cohérence inconnue/éventuelle => inventaire incomplet, aucune absence prouvée
-  ni suppression miroir. Option de cohérence forte soumise à validation du serveur.
-- SuppaFTP 12.2.1 vendored avec correction des traces PASS/réponses ; test de
-  non-divulgation avec capture TRACE, sans désactivation globale de la verbosité.
-- GUI/profils locaux inchangés, pas de cloud ou phase suivante.
-
-Première livraison de cette phase (complétée ci-dessus) :
-- Crates SFTP et WebDAV indépendants, features désactivées par défaut,
-  listing paginé, stat et lecture en flux ; erreurs et annulation explicites.
-- Vérification SSH known_hosts avant authentification injectée ; WebDAV HTTPS
-  TLS >= 1.2 sans redirections, secrets absents des options et diagnostics.
-- Tests transport et contrats SSH/SFTP/HTTPS sur serveurs loopback éphémères,
-  ajoutés au workflow CI. Aucune destination réseau ou mutation distante,
-  aucun profil/GUI réseau ; FTP, FTPS et SMB restent à leurs sous-sessions.
-
-### Ajouté (phase 07 — scheduler et agent)
-- Agent Rust sans fenêtre ni dépendance GUI, réutilisant la façade et les moteurs
-  locaux ; autorisation explicite liée au profil, suppressions séparément approuvées.
-- Scheduler SQLite v1 : intervalles/horaires UTC, événements de session selon OS,
-  échéances manquées regroupées ou ignorées, claims durables et diagnostic de reprise.
-- Adaptateurs Windows Task Scheduler et Linux systemd utilisateur : export natif
-  inspectable, installation explicite, sans promesse d'achèvement au logoff.
-- Verrou OS commun aux exécutions de la façade, annulation persistante et
-  reconnaissance explicite des interruptions avec conservation de la baseline.
-
-### Ajouté (phase 06 — interface locale)
-- Desktop Tauri 2/TypeScript : profils/groupes, assistant, différences filtrées
-  et paginées, simulation distincte des écritures, confirmations destructives,
-  progression agrégée, annulation, historique détaillé et affichage compact.
-- `sync-profiles` : configuration SQLite v1 validée et préférences.
-- `sync-orchestrator` : façade des trois modes locaux, consommation unique du
-  plan prévisualisé, versions systématiques, intentions/résultats durables,
-  exclusion des jobs desktop concurrents et verrou du répertoire d’état.
-- CI préparée pour construire le frontend avant les contrôles Rust et installer
-  les prérequis Tauri Ubuntu. Aucun agent ni connecteur distant ajouté.
-
-### Ajouté (phase 05 — synchronisation bidirectionnelle)
-- `sync-bidirectional` : décisions par baseline et BLAKE3 dans les deux sens ;
-  conflits préservés en place, tombstones sans expiration, aucune suppression
-  déduite sans baseline ni comparaison sur timestamps seuls.
-- `sync-history` : SQLite embarqué, migration transactionnelle, historique daté,
-  rétention configurable, backup cohérent, refus des bases corrompues/étrangères,
-  réservation des profils et racines identiques dans une même base.
-- `sync-session` : preview/exécution du même plan, rescan avant publication
-  atomique de baseline, diagnostic et replanification après interruption ;
-  exemple local réel avec versions systématiques et simulation par défaut.
-
-### Modifié (phase 05)
-- Plan v2 bidirectionnel avec direction et preuve baseline ; plans v1 et
-  constructeurs backup/mirror conservés, aucun instantané JSON régénéré.
-- Exécuteur : capacités directionnelles, relecture des empreintes avant
-  mutations bidirectionnelles ; journal/rapport identifient le receveur.
-- Champ public `InFlight.target` ajouté (littéraux externes à adapter) ;
-  nouveau type `OperationDirection` rejeté par les anciens lecteurs de journal.
-  Revue d'intégration demandée dans l'ADR 0005.
-
-### Ajouté (phase 04 — exécution sécurisée locale)
-- `sync-copy`, `sync-verify`, `sync-versioning`, `sync-journal`, `sync-executor` :
-  transferts en flux, vérification BLAKE3 par défaut, versions facultatives,
-  journal JSON Lines v1 durable et diagnostic après interruption.
-- Exécution du plan de preview avec préconditions revérifiées, refus motivés,
-  dépendances respectées, suppressions non récursives en dernier, progression
-  agrégée et annulation coopérative dans les moteurs.
-- Arrêt sur disque plein, déconnexion, annulation ou journal indisponible.
-- CLI `execute` (`--confirm`, nouveau `--journal`, `--confirm-delete` si
-  nécessaire, `--plan`, `--verify`, `--versions-dir`, `--progress`, `--json`)
-  et `journal` ; journal/versions refusés dans les arbres synchronisés.
-
-### Modifié (phase 04)
-- `StorageConnector` : `create_directory`, `open_write`, `delete`, avec
-  défaut `NotSupported` ; écriture `ContentWriter` en deux temps.
-- Connecteur local : mutations sur activation explicite, temporaire + fsync,
-  date source préservée, contrôle de la position réelle du parent renforcé
-  (fenêtre résiduelle documentée dans l'ADR 0004, revue demandée).
-- Double mémoire : mutations et pannes injectables ; règle d'architecture
-  interdisant les dépendances de l'exécution vers les stratégies/décisions.
-- Aide CLI et deux instantanés texte de preview : seule la dernière ligne
-  est régénérée car l'exécution existe désormais.
-- CLI : un journal situé à côté de la destination est accepté.
-
-### Ajouté (phase 03 — décisions et plans, aucune mutation)
-- `sync-plan` : plan d'exécution immuable, sérialisable en JSON versionné
-  (`schema_version` 1) et validé au chargement ; opérations `copy`, `replace`,
-  `keep`, `delete`, `conflict`, `skip` avec motif, risque, préconditions,
-  dépendances et observations ; politiques d'écrasement et de suppression ;
-  garde-fous de suppression (inventaires complets, source non vide, plafonds).
-- `sync-decisions` : contrat `PlanStrategy`, règle commune des modes
-  unidirectionnels, passes de sûreté (parent indisponible, répertoire non vidé,
-  suppressions refusées en bloc).
-- `sync-backup` : sauvegarde (jamais de suppression ; conflit si la destination
-  est plus récente, par défaut).
-- `sync-mirror` : miroir (suppressions seulement sur autorisation explicite).
-- `sync-core` : `PlanId`. `sync-compare` : `ComparisonReport::filter_rules`,
-  `left_connector`, `right_connector`.
-- CLI : commande `preview` (texte ou `--json`), refus d'une destination
-  imbriquée dans la source. Rien n'est exécuté.
-
-### Modifié (phase 03)
-- CLI : l'aide décrit la commande `preview` et ses codes de sortie ; les tests
-  d'intégration partagent leurs aides (`apps/cli/tests/common`).
-
-### Ajouté (phase 02 — scan et comparaison, lecture seule)
-- `connector-api` : opérations `list` (paginée), `stat`, `open_read` (flux),
-  `ListPage`, `PageToken`, `ListingIssue` ; modèle synchrone, annulation coopérative.
-- `sync-core` : `CancellationToken`, `ContentHash`, empreinte optionnelle dans `FileMetadata`.
-- `connector-local` : système de fichiers local en lecture seule (liens et jonctions
-  non suivis, noms ambigus Win32 refusés, racine absente = `Disconnected`).
-- `sync-filter` : règles d'inclusion et d'exclusion par globs, sérialisables.
-- `sync-scanner` : inventaire à couverture explicite (répertoires incomplets,
-  présence inconnue), empreintes BLAKE3 en flux, annulation avec inventaire partiel.
-- `sync-compare` : constats gauche/droite, équivalences, différences, incertitudes
-  (scan partiel, précision des dates, collisions de casse).
-- CLI : commandes `scan` et `compare` en lecture seule.
-
-### Modifié (phase 02)
-- `StorageConnector` : trois méthodes obligatoires ajoutées (changement d'API, ADR 0002).
-- CLI : une sortie standard inutilisable renvoie désormais le code 4 (au lieu de 1) ;
-  le code 1 signifie « différences constatées ».
-
-### Ajouté (phase 01 — fondations)
-- Cargo Workspace (édition 2024, chaîne 1.98.1 figée, lints stricts).
-- `sync-core` : identifiants typés, `ResourcePath`, `Timestamp`/`TimestampPrecision`,
-  `FileEntry`/`FileMetadata`/`EntryKind`, `HashAlgorithm`, `ExecutionStatus`.
-- `sync-errors` : `ErrorClass`, `Severity`, `ErrorContext`, `ClassifiedError`,
-  `ErrorReport`, `redact_secrets`.
-- `sync-events` : `Event`, `EventKind`, `ProgressSnapshot`, `EventSink`,
-  `BoundedEventSink`, `EventEmitter`.
-- `connector-api` : `StorageCapabilities`, `StorageFeature`, `StorageError`,
-  `StorageErrorKind`, `StorageOperation`, trait `StorageConnector`, `ensure_supported`.
-- CLI `syncengine` : commandes `help` et `version` uniquement.
-- Tests d'architecture (direction des dépendances), CI Windows/Linux, ADR 0001.
-
-## Phase 10 — 0.1.0 — 2026-10-23
-
-- Configuration release NSIS par utilisateur et Linux deb/AppImage optionnelle, CLI/agent inclus.
-- Workflow manuel de candidats, contrôles préalables, manifeste de provenance et SHA256 sans publication automatique.
-- Scripts testés de préparation/collecte et mesure synthétique du scanner ; guide installation, migrations, récupération et risques.
-- Aucun changement d'API métier, schéma SQLite ou moteur ; publication encore non validée.
-
-## Licence du produit
-
-- Licence GPL-3.0-only choisie par le propriétaire, texte officiel inclus et
-  métadonnées Cargo, frontend et paquets renseignées. Les licences tierces
-  restent distinctes.
-
-## Corrections UX et miroir — 23 octobre 2026
-
-- Actions par profil, sélection explicite en simulation, regroupement et édition des groupes.
-- Éditeur pleine page avec champs distants sans JSON, choix de dossiers, exemples de filtres et planification facultative.
-- Historique graphique paginé et suivi agrégé avec courbes d’analyse et de transfert.
-- Ouverture de la fenêtre à la connexion Windows, activation explicite de l’agent et déclencheur de connexion avec délai persistant.
-- Visibilité des suppressions interdites dans les résumés et historiques ; régressions miroir deux fichiers/retrait et source réapparue.
-- Migration additive du scheduler v1 vers v2 ; livrer ensemble GUI, agent et maintenance. Détails : `docs/CORRECTIONS_UX_MIROIR.md`.
+### Formats persistés
+- `profiles.sqlite` v3 (réglage de comparaison par profil),
+  `scheduler.sqlite` v2, `state.sqlite` et `desktop-runs.sqlite` v1. Une base plus récente est
+  refusée par un exécutable plus ancien.
+- Plans et journaux d'exécution : JSON versionné.

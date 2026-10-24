@@ -6,20 +6,19 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 ## MISSION
 
 - Développer SyncEngine comme un produit Rust modulaire et multiplateforme.
-- Ne travailler que sur la phase demandée.
-- Lire CONTEXTE.md avant toute modification.
-- Lire docs/CONTRATS.md et docs/ETAT_PROJET.md.
+- Ne travailler que sur la tâche demandée.
+- Lire docs/ARCHITECTURE.md avant toute modification.
 - Respecter l’option A : crates liés à la compilation, pas de plugins dynamiques.
 - Le comportement de sauvegarde doit privilégier l’intégrité des données.
 - Ne jamais annoncer une fonctionnalité non implémentée.
 
 ## PÉRIMÈTRE
 
-- Identifier la phase ciblée et ses critères d’acceptation.
-- Lister les fichiers/crates que la phase est autorisée à modifier.
+- Identifier la tâche ciblée et ses critères d’acceptation.
+- Lister les fichiers/crates que la tâche doit modifier.
 - Limiter les changements aux fichiers nécessaires.
 - Ne pas faire de refactoring global non demandé.
-- Ne pas anticiper une phase ultérieure par du code factice.
+- Ne pas anticiper une évolution ultérieure par du code factice.
 - Documenter les dépendances et les étapes bloquées.
 - Demander arbitrage si deux contrats sont incompatibles.
 
@@ -106,7 +105,7 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 
 ## SÉCURITÉ DES FICHIERS
 
-- Par défaut, les premières phases ne font aucune mutation.
+- Par défaut, aucune opération ne fait de mutation sans plan confirmé.
 - Ne jamais déduire une suppression d’un échec réseau.
 - Ne jamais déduire une suppression d’un scan incomplet.
 - Un montage manquant bloque les suppressions.
@@ -177,7 +176,6 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Différencier simulation et exécution réelle visuellement.
 - Montrer les suppressions et conflits avec clarté.
 - Prévoir la gestion de longues listes de fichiers.
-- Consulter visuels/REFERENCES_SYNCBACK.md.
 - Ne pas copier logos, marques ou captures dans la distribution.
 - Prévoir navigation clavier et accessibilité raisonnable.
 - Éviter de bloquer l’interface pendant les transferts.
@@ -202,11 +200,10 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 
 ## PROCESSUS DE SESSION IA
 
-- Relire les trois documents sources au début.
+- Relire AGENTS.md et docs/ARCHITECTURE.md au début.
 - Énoncer les hypothèses avant les choix non triviaux.
-- Rester dans la phase demandée.
-- Consulter docs/ETAT_PROJET.md pour connaître l’existant.
-- Travailler sur une branche isolée par phase.
+- Rester dans la tâche demandée.
+- Consulter docs/ pour connaître l’existant.
 - Laisser les autres crates inchangés sans justification.
 - Pour un nouveau contrat, demander revue d’intégration si partagé.
 - Ne pas modifier simultanément le même contrat entre sessions.
@@ -215,12 +212,12 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Montrer les commandes réellement exécutées.
 - Distinguer tests réussis, non exécutés et échoués.
 - Ne pas affirmer une compilation sur OS non testé.
-- Remplir docs/ETAT_PROJET.md avant passation.
+- Mettre à jour la documentation de docs/ touchée par le changement.
 - Signaler toute dette technique sans la masquer.
 
 ## DEFINITION OF DONE
 
-- Tous les critères du prompt de phase sont remplis.
+- Tous les critères de la tâche sont remplis.
 - Le code compile sur les plateformes testables.
 - Aucun warning connu dans le code de première partie.
 - Les tests adaptés passent sur la plateforme disponible.
@@ -228,7 +225,7 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Les interfaces publiques modifiées sont documentées.
 - Les risques de perte de données sont explicitement testés.
 - Les secrets et données réelles sont absents des tests.
-- Le README de phase donne un exemple d’utilisation.
+- La documentation concernée donne un exemple d’utilisation.
 - Le compte rendu permet de reprendre dans une autre session.
 
 ## REVUE DES CHANGEMENTS
@@ -285,7 +282,7 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Optimiser les hachages seulement après mesures.
 - Ne pas bloquer la GUI lors de tris massifs.
 - Éviter les accès concurrents à une ressource non sûre.
-- Prévoir tests sur millions d’entrées en phase performance.
+- Prévoir des tests sur des millions d’entrées pour les travaux de performance.
 - Utiliser des identifiants stables dans les plans volumineux.
 - Conserver une consommation mémoire mesurable.
 
@@ -327,7 +324,7 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Inclure les notices et attributions nécessaires.
 - Ne jamais empaqueter un secret réel de développement.
 - Tester les chemins installés et les droits du service.
-- Ne pas activer d’auto-update non contrôlé en phase initiale.
+- Ne pas activer d’auto-update non contrôlé sans décision explicite.
 - Publier les checksums des artefacts de release.
 
 ## UX ET ACCESSIBILITÉ
@@ -369,7 +366,7 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
   la CI la publie comme description de la GitHub Release puis la vide.
 - Un changement purement interne (tests, documentation, CI) n’a pas besoin de note.
 - La version vit dans `[workspace.package]` de `Cargo.toml` ; seule la CI la monte
-  (`scripts/versioning.py`). Ne pas la modifier à la main. Procédure : `docs/RELEASE.md`.
+  (`scripts/versioning.py`). Ne pas la modifier à la main. Procédure : `docs/DEVELOPPEMENT.md`.
 - `CHANGELOG.md` reste le journal détaillé des changements de comportement.
 
 ## Sur le Rapport final

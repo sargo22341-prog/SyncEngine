@@ -3,7 +3,7 @@
 # Sur main : montée de version, archives portables Windows et Linux, commit + tag vX.Y.Z et
 # GitHub Release dont le texte vient de RELEASE_NOTES.md (liste vidée dans le commit de version).
 # Les actions suivent leur tag de version majeure (@v7…) ; les montées majeures se font à la main.
-# Fonctionnement, limites et sécurité : docs/RELEASE.md.
+# Fonctionnement, limites et sécurité : docs/DEVELOPPEMENT.md.
 name: CI
 
 on:
@@ -43,7 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         # Debian n'est pas disponible en runner hébergé : Ubuntu sert de cible
-        # Linux de référence ; Debian reste à valider (voir docs/ETAT_PROJET.md).
+        # Linux de référence ; Debian reste à valider.
         os: [ubuntu-24.04, windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
@@ -138,13 +138,13 @@ jobs:
       - name: Audit RustSec (vulnérabilités)
         run: cargo audit
 
-      # Avertissements « unmaintained/unsound » hérités d'iced (docs/RELEASE.md) : signalés sur
+      # Avertissements « unmaintained/unsound » hérités d'iced : signalés sur
       # chaque run sans bloquer la release ; aucun avis n'est ignoré dans la configuration.
       - name: Audit RustSec (avertissements)
         continue-on-error: true
         run: |
           if ! cargo audit --deny warnings; then
-            echo "::warning::cargo audit signale des avertissements (voir docs/RELEASE.md)."
+            echo "::warning::cargo audit signale des avertissements hérités d'iced."
             exit 1
           fi
 

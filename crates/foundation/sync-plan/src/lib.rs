@@ -28,7 +28,7 @@
 //! # Écart au contrat conceptuel
 //! `CONTEXTE.md` place le plan dans `sync-core`. Il embarque ici les règles
 //! de filtre (`sync-filter`), que `sync-core` ne peut pas connaître sans
-//! inverser le graphe ; voir ADR 0003.
+//! inverser le graphe.
 
 mod baseline;
 mod format;

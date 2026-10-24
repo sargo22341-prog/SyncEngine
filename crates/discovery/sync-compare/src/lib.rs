@@ -17,10 +17,10 @@
 //!   [`EquivalenceBasis::ContentHash`].
 //!
 //! # Écart au contrat conceptuel
-//! `docs/CONTRATS.md` esquissait un trait `ComparisonEngine` et plaçait
+//! Le contrat initial esquissait un trait `ComparisonEngine` et plaçait
 //! `ComparisonOutcome` dans `sync-core`. Une seule implémentation existe :
-//! la phase 02 expose des fonctions ([`compare`], [`compare_entries`]) et
-//! garde le modèle dans ce crate pur (voir ADR 0002).
+//! ce crate expose des fonctions ([`compare`], [`compare_entries`]) et
+//! garde le modèle dans ce crate pur.
 
 mod compare;
 mod outcome;

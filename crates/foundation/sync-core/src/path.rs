@@ -61,7 +61,7 @@ pub enum PathError {
 /// Les segments sont en UTF-8. Un nom de fichier non représentable en UTF-8
 /// (octets arbitraires Linux, UTF-16 non apparié Windows) ne peut pas être
 /// représenté : le connecteur doit le signaler explicitement, jamais le
-/// convertir avec perte ni l'ignorer silencieusement (voir ADR 0001).
+/// convertir avec perte ni l'ignorer silencieusement.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ResourcePath(String);

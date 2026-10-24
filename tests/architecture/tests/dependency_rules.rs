@@ -1,4 +1,4 @@
-//! Vérifie les règles de couplage de `docs/CONTRATS.md` sur le graphe réel
+//! Vérifie les règles de couplage de `docs/ARCHITECTURE.md` sur le graphe réel
 //! produit par `cargo metadata`.
 
 use std::collections::{BTreeMap, BTreeSet};

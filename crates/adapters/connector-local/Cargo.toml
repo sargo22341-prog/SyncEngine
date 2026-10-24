@@ -1,7 +1,7 @@
 [package]
 license.workspace = true
 name = "connector-local"
-description = "Connecteur du système de fichiers local (Windows et Linux), en lecture seule en phase 02 : listing, métadonnées et lecture en flux, sans suivre les liens symboliques ni sortir de la racine configurée."
+description = "Connecteur du système de fichiers local (Windows et Linux) : listing, métadonnées, lecture en flux et mutations explicitement activées, sans suivre les liens symboliques ni sortir de la racine configurée."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

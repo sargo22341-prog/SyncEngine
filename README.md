@@ -95,7 +95,7 @@ removing the program never deletes them.
 
 Requirements: the Rust toolchain pinned in `rust-toolchain.toml` (installed automatically by
 `rustup`) and, on Debian/Ubuntu, `build-essential pkg-config libssl-dev zlib1g-dev`.
-Details: [docs/BUILD.md](docs/BUILD.md).
+Details: [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 ```sh
 cargo run -p syncengine-desktop                                       # local folders
@@ -113,7 +113,18 @@ syncengine execute ./source ./destination --confirm --journal ./run-01.jsonl --p
 syncengine journal ./run-01.jsonl                          # diagnose a run
 ```
 
-Every command, exit code and safeguard: [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md) (in French).
+Every command, option and exit code: [docs/CLI.md](docs/CLI.md).
+
+## Documentation
+
+In French:
+
+- [User guide](docs/GUIDE.md): modes, simulation, safeguards, interface, data folder;
+- [Command line](docs/CLI.md);
+- [Scheduling and agent](docs/PLANIFICATION.md);
+- [Network and cloud connectors](docs/CONNECTEURS.md);
+- [Architecture](docs/ARCHITECTURE.md);
+- [Development](docs/DEVELOPPEMENT.md): build, checks, releases.
 
 ## Known limitations
 
@@ -125,11 +136,11 @@ Every command, exit code and safeguard: [docs/DEVELOPPEMENT.md](docs/DEVELOPPEME
 - Remote servers do not offer global transactions: an interrupted run against a server can
   leave a partial state (always logged). Avoid other programs writing to the same folders
   during a run.
-- Installing native scheduled tasks (Windows Task Scheduler, systemd) is a separate step; see
-  [the agent guide](apps/agent/README.md).
+- Scheduled runs need native tasks: one click on Windows, manual systemd setup on Linux; see
+  [scheduling](docs/PLANIFICATION.md).
 - Linux builds are checked on Ubuntu 24.04 in CI; Debian is not compiled natively.
 - `cargo audit` reports warnings (unmaintained or unsound crates) inherited from the graphical
-  toolkit; no known vulnerability. Details: [docs/RELEASE.md](docs/RELEASE.md).
+  toolkit; no known vulnerability.
 
 ## Stack
 
@@ -146,9 +157,8 @@ Every command, exit code and safeguard: [docs/DEVELOPPEMENT.md](docs/DEVELOPPEME
 
 Contribution rules (humans and AI agents): [`AGENTS.md`](AGENTS.md). Every change to the
 application adds a short line to [`RELEASE_NOTES.md`](RELEASE_NOTES.md); the CI turns those lines
-into the next GitHub release ([docs/RELEASE.md](docs/RELEASE.md)). Architecture decisions are in
-[`docs/adr/`](docs/adr), the current state of the project in
-[`docs/ETAT_PROJET.md`](docs/ETAT_PROJET.md).
+into the next GitHub release. Build, checks and release process:
+[docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 ## License
 

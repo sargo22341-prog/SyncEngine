@@ -102,7 +102,7 @@ supprimer le programme ne les efface jamais.
 
 Prérequis : la chaîne Rust épinglée dans `rust-toolchain.toml` (installée automatiquement par
 `rustup`) et, sous Debian/Ubuntu, `build-essential pkg-config libssl-dev zlib1g-dev`.
-Détails : [docs/BUILD.md](docs/BUILD.md).
+Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 ```sh
 cargo run -p syncengine-desktop                                       # dossiers locaux
@@ -120,7 +120,16 @@ syncengine execute ./source ./destination --confirm --journal ./execution-01.jso
 syncengine journal ./execution-01.jsonl                    # diagnostiquer une exécution
 ```
 
-Commandes, codes de sortie et garde-fous : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
+Commandes, options et codes de sortie : [docs/CLI.md](docs/CLI.md).
+
+## Documentation
+
+- [Guide d'utilisation](docs/GUIDE.md) : modes, simulation, garde-fous, interface, dossier d'état ;
+- [Ligne de commande](docs/CLI.md) ;
+- [Planification et agent](docs/PLANIFICATION.md) ;
+- [Connecteurs réseau et cloud](docs/CONNECTEURS.md) ;
+- [Architecture](docs/ARCHITECTURE.md) ;
+- [Développement](docs/DEVELOPPEMENT.md) : compilation, contrôles, publication.
 
 ## Limites connues
 
@@ -133,11 +142,11 @@ Commandes, codes de sortie et garde-fous : [docs/DEVELOPPEMENT.md](docs/DEVELOPP
 - Les serveurs distants n'offrent pas de transaction globale : une exécution interrompue vers un
   serveur peut laisser un état partiel (toujours journalisé). Éviter que d'autres programmes
   écrivent dans les mêmes dossiers pendant une exécution.
-- L'installation des tâches planifiées natives (Planificateur de tâches Windows, systemd) est
-  une étape distincte : voir [le guide de l'agent](apps/agent/README.md).
+- Les exécutions planifiées demandent des tâches natives : un clic sous Windows, installation
+  systemd manuelle sous Linux ; voir [la planification](docs/PLANIFICATION.md).
 - Les builds Linux sont vérifiés sous Ubuntu 24.04 en CI ; Debian n'est pas compilé nativement.
 - `cargo audit` signale des avertissements (crates non maintenus ou « unsound ») hérités de la
-  bibliothèque graphique ; aucune vulnérabilité connue. Détails : [docs/RELEASE.md](docs/RELEASE.md).
+  bibliothèque graphique ; aucune vulnérabilité connue.
 
 ## Technologies
 
@@ -154,8 +163,8 @@ Commandes, codes de sortie et garde-fous : [docs/DEVELOPPEMENT.md](docs/DEVELOPP
 
 Règles de contribution (humains et agents IA) : [`AGENTS.md`](AGENTS.md). Chaque modification de
 l'application ajoute une courte ligne dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md) ; la CI en fait
-la prochaine GitHub Release ([docs/RELEASE.md](docs/RELEASE.md)). Les décisions d'architecture sont
-dans [`docs/adr/`](docs/adr), l'état du projet dans [`docs/ETAT_PROJET.md`](docs/ETAT_PROJET.md).
+la prochaine GitHub Release. Compilation, contrôles et publication :
+[docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 ## Licence
 

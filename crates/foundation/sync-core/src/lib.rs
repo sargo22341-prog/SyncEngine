@@ -21,8 +21,7 @@
 //!
 //! Le modèle de comparaison est défini par `sync-compare` (crate pur, sans
 //! E/S) ; le modèle de plan (`ExecutionPlan`, opérations, préconditions,
-//! politiques) par `sync-plan`, car il embarque les règles de filtre
-//! (voir ADR 0003).
+//! politiques) par `sync-plan`, car il embarque les règles de filtre.
 
 mod cancel;
 mod entry;

@@ -5,15 +5,13 @@
 //!
 //! # Périmètre
 //! - phase 01 : identité et capacités ([`StorageConnector::capabilities`]) ;
-//! - phase 02 : opérations sans mutation, synchrones et bloquantes
+//! - opérations sans mutation, synchrones et bloquantes
 //!   ([`StorageConnector::list`] paginé, [`StorageConnector::stat`],
-//!   [`StorageConnector::open_read`] en flux) et annulation coopérative
-//!   (voir `docs/adr/0002-scan-et-comparaison.md`) ;
-//! - phase 04 : mutations élémentaires, refusées par défaut
+//!   [`StorageConnector::open_read`] en flux) et annulation coopérative ;
+//! - mutations élémentaires, refusées par défaut
 //!   ([`StorageConnector::create_directory`], [`StorageConnector::open_write`]
 //!   avec dépôt temporaire puis validation explicite ([`ContentWriter`],
-//!   [`CommitMode`]), [`StorageConnector::delete`] non récursive) ; voir
-//!   `docs/adr/0004-execution-securisee.md`.
+//!   [`CommitMode`]), [`StorageConnector::delete`] non récursive).
 //!
 //! Déplacements et copies côté serveur ne font pas encore partie du
 //! contrat. Aucune implémentation de connecteur n'est fournie ici.
