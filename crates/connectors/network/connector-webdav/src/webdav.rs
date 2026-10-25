@@ -215,6 +215,9 @@ impl WebDavConnector {
         let mut bytes = Vec::new();
         let mut block = [0; 16 * 1024];
         loop {
+            if cancel.checkpoint() {
+                return Err(error(Kind::Cancelled, Op::List, path));
+            }
             paging::check(cancel, Op::List, path)?;
             let n = response
                 .read(&mut block)

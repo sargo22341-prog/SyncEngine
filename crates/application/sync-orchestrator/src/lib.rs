@@ -127,8 +127,12 @@ pub struct JobSnapshot {
     pub bytes_transferred: u64,
     /// Entries observed during preview, including directories (both endpoints).
     pub entries_scanned: u64,
-    /// Nonfatal scan anomalies; unknown coverage never authorizes deletion.
+    /// Read/listing anomalies excluding consistency warnings. Unknown coverage
+    /// never authorizes deletion; full issues remain in the inventory.
     pub scan_issues: u64,
+    /// Directories with uncertain listing consistency, distinct from read failures.
+    #[serde(default)]
+    pub scan_consistency_warnings: u64,
     /// Content hashes computed during preview (both endpoints).
     pub entries_hashed: u64,
     /// Hashes this preview must compute when known in advance (files of equal
@@ -801,9 +805,11 @@ fn both(
 struct Progress {
     entries: [AtomicU64; 2],
     issues: [AtomicU64; 2],
+    consistency: [AtomicU64; 2],
     hashed: [AtomicU64; 2],
     target: AtomicU64,
 }
+
 impl Progress {
     fn record(&self, side: bool, stats: &ScanStats, issues: usize) {
         let side = usize::from(side);
@@ -812,7 +818,11 @@ impl Progress {
             .saturating_add(stats.directories)
             .saturating_add(stats.others);
         self.entries[side].store(entries, Relaxed);
-        self.issues[side].store(issues as u64, Relaxed);
+        self.issues[side].store(
+            (issues as u64).saturating_sub(stats.consistency_warnings),
+            Relaxed,
+        );
+        self.consistency[side].store(stats.consistency_warnings, Relaxed);
         self.hashed[side].store(stats.hashed, Relaxed);
     }
     fn target(&self, hashes: u64) {
@@ -823,6 +833,7 @@ impl Progress {
             |pair: &[AtomicU64; 2]| pair[0].load(Relaxed).saturating_add(pair[1].load(Relaxed));
         snapshot.entries_scanned = sum(&self.entries);
         snapshot.scan_issues = sum(&self.issues);
+        snapshot.scan_consistency_warnings = sum(&self.consistency);
         snapshot.entries_hashed = sum(&self.hashed);
         snapshot.hash_target = self.target.load(Relaxed);
     }
@@ -864,6 +875,41 @@ impl JournalSink for ObservedJournal<'_> {
                 value.operation_errors = value.operation_errors.saturating_add(1);
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod scan_progress_tests {
+    use super::*;
+
+    #[test]
+    fn provider_uncertainty_does_not_hide_real_read_errors() {
+        let progress = Progress::default();
+        let stats = ScanStats {
+            consistency_warnings: 10,
+            files: 25,
+            ..ScanStats::default()
+        };
+        progress.record(false, &stats, 12);
+        progress.record(true, &ScanStats::default(), 3);
+        let mut snapshot = JobSnapshot::default();
+        progress.publish(&mut snapshot);
+        assert_eq!(snapshot.scan_issues, 5);
+        assert_eq!(snapshot.scan_consistency_warnings, 10);
+        assert_eq!(snapshot.entries_scanned, 25);
+    }
+
+    #[test]
+    fn older_live_snapshots_default_to_zero_consistency_warnings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut value = serde_json::to_value(JobSnapshot::default())?;
+        value
+            .as_object_mut()
+            .ok_or("not an object")?
+            .remove("scan_consistency_warnings");
+        let snapshot: JobSnapshot = serde_json::from_value(value)?;
+        assert_eq!(snapshot.scan_consistency_warnings, 0);
         Ok(())
     }
 }

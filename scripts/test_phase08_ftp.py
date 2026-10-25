@@ -30,6 +30,21 @@ def run(mode, workspace):
         authorizer.add_user("fixture", "fixture-only", str(data), perm="elradfmwMT")
         base = FTPHandler if mode == "ftp" else TLS_FTPHandler
         class Handler(base):
+            login_count = 0
+            fail_next_listing = False
+
+            def ftp_MLSD(self, path):
+                if Handler.fail_next_listing:
+                    Handler.fail_next_listing = False
+                    self.respond("421 fixture transient listing failure")
+                    self.close_when_done()
+                    return
+                return super().ftp_MLSD(path)
+
+            def on_login(self, username):
+                Handler.login_count += 1
+                return super().on_login(username)
+
             def ftp_RETR(self, file):
                 if Path(file).name == "short":
                     candidate=Path(file).resolve()
@@ -59,7 +74,22 @@ def run(mode, workspace):
         try:
             env = os.environ.copy()
             env.update(SYNCENGINE_FTP_ADDR=f"127.0.0.1:{server.socket.getsockname()[1]}",SYNCENGINE_FTP_CERT=str(folder / "cert.pem"))
-            result = subprocess.run(["cargo","test","-p",f"connector-{mode}","--features",mode,"--locked","--test","wire","--","--ignored"],
+            before = Handler.login_count
+            result = subprocess.run(["cargo","test","-p",f"connector-{mode}","--features",mode,"--locked","--test","wire",f"isolated_{mode}_listing_reuse","--","--ignored"],
+                                    cwd=workspace,env=env,timeout=180).returncode
+            if result:
+                return result
+            if Handler.login_count - before != 1:
+                raise AssertionError(f"{mode}: repeated directory listing did not reuse one login")
+            Handler.fail_next_listing = True
+            before = Handler.login_count
+            result = subprocess.run(["cargo","test","-p",f"connector-{mode}","--features",mode,"--locked","--test","wire",f"isolated_{mode}_listing_reuse","--","--ignored"],
+                                    cwd=workspace,env=env,timeout=180).returncode
+            if result:
+                return result
+            if Handler.fail_next_listing or Handler.login_count - before != 2:
+                raise AssertionError(f"{mode}: transient listing failure did not reconnect exactly once")
+            result = subprocess.run(["cargo","test","-p",f"connector-{mode}","--features",mode,"--locked","--test","wire",f"isolated_{mode}_contract","--","--ignored"],
                                     cwd=workspace,env=env,timeout=180).returncode
             if result:
                 return result

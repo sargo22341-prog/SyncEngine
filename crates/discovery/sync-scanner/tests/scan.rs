@@ -24,6 +24,61 @@ fn scan_all(connector: &MemoryConnector) -> Result<sync_scanner::Inventory, Scan
 }
 
 #[test]
+fn cyclic_empty_network_pages_fail_early_instead_of_looking_empty() {
+    use connector_api::{ContentReader, ListPage, PageToken, StorageConnector, StorageError};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Cycle {
+        inner: MemoryConnector,
+        calls: AtomicUsize,
+    }
+    impl StorageConnector for Cycle {
+        fn connector_id(&self) -> &sync_core::ConnectorId {
+            self.inner.connector_id()
+        }
+        fn capabilities(&self) -> &StorageCapabilities {
+            self.inner.capabilities()
+        }
+        fn list(
+            &self,
+            _: &sync_core::ResourcePath,
+            _: Option<&PageToken>,
+            _: &CancellationToken,
+        ) -> Result<ListPage, StorageError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(ListPage::new(vec![], vec![], Some(PageToken::new("loop"))))
+        }
+        fn stat(
+            &self,
+            path: &sync_core::ResourcePath,
+            cancel: &CancellationToken,
+        ) -> Result<FileEntry, StorageError> {
+            self.inner.stat(path, cancel)
+        }
+        fn open_read(
+            &self,
+            path: &sync_core::ResourcePath,
+            cancel: &CancellationToken,
+        ) -> Result<Box<dyn ContentReader>, StorageError> {
+            self.inner.open_read(path, cancel)
+        }
+    }
+    let connector = Cycle {
+        inner: MemoryConnector::new("cycle"),
+        calls: AtomicUsize::new(0),
+    };
+    let result = scan(
+        &connector,
+        &Filter::include_all(),
+        &ScanOptions::new(),
+        &CancellationToken::new(),
+    );
+    assert!(
+        matches!(result, Err(ScanError::RootUnavailable(e)) if e.kind() == StorageErrorKind::Conflict)
+    );
+    assert_eq!(connector.calls.load(Ordering::Relaxed), 2);
+}
+
+#[test]
 fn exhausted_entry_budget_never_becomes_an_empty_complete_inventory() {
     let connector = sample();
     let result = scan(
@@ -98,6 +153,7 @@ fn unknown_or_eventual_consistency_never_proves_absence() -> Result<(), Box<dyn 
         let mut caps = connector.capabilities().clone();
         caps.listing_consistency = consistency;
         let inventory = scan_all(&connector.with_capabilities(caps))?;
+        assert_eq!(inventory.stats().consistency_warnings, 1);
         assert!(!inventory.is_complete());
         assert!(matches!(
             inventory.presence(&path("present")),
@@ -111,6 +167,28 @@ fn unknown_or_eventual_consistency_never_proves_absence() -> Result<(), Box<dyn 
         );
     }
     Ok(())
+}
+
+#[test]
+fn uncertain_listing_warnings_remain_distinct_from_failed_reads() {
+    use connector_api::{ListingConsistency, StorageConnector};
+    let connector = sample();
+    let mut caps = connector.capabilities().clone();
+    caps.listing_consistency = ListingConsistency::Unknown;
+    let inventory = scan_all(&connector.with_capabilities(caps)).unwrap();
+    assert_eq!(inventory.stats().consistency_warnings, 4);
+    assert_eq!(inventory.issues().len(), 4);
+    assert!(
+        inventory
+            .issues()
+            .iter()
+            .all(|issue| matches!(issue.kind(), ScanIssueKind::UnreliableConsistency))
+    );
+    assert!(!inventory.is_complete());
+    assert!(matches!(
+        inventory.presence(&path("missing")),
+        Presence::Unknown(_)
+    ));
 }
 
 #[test]

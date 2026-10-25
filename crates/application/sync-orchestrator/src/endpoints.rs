@@ -84,6 +84,14 @@ pub(super) fn build_for_scan(
     cancel: &CancellationToken,
 ) -> Result<Arc<dyn StorageConnector>, AppError> {
     match remote {
+        #[cfg(feature = "smb")]
+        Some(endpoint @ RemoteEndpoint::Smb { root }) => {
+            endpoint.validate().map_err(io)?;
+            if cancel.checkpoint() {
+                return Err(error("cancelled", "analyse annulée"));
+            }
+            connector_registry::smb_scan(root.clone()).map_err(io)
+        }
         None => Ok(Arc::new(
             LocalConnector::new(local, LocalOptions::new().with_handle_reuse()).map_err(io)?,
         )),

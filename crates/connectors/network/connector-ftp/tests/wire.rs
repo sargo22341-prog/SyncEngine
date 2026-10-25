@@ -16,6 +16,11 @@ fn credentials() -> Result<Credentials, connector_api::StorageError> {
 }
 #[test]
 #[ignore = "serveur isolé requis : scripts/test_phase08_ftp.py"]
+fn isolated_ftp_listing_reuse() -> Result<(), Box<dyn std::error::Error>> {
+    exercise_listing_reuse(&FtpConnector::new(opts(), credentials()?, true)?)
+}
+#[test]
+#[ignore = "serveur isolé requis : scripts/test_phase08_ftp.py"]
 fn isolated_ftp_contract() -> Result<(), Box<dyn std::error::Error>> {
     let source = FtpConnector::new(opts(), credentials()?, true)?;
     let destination = (FtpConnector::new(opts(), credentials()?, true)?).with_exclusive_mutations();

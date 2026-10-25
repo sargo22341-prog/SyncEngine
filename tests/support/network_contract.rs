@@ -3,6 +3,24 @@ use connector_api::{CommitMode, StorageConnector, StorageErrorKind as Kind, Writ
 use sync_core::{CancellationToken, EntryKind, ResourcePath};
 struct Capture(std::sync::Mutex<Vec<String>>);
 static LOGS: Capture = Capture(std::sync::Mutex::new(Vec::new()));
+
+// The Python fixture verifies this entire test used exactly one login.
+fn exercise_listing_reuse(source: &dyn StorageConnector) -> Result<(), Box<dyn std::error::Error>> {
+    let cancel = CancellationToken::new();
+    let root = ResourcePath::root();
+    for _ in 0..2 {
+        let mut total = 0;
+        let mut token = None;
+        loop {
+            let page = source.list(&root, token.as_ref(), &cancel)?;
+            total += page.entries().len();
+            token = page.next_page().cloned();
+            if token.is_none() { break; }
+        }
+        assert_eq!(total, 601);
+    }
+    Ok(())
+}
 impl log::Log for Capture {
     fn enabled(&self, _: &log::Metadata<'_>) -> bool {
         true

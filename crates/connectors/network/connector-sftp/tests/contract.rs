@@ -92,6 +92,14 @@ impl SftpAuthentication for FixtureAuthentication {
     }
 }
 
+struct CountAuthentication(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl SftpAuthentication for CountAuthentication {
+    fn authenticate(&self, session: &ssh2::Session, username: &str) -> Result<(), ssh2::Error> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        session.userauth_password(username, "fixture-only")
+    }
+}
+
 #[test]
 #[ignore = "serveur Paramiko éphémère requis : scripts/test_phase08_sftp.py"]
 fn isolated_sftp_contract() -> Result<(), Box<dyn std::error::Error>> {
@@ -100,7 +108,11 @@ fn isolated_sftp_contract() -> Result<(), Box<dyn std::error::Error>> {
     opts.known_hosts = std::env::var_os("SYNCENGINE_SFTP_HOSTS")
         .ok_or("missing fixture")?
         .into();
-    let connector = SftpConnector::with_authentication(opts, Box::new(FixtureAuthentication))?;
+    let authentications = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let connector = SftpConnector::with_authentication(
+        opts,
+        Box::new(CountAuthentication(authentications.clone())),
+    )?;
     let cancel = CancellationToken::new();
     let root = ResourcePath::root();
     let first = connector.list(&root, None, &cancel)?;
@@ -113,6 +125,45 @@ fn isolated_sftp_contract() -> Result<(), Box<dyn std::error::Error>> {
         token = next.next_page().cloned();
     }
     assert_eq!(count, 605);
+    assert!(connector.list(&root, None, &cancel)?.next_page().is_some());
+    assert!(
+        connector
+            .list(&ResourcePath::parse("empty")?, None, &cancel)?
+            .entries()
+            .is_empty()
+    );
+    assert_eq!(
+        authentications.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "successive directory reads must reuse their authenticated session"
+    );
+    assert!(
+        connector
+            .list(&ResourcePath::parse("denied")?, None, &cancel)
+            .is_err()
+    );
+    assert!(
+        connector
+            .list(&ResourcePath::parse("empty")?, None, &cancel)?
+            .entries()
+            .is_empty()
+    );
+    assert_eq!(
+        authentications.load(std::sync::atomic::Ordering::Relaxed),
+        2,
+        "an errored listing must discard its session before the next read"
+    );
+    assert!(
+        connector
+            .list(&ResourcePath::parse("transient")?, None, &cancel)?
+            .entries()
+            .is_empty()
+    );
+    assert_eq!(
+        authentications.load(std::sync::atomic::Ordering::Relaxed),
+        3,
+        "transient listing failure must reconnect once and restart the entire directory"
+    );
     let mut destination_options = options();
     destination_options.address = std::env::var("SYNCENGINE_SFTP_ADDR")?.parse()?;
     destination_options.known_hosts = std::env::var_os("SYNCENGINE_SFTP_HOSTS")

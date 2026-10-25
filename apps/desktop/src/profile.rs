@@ -410,7 +410,7 @@ impl App {
         let stats = match job.kind {
             JobKind::Preview => row![
                 stat(
-                    "entrées analysées",
+                    "entrées analysées (2 côtés)",
                     model::count(s.entries_scanned),
                     p.muted
                 ),
@@ -428,13 +428,22 @@ impl App {
                     p.muted
                 ),
                 stat(
-                    "anomalies de lecture",
+                    "erreurs de lecture",
                     model::count(s.scan_issues),
                     if s.scan_issues > 0 {
                         p.warning
                     } else {
                         p.muted
                     }
+                ),
+                stat(
+                    "dossiers à cohérence incertaine",
+                    model::count(s.scan_consistency_warnings),
+                    if s.scan_consistency_warnings > 0 {
+                        p.warning
+                    } else {
+                        p.muted
+                    },
                 ),
                 stat("débit d’analyse", rate_label, p.muted),
             ],
@@ -505,6 +514,11 @@ impl App {
         ]
         .spacing(10)
         .width(Length::Fill);
+        if s.scan_consistency_warnings > 0 {
+            body = body.push(ui::caption(p,
+                "Le partage ne garantit pas la cohérence de ses listes : ce compteur ne signifie pas que la lecture a échoué. Les absences restent incertaines et ne permettent pas de suppression miroir."
+            ));
+        }
         if large {
             body = body.push(charts::spark(
                 values,

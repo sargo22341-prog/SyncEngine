@@ -39,6 +39,7 @@ pub struct SftpConnector {
     id: ConnectorId,
     pub(super) caps: StorageCapabilities,
     pages: Pages,
+    listing_session: std::sync::Mutex<Option<Sftp>>,
     authentication: std::sync::Arc<dyn SftpAuthentication>,
 }
 
@@ -99,6 +100,7 @@ impl SftpConnector {
             id: self.id.clone(),
             caps: self.caps.clone(),
             pages: Pages::default(),
+            listing_session: std::sync::Mutex::new(None),
             authentication: self.authentication.clone(),
         }
     }
@@ -147,6 +149,7 @@ impl SftpConnector {
             id,
             caps,
             pages: Pages::default(),
+            listing_session: std::sync::Mutex::new(None),
             authentication: authentication.into(),
         })
     }
@@ -329,44 +332,28 @@ impl StorageConnector for SftpConnector {
             return self.pages.next(path, token);
         }
         self.pages.clear(path)?;
-        let sftp = self.connect(Op::List, path, cancel)?;
-        let remote = self.remote(&sftp, path, Op::List, false, cancel)?;
-        let mut dir = sftp
-            .opendir(&remote)
-            .map_err(|e| ssh_error(e, Op::List, path))?;
-        let mut entries = Vec::new();
-        loop {
-            crate::paging::check(cancel, Op::List, path)?;
-            // ssh2 0.9.6 uses from_utf8(...).unwrap() for filenames on Windows.
-            // Contain that dependency panic; discard the listing/connection instead
-            // of reporting a complete directory or losing the caller's job state.
-            let item = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dir.readdir()))
-                .map_err(|_| {
-                    error(Kind::NotSupported, Op::List, path)
-                        .with_message("nom distant non représentable")
-                })?;
-            match item {
-                Ok((name, stat)) => {
-                    let name = name
-                        .to_str()
-                        .ok_or_else(|| error(Kind::NotSupported, Op::List, path))?;
-                    if name == "." || name == ".." {
-                        continue;
-                    }
-                    let child = path
-                        .join(name)
-                        .map_err(|_| error(Kind::NotSupported, Op::List, path))?;
-                    entries.push(entry(child, stat));
-                    if entries.len() > 10_000 {
-                        return Err(error(Kind::NotSupported, Op::List, path)
-                            .with_message("limite de 10000 entrées"));
-                    }
+        let mut slot = self
+            .listing_session
+            .lock()
+            .map_err(|_| error(Kind::Permanent, Op::List, path))?;
+        for attempt in 0..2 {
+            let session = match slot.take() {
+                Some(session) => session,
+                None => self.connect(Op::List, path, cancel)?,
+            };
+            match self.list_entries(&session, path, cancel) {
+                Ok(entries) => {
+                    *slot = Some(session);
+                    return self.pages.start(path, entries);
                 }
-                Err(e) if e.code() == ErrorCode::Session(-16) => break,
-                Err(e) => return Err(ssh_error(e, Op::List, path)),
+                Err(e) if e.kind().is_transient() && attempt == 0 => {
+                    drop(session);
+                    crate::paging::backoff(cancel, Op::List, path, Duration::from_millis(100))?;
+                }
+                Err(e) => return Err(e),
             }
         }
-        self.pages.start(path, entries)
+        Err(error(Kind::Disconnected, Op::List, path))
     }
     fn stat(
         &self,
@@ -429,5 +416,54 @@ impl ContentReader for Reader {
                 .ok_or_else(|| error(Kind::Conflict, Op::Read, &self.path))?;
         }
         Ok(n)
+    }
+}
+
+impl SftpConnector {
+    fn list_entries(
+        &self,
+        sftp: &Sftp,
+        path: &ResourcePath,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<FileEntry>, StorageError> {
+        let remote = self.remote(sftp, path, Op::List, false, cancel)?;
+        let mut dir = sftp
+            .opendir(&remote)
+            .map_err(|e| ssh_error(e, Op::List, path))?;
+        let mut entries = Vec::new();
+        loop {
+            if cancel.checkpoint() {
+                return Err(error(Kind::Cancelled, Op::List, path));
+            }
+            // ssh2 0.9.6 uses from_utf8(...).unwrap() for filenames on Windows.
+            // Contain that dependency panic; discard the listing/connection instead
+            // of reporting a complete directory or losing the caller's job state.
+            let item = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dir.readdir()))
+                .map_err(|_| {
+                    error(Kind::NotSupported, Op::List, path)
+                        .with_message("nom distant non représentable")
+                })?;
+            match item {
+                Ok((name, stat)) => {
+                    let name = name
+                        .to_str()
+                        .ok_or_else(|| error(Kind::NotSupported, Op::List, path))?;
+                    if name == "." || name == ".." {
+                        continue;
+                    }
+                    let child = path
+                        .join(name)
+                        .map_err(|_| error(Kind::NotSupported, Op::List, path))?;
+                    entries.push(entry(child, stat));
+                    if entries.len() > 10_000 {
+                        return Err(error(Kind::NotSupported, Op::List, path)
+                            .with_message("limite de 10000 entrées"));
+                    }
+                }
+                Err(e) if e.code() == ErrorCode::Session(-16) => break,
+                Err(e) => return Err(ssh_error(e, Op::List, path)),
+            }
+        }
+        Ok(entries)
     }
 }

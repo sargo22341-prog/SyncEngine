@@ -76,6 +76,7 @@ class MemoryHandle(paramiko.SFTPHandle):
 
 class Filesystem(paramiko.SFTPServerInterface):
     fail_publication = False
+    fail_transient_listing = True
     nodes = {"/": (stat.S_IFDIR | 0o700, b"", 1700000000),
              "/root": (stat.S_IFDIR | 0o700, b"", 1700000000)}
     nodes.update({f"/root/f{n:04}": (stat.S_IFREG | 0o600, b"abc", 1700000000) for n in range(600)})
@@ -86,6 +87,11 @@ class Filesystem(paramiko.SFTPServerInterface):
                   "/root/empty": (stat.S_IFDIR | 0o700, b"", 1700000000)})
 
     def list_folder(self, path):
+        if path == "/root/transient":
+            if Filesystem.fail_transient_listing:
+                Filesystem.fail_transient_listing = False
+                return paramiko.SFTP_CONNECTION_LOST
+            return []
         if path == "/root/denied":
             return paramiko.SFTP_PERMISSION_DENIED
         if path == "/root/nonutf8":
@@ -97,6 +103,8 @@ class Filesystem(paramiko.SFTPServerInterface):
                 if name.startswith(prefix) and "/" not in name[len(prefix):] and name != path]
 
     def lstat(self, path, name=None):
+        if path == "/root/transient":
+            return attributes(path, stat.S_IFDIR | 0o700)
         if path == "/root/nonutf8":
             return attributes(path, stat.S_IFDIR | 0o700)
         if path not in self.nodes:

@@ -104,9 +104,26 @@ impl Http {
                 header.set_sensitive(true);
                 request = request.header(AUTHORIZATION, header);
             }
-            let response = request
-                .send()
-                .map_err(|_| error(Kind::Disconnected, op, path))?;
+            let response = match request.send() {
+                Ok(response) => response,
+                Err(e) => {
+                    let kind = if e.is_timeout() || e.is_connect() {
+                        Kind::Disconnected
+                    } else {
+                        Kind::Permanent
+                    };
+                    if kind.is_transient() && attempt < 2 {
+                        let start = Instant::now();
+                        let delay = Duration::from_millis(100 << attempt);
+                        while start.elapsed() < delay {
+                            check(cancel, op, path)?;
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        continue;
+                    }
+                    return Err(error(kind, op, path));
+                }
+            };
             check(cancel, op, path)?;
             let status = response.status().as_u16();
             if status == 200 || (auth && status == 302) {
@@ -153,15 +170,27 @@ impl Http {
         path: &ResourcePath,
         cancel: &CancellationToken,
     ) -> Result<T, StorageError> {
-        let response = self.get(url, true, op, path, cancel)?;
+        let mut response = self.get(url, true, op, path, cancel)?;
         if response.status().as_u16() != 200 {
             return Err(error(Kind::Permanent, op, path));
         }
         let mut bytes = Vec::new();
-        response
-            .take(JSON_LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| error(Kind::Disconnected, op, path))?;
+        let mut block = [0; 16 * 1024];
+        loop {
+            if cancel.checkpoint() {
+                return Err(error(Kind::Cancelled, op, path));
+            }
+            let n = response
+                .read(&mut block)
+                .map_err(|_| error(Kind::Disconnected, op, path))?;
+            if n == 0 {
+                break;
+            }
+            if bytes.len() as u64 + n as u64 > JSON_LIMIT {
+                return Err(error(Kind::Permanent, op, path));
+            }
+            bytes.extend_from_slice(&block[..n]);
+        }
         check(cancel, op, path)?;
         if bytes.len() as u64 > JSON_LIMIT {
             return Err(error(Kind::Permanent, op, path));

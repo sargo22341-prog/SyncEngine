@@ -16,6 +16,14 @@ fn credentials() -> Result<Credentials, connector_api::StorageError> {
 }
 #[test]
 #[ignore = "serveur isolé requis : scripts/test_phase08_ftp.py"]
+fn isolated_ftps_listing_reuse() -> Result<(), Box<dyn std::error::Error>> {
+    let pem = std::fs::read(std::env::var_os("SYNCENGINE_FTP_CERT").ok_or("no cert")?)?;
+    let source = FtpsConnector::new(opts(), credentials()?, "localhost".into())?
+        .with_root_certificate(&pem)?;
+    exercise_listing_reuse(&source)
+}
+#[test]
+#[ignore = "serveur isolé requis : scripts/test_phase08_ftp.py"]
 fn isolated_ftps_contract() -> Result<(), Box<dyn std::error::Error>> {
     let untrusted = FtpsConnector::new(opts(), credentials()?, "localhost".into())?;
     assert!(

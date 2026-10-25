@@ -32,5 +32,9 @@ while let Some(token) = page.next_page() {
 - Remplacement non atomique : l'ancien fichier est déplacé sous
   `dépôt/previous` avant la publication du nouveau, jamais supprimé d'abord.
 - Cohérence du listing inconnue : le scanner ne conclut à aucune absence.
+- Une session de listing par connecteur est réutilisée après succès seulement.
+  Une erreur l’invalide ; un échec transitoire peut recommencer le listing une
+  fois sur une nouvelle session. Les mutations et les flux fichiers gardent
+  leurs connexions propres ; aucune mutation n’est rejouée automatiquement.
 
 Tests réseau : `python scripts/test_phase08_sftp.py` (serveur loopback éphémère).

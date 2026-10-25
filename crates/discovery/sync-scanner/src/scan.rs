@@ -378,6 +378,8 @@ fn list_directory(
     {
         DirectoryState::Complete
     } else {
+        inventory.stats.consistency_warnings =
+            inventory.stats.consistency_warnings.saturating_add(1);
         inventory.issues.push(ScanIssue::new(
             directory.clone(),
             ScanIssueKind::UnreliableConsistency,
@@ -386,6 +388,7 @@ fn list_directory(
     };
     let mut children = Vec::new();
     let mut token = None;
+    let mut seen_tokens = std::collections::HashSet::new();
     loop {
         let page = connector.list(directory, token.as_ref(), cancel)?;
         let (entries, issues, next) = page.into_parts();
@@ -422,6 +425,14 @@ fn list_directory(
         }
         match next {
             Some(next) => {
+                if !seen_tokens.insert(next.clone()) {
+                    return Err(StorageError::new(
+                        StorageErrorKind::Conflict,
+                        connector_api::StorageOperation::List,
+                    )
+                    .with_path(directory.clone())
+                    .with_message("repeated listing cursor; incomplete scan"));
+                }
                 if cancel.checkpoint() {
                     return Err(StorageError::new(
                         StorageErrorKind::Cancelled,

@@ -52,6 +52,7 @@ pub struct Endpoint {
     id: ConnectorId,
     pub(crate) caps: StorageCapabilities,
     pages: Pages,
+    listing_session: std::sync::Mutex<Option<NativeTlsFtpStream>>,
     pub(crate) owns_lock: std::sync::Mutex<bool>,
 }
 pub(crate) fn err(kind: Kind, op: Op, path: &ResourcePath) -> StorageError {
@@ -139,6 +140,7 @@ impl Endpoint {
             id,
             caps,
             pages: Pages::default(),
+            listing_session: std::sync::Mutex::new(None),
             owns_lock: std::sync::Mutex::new(false),
         })
     }
@@ -176,6 +178,7 @@ impl Endpoint {
             id: self.id.clone(),
             caps: self.caps.clone(),
             pages: Pages::default(),
+            listing_session: std::sync::Mutex::new(None),
             owns_lock: std::sync::Mutex::new(false),
         }
     }
@@ -251,7 +254,42 @@ impl Endpoint {
         path: &ResourcePath,
         cancel: &CancellationToken,
     ) -> Result<Vec<FileEntry>, StorageError> {
-        let mut ftp = self.connect(Op::List, path, cancel)?;
+        paging::check(cancel, Op::List, path)?;
+        let mut slot = self
+            .listing_session
+            .lock()
+            .map_err(|_| err(Kind::Permanent, Op::List, path))?;
+        for attempt in 0..2 {
+            let mut session = match slot.take() {
+                Some(session) => session,
+                None => self.connect(Op::List, path, cancel)?,
+            };
+            match self.entries_on(&mut session, path, cancel) {
+                Ok(entries) => {
+                    *slot = Some(session);
+                    return Ok(entries);
+                }
+                Err(e) if e.kind().is_transient() && attempt == 0 => {
+                    drop(session);
+                    paging::backoff(cancel, Op::List, path, Duration::from_millis(100))?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(err(Kind::Disconnected, Op::List, path))
+    }
+
+    fn entries_on(
+        &self,
+        ftp: &mut NativeTlsFtpStream,
+        path: &ResourcePath,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<FileEntry>, StorageError> {
+        // A cached control connection must not keep observing a renamed CWD.
+        // Re-anchor every fresh listing to the configured absolute account root.
+        paging::check(cancel, Op::List, path)?;
+        ftp.cwd(&self.options.root)
+            .map_err(|e| ftp_error(e, Op::List, path))?;
         let (_, mut data) = ftp
             .custom_data_command(
                 format!("MLSD {}", command(path, Op::List)?),
@@ -261,7 +299,9 @@ impl Endpoint {
         let mut bytes = Vec::new();
         let mut buf = [0; 16384];
         loop {
-            paging::check(cancel, Op::List, path)?;
+            if cancel.checkpoint() {
+                return Err(err(Kind::Cancelled, Op::List, path));
+            }
             let n = data
                 .read(&mut buf)
                 .map_err(|_| err(Kind::Disconnected, Op::List, path))?;

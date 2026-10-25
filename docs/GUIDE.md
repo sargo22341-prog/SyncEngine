@@ -54,6 +54,20 @@ reprise après redémarrage. Avec l’agent, comptez le délai d’observation (
   **conflit** : les deux versions restent en place, à résoudre à la main. Les
   dates ne désignent jamais un gagnant.
 
+## Progression de l’analyse réseau
+
+Pendant l’analyse, « entrées analysées (2 côtés) » additionne source et destination.
+Le débit est récent : si le côté local finit avant le NAS, il peut baisser
+brusquement alors que l’analyse réseau continue normalement.
+
+« Dossiers à cohérence incertaine » désigne une limite déclarée du connecteur,
+comptée par dossier, pas une lecture échouée. SMB et les autres fournisseurs non
+caractérisés gardent cette incertitude ; une absence ne permet donc pas de
+suppression miroir. « Erreurs de lecture » compte séparément les problèmes réels
+(listing, noms non représentables, métadonnées ou empreintes indisponibles).
+Exemple : 500 dossiers à cohérence incertaine et 0 erreur signifie qu’aucune
+anomalie de lecture n’a été rapportée, sans garantir un instantané cohérent du NAS.
+
 ## Comparaison des fichiers
 
 Réglée par profil (étape « Sécurité » de l'assistant) pour la sauvegarde et le

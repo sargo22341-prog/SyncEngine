@@ -4,6 +4,41 @@ use std::sync::atomic::AtomicUsize;
 use sync_credentials::{AccessToken, CredentialError};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+#[test]
+fn read_connection_failures_retry_exactly_three_times_without_leaking_token() -> TestResult {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    let address = listener.local_addr()?;
+    // Reserved loopback endpoint that never responds; each read is bounded.
+    let tokens = Arc::new(Tokens {
+        calls: AtomicUsize::new(0),
+    });
+    let http = super::super::transport::Http {
+        client: reqwest::blocking::Client::builder()
+            .no_proxy()
+            .retry(reqwest::retry::never())
+            .timeout(std::time::Duration::from_millis(100))
+            .build()?,
+        base: Url::parse(&format!("http://{address}/"))?,
+        tokens: tokens.clone(),
+        download_hosts: vec![],
+    };
+    let error = http
+        .get(
+            &http.base,
+            true,
+            Op::List,
+            &ResourcePath::root(),
+            &CancellationToken::new(),
+        )
+        .err()
+        .ok_or("unresponsive endpoint accepted")?;
+    assert_eq!(error.kind(), Kind::Disconnected);
+    assert_eq!(tokens.calls.load(Ordering::Relaxed), 3);
+    assert!(!format!("{error:?}").contains("fixture-only-secret"));
+    drop(listener);
+    Ok(())
+}
 struct Tokens {
     calls: AtomicUsize,
 }

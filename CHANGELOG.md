@@ -5,6 +5,20 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Audit des lectures réseau
+- L’analyse SMB réutilise jusqu’à 64 poignées de dossiers déjà vérifiés, comme
+  l’analyse locale ; l’exécution garde ses parcours complets et contrôles de racine.
+- Les listings SFTP et FTP/FTPS conservent une session par connecteur après succès,
+  l’abandonnent après erreur et recommencent au plus une fois un listing transitoire
+  avec une session neuve. Aucun dépôt, renommage ou retrait n’est rejoué.
+- FTP/FTPS réapplique la racine absolue à chaque listing pour ne pas conserver
+  un répertoire courant devenu obsolète ; SMB distingue les permissions refusées.
+- OneDrive réessaie au plus trois fois les échecs transitoires de connexion GET.
+  Les lectures JSON, DAV, FTP et SFTP consultent la pause entre leurs blocs.
+- Les jetons de pagination cycliques échouent explicitement dès leur répétition.
+- L’interface sépare les erreurs de lecture des dossiers dont le fournisseur ne
+  garantit pas la cohérence. L’incertitude continue de bloquer les suppressions.
+
 ### Partages réseau Windows
 - Correction de la conversion des chemins UNC étendus retournés pour les
   handles : la racine réseau reste absolue. Correctif local de

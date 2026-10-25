@@ -20,6 +20,17 @@ affiche alors les autres connecteurs grisés.
 
 Le bidirectionnel reste limité à deux dossiers locaux.
 
+Les simulations SMB réutilisent un cache borné de 64 dossiers ; les contrôles
+de chemin de l’exécution sont conservés. Les listings SFTP et FTP/FTPS réutilisent
+une session par connecteur, abandonnée après erreur ; un listing transitoire peut
+être recommencé une fois avec une nouvelle session. Aucune mutation n’est rejouée.
+Le compteur « dossiers à cohérence incertaine » est distinct des erreurs de
+lecture : il ne permet jamais de conclure qu’un fichier absent doit être supprimé.
+Exemple : pour une sauvegarde NAS vers PC, choisir le partage SMB comme source
+et le dossier du PC comme destination, lancer une simulation et examiner séparément
+les erreurs et les incertitudes avant toute confirmation.
+Périmètre testé et limites : [audit réseau](AUDIT_RESEAU.md).
+
 ## Secrets
 
 Aucun mot de passe ni jeton n'est enregistré dans les profils. Le profil

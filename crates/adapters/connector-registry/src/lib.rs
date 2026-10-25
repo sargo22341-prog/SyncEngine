@@ -5,6 +5,15 @@
 use connector_api::{StorageConnector, StorageError};
 use std::sync::Arc;
 
+/// Builds a read-only SMB preview with bounded directory-handle reuse.
+/// Execution continues to use `Endpoint::build` without cached path traversal.
+/// # Errors
+/// Unsupported path/platform, unavailable mount or invalid configuration.
+#[cfg(feature = "smb")]
+pub fn smb_scan(root: std::path::PathBuf) -> Result<Arc<dyn StorageConnector>, StorageError> {
+    Ok(Arc::new(connector_smb::SmbConnector::for_scan(root)?))
+}
+
 #[cfg(feature = "sftp")]
 pub use connector_sftp::SftpOptions;
 #[cfg(feature = "webdav")]

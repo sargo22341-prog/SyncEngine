@@ -73,6 +73,19 @@ La baseline bidirectionnelle n'est publiée qu'après une exécution cohérente.
 Les plans et journaux sont des formats JSON versionnés. Contenu du dossier
 d'état : [Guide](GUIDE.md#données-de-lapplication).
 
+## Lectures réseau
+
+Les analyses SMB utilisent maintenant le même cache borné de 64 poignées que
+les analyses locales ; seuls les connecteurs dédiés au preview y accèdent.
+Les connecteurs d’exécution gardent la résolution complète des chemins.
+Les listings SFTP et FTP/FTPS réutilisent au plus une session par instance,
+conservée uniquement après succès, avec revalidation des chemins et de la racine
+FTP. Une erreur invalide la session ; seule la lecture complète d’un listing
+transitoire peut être recommencée une fois. Les mutations ne sont pas rejouées.
+Les avertissements de cohérence sont séparés dans les statistiques de présentation,
+sans changer les inventaires incomplets ni les garde-fous miroir.
+Voir l’[audit réseau](AUDIT_RESEAU.md) pour le périmètre et les limites.
+
 ## Contrôle pause/reprise
 
 Le jeton partagé de `sync-core` conserve une interrogation d’annulation

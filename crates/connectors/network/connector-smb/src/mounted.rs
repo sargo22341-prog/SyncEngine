@@ -30,7 +30,19 @@ impl SmbConnector {
     /// `NotSupported` pour chemin non UNC/CIFS ou mutations Linux ;
     /// `Disconnected` pour partage/montage absent, `Permanent` pour configuration invalide.
     pub fn new(root: impl Into<PathBuf>, mutations: bool) -> Result<Self, StorageError> {
-        let root = root.into();
+        Self::open(root.into(), mutations, false)
+    }
+
+    /// Opens a read-only preview scanner with at most 64 cached directory handles.
+    /// Execution must use `new` to re-walk paths before validating mutations.
+    /// Listing uncertainty and mount checks are unchanged.
+    /// # Errors
+    /// Same root, platform and availability errors as `new`.
+    pub fn for_scan(root: impl Into<PathBuf>) -> Result<Self, StorageError> {
+        Self::open(root.into(), false, true)
+    }
+
+    fn open(root: PathBuf, mutations: bool, reuse_handles: bool) -> Result<Self, StorageError> {
         let path = ResourcePath::root();
         #[cfg(windows)]
         {
@@ -52,11 +64,7 @@ impl SmbConnector {
             let _ = mutations;
             return Err(err(Kind::NotSupported, Op::Connect, &path));
         }
-        let options = if mutations {
-            LocalOptions::new().with_mutations()
-        } else {
-            LocalOptions::new()
-        };
+        let options = local_options(mutations, reuse_handles);
         let local = LocalConnector::new(&root, options)
             .map_err(|_| err(Kind::Disconnected, Op::Connect, &path))?;
         let id = ConnectorId::new("smb").map_err(|_| err(Kind::Permanent, Op::Connect, &path))?;
@@ -77,8 +85,17 @@ impl SmbConnector {
         Ok(result)
     }
     fn guard(&self, op: Op, path: &ResourcePath) -> Result<(), StorageError> {
-        if !self.root.is_dir() {
-            return Err(err(Kind::Disconnected, op, path));
+        match std::fs::metadata(&self.root) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err(err(Kind::Conflict, op, path)),
+            Err(e) => {
+                let kind = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    Kind::PermissionDenied
+                } else {
+                    Kind::Disconnected
+                };
+                return Err(err(kind, op, path));
+            }
         }
         #[cfg(target_os = "linux")]
         if mount_identity(&self.root).map_err(|_| err(Kind::Disconnected, op, path))? != self.mount
@@ -88,6 +105,17 @@ impl SmbConnector {
         Ok(())
     }
 }
+
+fn local_options(mutations: bool, reuse_handles: bool) -> LocalOptions {
+    if mutations {
+        LocalOptions::new().with_mutations()
+    } else if reuse_handles {
+        LocalOptions::new().with_handle_reuse()
+    } else {
+        LocalOptions::new()
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn mount_identity(root: &Path) -> Result<String, StorageError> {
     let path = ResourcePath::root();
@@ -248,5 +276,27 @@ mod tests {
             Kind::Disconnected
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn only_preview_reuses_handles_and_never_enables_writes() {
+        assert_eq!(
+            local_options(false, true),
+            LocalOptions::new().with_handle_reuse()
+        );
+        assert_eq!(local_options(false, false), LocalOptions::new());
+        assert_eq!(
+            local_options(true, true),
+            LocalOptions::new().with_mutations()
+        );
+        assert_eq!(
+            local_options(true, false),
+            LocalOptions::new().with_mutations()
+        );
     }
 }

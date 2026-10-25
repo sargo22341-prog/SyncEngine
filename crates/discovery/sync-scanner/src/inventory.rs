@@ -145,6 +145,9 @@ pub enum Presence<'a> {
 /// Statistiques d'un scan.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScanStats {
+    /// Directories whose listing consistency is not guaranteed by the provider.
+    /// These are uncertainty warnings, not failed reads; absence remains unknown.
+    pub consistency_warnings: u64,
     /// Fichiers ordinaires inventoriés.
     pub files: u64,
     /// Répertoires inventoriés (hors racine).
