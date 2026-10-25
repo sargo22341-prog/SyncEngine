@@ -22,7 +22,46 @@ pub(crate) struct Pages(Mutex<Option<Cursor>>);
 struct Cursor {
     path: ResourcePath,
     token: String,
-    reader: std::iter::Peekable<ReadDir>,
+    reader: std::iter::Peekable<DirectoryReader>,
+}
+
+#[derive(Debug)]
+enum DirectoryReader {
+    Standard(ReadDir),
+    #[cfg(windows)]
+    Bulk(cap_primitives::windows_listing::ReadDir),
+}
+#[derive(Debug)]
+enum ListedEntry {
+    Standard(cap_std::fs::DirEntry),
+    #[cfg(windows)]
+    Bulk(cap_primitives::windows_listing::Entry),
+}
+impl Iterator for DirectoryReader {
+    type Item = std::io::Result<ListedEntry>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Standard(reader) => reader.next().map(|r| r.map(ListedEntry::Standard)),
+            #[cfg(windows)]
+            Self::Bulk(reader) => reader.next().map(|r| r.map(ListedEntry::Bulk)),
+        }
+    }
+}
+impl ListedEntry {
+    fn file_name(&self) -> std::ffi::OsString {
+        match self {
+            Self::Standard(entry) => entry.file_name(),
+            #[cfg(windows)]
+            Self::Bulk(entry) => entry.file_name(),
+        }
+    }
+    fn metadata(&self) -> std::io::Result<cap_std::fs::Metadata> {
+        match self {
+            Self::Standard(entry) => entry.metadata(),
+            #[cfg(windows)]
+            Self::Bulk(entry) => Ok(entry.metadata()),
+        }
+    }
 }
 impl Pages {
     pub(crate) fn list(
@@ -54,7 +93,23 @@ impl Pages {
         } else {
             *slot = None;
             let dir = confined::directory_via(root, handles, path, op)?;
-            let reader = dir.entries().map_err(|e| io_error(e, op, path))?.peekable();
+            #[cfg(windows)]
+            let reader = if handles.is_some() {
+                let owned = dir
+                    .try_clone()
+                    .map_err(|e| io_error(e, op, path))?
+                    .into_std_file();
+                DirectoryReader::Bulk(
+                    cap_primitives::windows_listing::ReadDir::new(owned)
+                        .map_err(|e| io_error(e, op, path))?,
+                )
+            } else {
+                DirectoryReader::Standard(dir.entries().map_err(|e| io_error(e, op, path))?)
+            };
+            #[cfg(not(windows))]
+            let reader =
+                DirectoryReader::Standard(dir.entries().map_err(|e| io_error(e, op, path))?);
+            let reader = reader.peekable();
             *slot = Some(Cursor {
                 path: path.clone(),
                 token: String::new(),

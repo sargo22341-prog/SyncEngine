@@ -604,3 +604,21 @@ fn handle_reuse_is_ignored_when_mutations_are_enabled() {
     );
     assert!(writable.stat(&p("moved/b.md"), &cancel).is_ok());
 }
+
+#[cfg(windows)]
+#[test]
+fn bulk_enumeration_preserves_cached_file_facts_after_the_name_disappears()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = TempDir::new()?;
+    let file = temp.path().join("été.txt");
+    fs::write(&file, b"fixture")?;
+    let dir = cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority())?;
+    let mut reader = cap_primitives::windows_listing::ReadDir::new(dir.into_std_file())?;
+    let entry = reader.next().ok_or("missing entry")??;
+    fs::remove_file(file)?;
+    assert_eq!(entry.file_name(), std::ffi::OsStr::new("été.txt"));
+    assert_eq!(entry.metadata().len(), 7);
+    assert!(entry.metadata().is_file());
+    assert!(reader.next().is_none());
+    Ok(())
+}

@@ -327,15 +327,25 @@ impl StorageConnector for LocalConnector {
         if cancel.is_cancelled() {
             return Err(cancelled(operation, directory));
         }
-        self.check_root(operation)?;
-        self.pages.list(
+        let preview = self.handles.is_some();
+        if !preview || page.is_none() {
+            self.check_root(operation)?;
+        }
+        let result = self.pages.list(
             self.anchor(operation)?,
             self.handles.as_ref(),
             directory,
             page,
             self.precision,
             cancel,
-        )
+        )?;
+        // Continuation pages use the same owned, already-confined cursor. A
+        // final fresh check prevents accepting a complete listing from a root
+        // which disappeared/changed during multi-page enumeration.
+        if preview && page.is_some() && result.next_page().is_none() {
+            self.check_root(operation)?;
+        }
+        Ok(result)
     }
 
     fn stat(
@@ -486,6 +496,31 @@ impl ContentReader for LocalReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_revalidates_root_before_accepting_the_last_page()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let replacement = tempfile::tempdir()?;
+        for n in 0..600 {
+            fs::write(source.path().join(format!("f{n}")), b"data")?;
+        }
+        let mut connector =
+            LocalConnector::new(source.path(), LocalOptions::new().with_handle_reuse())?;
+        let root = ResourcePath::root();
+        let cancel = CancellationToken::new();
+        let first = connector.list(&root, None, &cancel)?;
+        // Simulate a changed root name without mutating personal files or shares.
+        connector.root = replacement.path().to_path_buf();
+        let second = connector.list(&root, first.next_page(), &cancel)?;
+        assert!(second.next_page().is_some());
+        let error = connector
+            .list(&root, second.next_page(), &cancel)
+            .err()
+            .ok_or("changed root accepted")?;
+        assert_eq!(error.kind(), StorageErrorKind::Disconnected);
+        Ok(())
+    }
 
     #[test]
     fn rejects_relative_root() {

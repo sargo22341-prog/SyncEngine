@@ -10,17 +10,20 @@ use std::{
     time::Duration,
 };
 use suppaftp::{FtpError, Mode, NativeTlsFtpStream, TlsStream, TransferStream, types::FileType};
-use sync_core::{CancellationToken, ConnectorId, EntryKind, FileEntry, FileMetadata, ResourcePath};
+use sync_core::{
+    CancellationToken, ConnectorId, EntryKind, FileEntry, FileMetadata, ResourcePath, Timestamp,
+    TimestampPrecision,
+};
 
-/// Configuration runtime sans secret, POSIX et relative au compte FTP confiné.
+/// Configuration runtime sans secret, POSIX et relative au compte FTP confinÃ©.
 #[derive(Clone)]
 pub struct Options {
-    /// Adresse résolue du serveur, sans DNS bloquant.
+    /// Adresse rÃ©solue du serveur, sans DNS bloquant.
     pub address: SocketAddr,
-    /// Racine POSIX absolue sous le compte distant confiné.
+    /// Racine POSIX absolue sous le compte distant confinÃ©.
     pub root: String,
 }
-/// Identifiants uniquement en mémoire, jamais Debug/sérialisés ou recopiés dans une erreur.
+/// Identifiants uniquement en mÃ©moire, jamais Debug/sÃ©rialisÃ©s ou recopiÃ©s dans une erreur.
 pub struct Credentials {
     user: String,
     password: String,
@@ -28,7 +31,7 @@ pub struct Credentials {
 impl Credentials {
     /// Construit des identifiants fournis par un service externe.
     /// # Errors
-    /// `Permanent` sur champ vide ou contrôle CR/LF/NUL (injection de commande).
+    /// `Permanent` sur champ vide ou contrÃ´le CR/LF/NUL (injection de commande).
     pub fn new(user: &str, password: &str) -> Result<Self, StorageError> {
         if user.is_empty()
             || [user, password]
@@ -43,7 +46,7 @@ impl Credentials {
         })
     }
 }
-/// Implémentation interne partagée, ne pas utiliser comme choix de provider UI.
+/// ImplÃ©mentation interne partagÃ©e, ne pas utiliser comme choix de provider UI.
 pub struct Endpoint {
     pub(crate) options: Options,
     credentials: Arc<Credentials>,
@@ -82,7 +85,7 @@ pub(crate) fn command(path: &ResourcePath, op: Op) -> Result<&str, StorageError>
     Ok(if path.is_root() { "." } else { path.as_str() })
 }
 impl Endpoint {
-    /// Crée le transport FTP clair après acquittement explicite du risque.
+    /// CrÃ©e le transport FTP clair aprÃ¨s acquittement explicite du risque.
     /// # Errors
     /// Configuration invalide ou `acknowledge_plaintext=false`.
     pub fn ftp(
@@ -95,7 +98,7 @@ impl Endpoint {
         }
         Self::new(options, credentials, None, "ftp")
     }
-    /// Crée exclusivement FTPS explicite ; aucune connexion claire de repli.
+    /// CrÃ©e exclusivement FTPS explicite ; aucune connexion claire de repli.
     /// # Errors
     /// Nom TLS absent ou configuration invalide.
     pub fn ftps(
@@ -156,7 +159,7 @@ impl Endpoint {
         ]);
         self
     }
-    /// Ajoute une CA explicite sans désactiver validation TLS ou nom d'hôte.
+    /// Ajoute une CA explicite sans dÃ©sactiver validation TLS ou nom d'hÃ´te.
     /// # Errors
     /// PEM invalide ou transport FTP clair.
     pub fn with_root_certificate(mut self, pem: &[u8]) -> Result<Self, StorageError> {
@@ -254,29 +257,63 @@ impl Endpoint {
         path: &ResourcePath,
         cancel: &CancellationToken,
     ) -> Result<Vec<FileEntry>, StorageError> {
-        paging::check(cancel, Op::List, path)?;
+        self.metadata_request(Op::List, path, cancel, |ftp| {
+            self.entries_on(ftp, path, cancel)
+        })
+    }
+
+    fn metadata_request<T>(
+        &self,
+        op: Op,
+        path: &ResourcePath,
+        cancel: &CancellationToken,
+        mut request: impl FnMut(&mut NativeTlsFtpStream) -> Result<T, StorageError>,
+    ) -> Result<T, StorageError> {
+        paging::check(cancel, op, path)?;
         let mut slot = self
             .listing_session
             .lock()
-            .map_err(|_| err(Kind::Permanent, Op::List, path))?;
+            .map_err(|_| err(Kind::Permanent, op, path))?;
         for attempt in 0..2 {
             let mut session = match slot.take() {
                 Some(session) => session,
-                None => self.connect(Op::List, path, cancel)?,
+                None => self.connect(op, path, cancel)?,
             };
-            match self.entries_on(&mut session, path, cancel) {
+            // Cached FTP sessions keep a CWD. Re-anchor before every metadata
+            // request, so a renamed/replaced directory is never trusted.
+            let result = session
+                .cwd(&self.options.root)
+                .map_err(|e| ftp_error(e, op, path))
+                .and_then(|()| {
+                    paging::check(cancel, op, path)?;
+                    request(&mut session)
+                })
+                .and_then(|value| {
+                    paging::check(cancel, op, path)?;
+                    Ok(value)
+                });
+            match result {
                 Ok(entries) => {
                     *slot = Some(session);
                     return Ok(entries);
                 }
                 Err(e) if e.kind().is_transient() && attempt == 0 => {
                     drop(session);
-                    paging::backoff(cancel, Op::List, path, Duration::from_millis(100))?;
+                    paging::backoff(cancel, op, path, Duration::from_millis(100))?;
+                }
+                Err(e)
+                    if op == Op::Stat
+                        && matches!(e.kind(), Kind::PermissionDenied | Kind::NotSupported) =>
+                {
+                    // A complete MLST error reply does not corrupt the control
+                    // stream; reuse it for the conservative parent-list fallback.
+                    *slot = Some(session);
+                    return Err(e);
                 }
                 Err(e) => return Err(e),
             }
         }
-        Err(err(Kind::Disconnected, Op::List, path))
+        Err(err(Kind::Disconnected, op, path))
     }
 
     fn entries_on(
@@ -288,8 +325,6 @@ impl Endpoint {
         // A cached control connection must not keep observing a renamed CWD.
         // Re-anchor every fresh listing to the configured absolute account root.
         paging::check(cancel, Op::List, path)?;
-        ftp.cwd(&self.options.root)
-            .map_err(|e| ftp_error(e, Op::List, path))?;
         let (_, mut data) = ftp
             .custom_data_command(
                 format!("MLSD {}", command(path, Op::List)?),
@@ -346,6 +381,8 @@ impl Endpoint {
 pub(crate) fn parse_facts(facts: &str, path: ResourcePath) -> Result<FileEntry, StorageError> {
     let mut kind = None;
     let mut meta = FileMetadata::unknown();
+    let mut size_seen = false;
+    let mut modified_seen = false;
     for fact in facts.split(';').filter(|s| !s.is_empty()) {
         let (key, value) = fact
             .split_once('=')
@@ -361,11 +398,23 @@ pub(crate) fn parse_facts(facts: &str, path: ResourcePath) -> Result<FileEntry, 
                 _ => EntryKind::Other,
             });
         } else if key.eq_ignore_ascii_case("size") {
+            if size_seen {
+                return Err(err(Kind::Permanent, Op::Stat, &path));
+            }
+            size_seen = true;
             meta = meta.with_size(
                 value
                     .parse()
                     .map_err(|_| err(Kind::Permanent, Op::Stat, &path))?,
             );
+        } else if key.eq_ignore_ascii_case("modify") {
+            if modified_seen {
+                return Err(err(Kind::Permanent, Op::Stat, &path));
+            }
+            modified_seen = true;
+            let (time, precision) =
+                modification_time(value).ok_or_else(|| err(Kind::Permanent, Op::Stat, &path))?;
+            meta = meta.with_modified(time, precision);
         }
     }
     Ok(FileEntry::new(
@@ -373,6 +422,42 @@ pub(crate) fn parse_facts(facts: &str, path: ResourcePath) -> Result<FileEntry, 
         kind.ok_or_else(|| err(Kind::Permanent, Op::Stat, &path))?,
         meta,
     ))
+}
+
+// RFC 3659 timestamps are UTC. Preserve fractions without inventing precision.
+fn modification_time(value: &str) -> Option<(Timestamp, TimestampPrecision)> {
+    let (date, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if date.len() != 14
+        || !date.bytes().all(|c| c.is_ascii_digit())
+        || date.starts_with("0000")
+        || fraction.len() > 9
+        || !fraction.bytes().all(|c| c.is_ascii_digit())
+        || value.ends_with('.')
+    {
+        return None;
+    }
+    let parsed = chrono::NaiveDateTime::parse_from_str(date, "%Y%m%d%H%M%S")
+        .ok()?
+        .and_utc();
+    if parsed.timestamp_subsec_nanos() != 0 {
+        return None;
+    }
+    let nanos = if fraction.is_empty() {
+        0
+    } else {
+        fraction
+            .parse::<u32>()
+            .ok()?
+            .checked_mul(10_u32.pow(9 - fraction.len() as u32))?
+    };
+    let precision = match fraction.len() {
+        0..=2 => TimestampPrecision::Second,
+        3..=5 => TimestampPrecision::Millisecond,
+        6 => TimestampPrecision::Microsecond,
+        7..=8 => TimestampPrecision::HundredNanoseconds,
+        _ => TimestampPrecision::Nanosecond,
+    };
+    Some((Timestamp::new(parsed.timestamp(), nanos).ok()?, precision))
 }
 impl StorageConnector for Endpoint {
     fn connector_id(&self) -> &ConnectorId {
@@ -400,6 +485,38 @@ impl StorageConnector for Endpoint {
         cancel: &CancellationToken,
     ) -> Result<FileEntry, StorageError> {
         command(path, Op::Stat)?;
+        let direct = self.metadata_request(Op::Stat, path, cancel, |ftp| {
+            let line = ftp
+                .mlst(Some(command(path, Op::Stat)?))
+                .map_err(|e| ftp_error(e, Op::Stat, path))?;
+            let (facts, name) = line
+                .split_once(' ')
+                .ok_or_else(|| err(Kind::Permanent, Op::Stat, path))?;
+            let absolute = if path.is_root() {
+                self.options.root.clone()
+            } else {
+                format!(
+                    "{}/{}",
+                    self.options.root.trim_end_matches('/'),
+                    path.as_str()
+                )
+            };
+            if name != absolute && name != command(path, Op::Stat)? {
+                return Err(err(Kind::Conflict, Op::Stat, path));
+            }
+            parse_facts(facts, path.clone())
+        });
+        match direct {
+            Ok(entry) => return Ok(entry),
+            // FTP 550 is ambiguous: only a complete parent listing can
+            // distinguish absence from a denied/unsupported MLST command.
+            Err(e) if matches!(e.kind(), Kind::PermissionDenied | Kind::NotSupported) => {
+                if path.is_root() {
+                    return Err(e);
+                }
+            }
+            Err(e) => return Err(e),
+        }
         if let Some(parent) = path.parent() {
             return self
                 .entries(&parent, cancel)?
@@ -407,16 +524,7 @@ impl StorageConnector for Endpoint {
                 .find(|e| e.path() == path)
                 .ok_or_else(|| err(Kind::NotFound, Op::Stat, path));
         }
-        let mut ftp = self.connect(Op::Stat, path, cancel)?;
-        let line = ftp
-            .mlst(Some("."))
-            .map_err(|e| ftp_error(e, Op::Stat, path))?;
-        parse_facts(
-            line.split_once(' ')
-                .map(|v| v.0)
-                .ok_or_else(|| err(Kind::Permanent, Op::Stat, path))?,
-            path.clone(),
-        )
+        Err(err(Kind::Permanent, Op::Stat, path))
     }
     fn open_read(
         &self,
@@ -497,5 +605,37 @@ impl<T: TlsStream + Send> ContentReader for Reader<T> {
                 .map_err(|e| ftp_error(e, Op::Read, &self.path))?;
         }
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+
+    #[test]
+    fn utc_listing_dates_preserve_fraction_and_reject_malformed_facts() {
+        let (_, precision) = modification_time("20261025120000.123456789").unwrap();
+        assert_eq!(precision, TimestampPrecision::Nanosecond);
+        assert_eq!(
+            modification_time("20261025120000.123456789").unwrap().0,
+            Timestamp::new(1792929600, 123456789).unwrap()
+        );
+        for invalid in [
+            "20260230120000",
+            "20261025120000.",
+            "20261025120000.1234567890",
+            "20261025120060",
+            "00001025120000",
+        ] {
+            assert!(modification_time(invalid).is_none(), "{invalid}");
+        }
+        assert!(parse_facts("type=file;size=1;size=2;", ResourcePath::root()).is_err());
+        assert!(
+            parse_facts(
+                "type=file;modify=20261025120000;modify=20261025120000;",
+                ResourcePath::root()
+            )
+            .is_err()
+        );
     }
 }

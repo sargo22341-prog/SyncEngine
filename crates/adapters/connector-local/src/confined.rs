@@ -129,7 +129,14 @@ pub(crate) fn directory_via(
     };
     for ancestor in chain.drain(..missing).rev() {
         let segment = ancestor.segments().last().unwrap_or("");
-        current = Arc::new(step(&current, segment, path, op)?);
+        // The no-follow open itself rejects links and non-directories. A
+        // separate symlink_metadata was repeating that same remote lookup.
+        // Execution keeps `step` and its original precondition handling.
+        current = Arc::new(
+            current
+                .open_dir_nofollow(segment)
+                .map_err(|e| io_error(e, op, path))?,
+        );
         cache.put(ancestor, Arc::clone(&current));
     }
     Ok(current)

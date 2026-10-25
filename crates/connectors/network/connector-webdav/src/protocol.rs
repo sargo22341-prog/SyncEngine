@@ -75,7 +75,7 @@ pub(super) fn parse(
 ) -> Result<Vec<FileEntry>, StorageError> {
     let invalid = || {
         error(Kind::Permanent, Op::List, requested)
-            .with_message("réponse DAV invalide ou incomplète")
+            .with_message("rÃ©ponse DAV invalide ou incomplÃ¨te")
     };
     let doc = roxmltree::Document::parse(text).map_err(|_| invalid())?;
     let multi = doc.root_element();
@@ -102,6 +102,7 @@ pub(super) fn parse(
         }
         let mut kind = None;
         let mut size = None;
+        let mut modified = None;
         for propstat in response.children().filter(|n| dav(*n, "propstat")) {
             let status = propstat
                 .children()
@@ -141,6 +142,20 @@ pub(super) fn parse(
                             .parse::<u64>()
                             .map_err(|_| invalid())?,
                     );
+                } else if dav(property, "getlastmodified") {
+                    if modified.is_some() {
+                        return Err(invalid());
+                    }
+                    let value = property.text().ok_or_else(invalid)?;
+                    if value.len() > 128 {
+                        return Err(invalid());
+                    }
+                    let date =
+                        chrono::DateTime::parse_from_rfc2822(value).map_err(|_| invalid())?;
+                    modified = Some(
+                        sync_core::Timestamp::new(date.timestamp(), date.timestamp_subsec_nanos())
+                            .map_err(|_| invalid())?,
+                    );
                 }
             }
         }
@@ -155,6 +170,9 @@ pub(super) fn parse(
         if let Some(size) = size {
             metadata = metadata.with_size(size);
         }
+        if let Some(modified) = modified {
+            metadata = metadata.with_modified(modified, sync_core::TimestampPrecision::Second);
+        }
         entries.push(FileEntry::new(path, kind, metadata));
         if entries.len() > 10_001 {
             return Err(invalid());
@@ -164,4 +182,23 @@ pub(super) fn parse(
         return Err(invalid());
     }
     Ok(entries)
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+
+    #[test]
+    fn successful_date_property_is_validated_without_extra_requests() {
+        let root = Url::parse("https://localhost/root/").unwrap();
+        for date in ["Sun, 25 Oct 2026 12:00:00 GMT", "invalid"] {
+            let xml = format!(
+                "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>/root/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype><d:getlastmodified>{date}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+            );
+            assert_eq!(
+                parse(&root, &ResourcePath::root(), "1", &xml).is_ok(),
+                date != "invalid"
+            );
+        }
+    }
 }

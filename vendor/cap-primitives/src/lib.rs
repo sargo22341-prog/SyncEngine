@@ -25,6 +25,13 @@ pub mod fs;
 pub mod net;
 pub mod time;
 
+/// Windows bulk directory enumeration for exhaustive, read-only scans.
+/// SYNCENGINE-PATCH: explicit opt-in; existing directory APIs are unchanged.
+#[cfg(windows)]
+pub mod windows_listing {
+    pub use crate::windows::fs::large_read_dir::{Entry, ReadDir};
+}
+
 #[doc(hidden)]
 pub use ambient_authority::ambient_authority_known_at_compile_time;
 pub use ambient_authority::{ambient_authority, AmbientAuthority};

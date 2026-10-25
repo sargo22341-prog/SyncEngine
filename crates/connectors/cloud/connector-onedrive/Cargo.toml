@@ -8,7 +8,7 @@ rust-version.workspace = true
 publish.workspace = true
 [features]
 default = []
-onedrive = ["dep:reqwest", "dep:serde", "dep:serde_json"]
+onedrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:chrono"]
 [dependencies]
 sync-core.workspace = true
 connector-api.workspace = true
@@ -16,6 +16,7 @@ sync-credentials.workspace = true
 reqwest = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
 [dev-dependencies]
 sync-scanner.workspace = true
 sync-filter.workspace = true

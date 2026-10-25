@@ -13,6 +13,10 @@ cap-fs-ext = "4.0.3"
 connector-api.workspace = true
 sync-core.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# Safe opt-in bulk listing API from our existing reviewed Windows dependency patch.
+cap-primitives = "4.0.3"
+
 [dev-dependencies]
 tempfile.workspace = true
 

@@ -16,7 +16,7 @@ use crate::paging::{self, Pages};
 use crate::protocol::{decoded_path, parse};
 
 const XML_LIMIT: u64 = 8 * 1024 * 1024;
-const PROPERTIES: &str = r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"#;
+const PROPERTIES: &str = r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>"#;
 
 /// Configuration non secrète WebDAV. La racine doit être une collection HTTPS.
 pub struct WebDavOptions {

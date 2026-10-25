@@ -5,6 +5,23 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Inventaires réseau sans empreintes
+- Les prévisualisations Windows utilisent un listing natif avec LARGE_FETCH,
+  repli borné si le serveur refuse ce drapeau, sans ouverture par fichier.
+- Les ouvertures no-follow remplacent un contrôle de lien redondant dans le
+  cache de dossiers ; les pages intermédiaires réutilisent le curseur et une
+  racine indisponible ou remplacée bloque la dernière page. Les contrôles de
+  mutation restent complets. Le garde SMB redondant est évité sous Windows
+  uniquement ; la vérification du montage CIFS Linux est conservée.
+- FTP/FTPS utilise MLST pour les métadonnées ciblées, puis un listing complet
+  du parent si MLST n'est pas disponible ou répond 550 ambigu ; aucune absence
+  n'est déduite directement de ce code. Les dates MLSD/MLST sont conservées.
+- Les lectures stat SFTP réutilisent la session de métadonnées ; les erreurs
+  invalident la session et seules les lectures transitoires sont rejouées.
+- Les dates déjà retournées par WebDAV et OneDrive sont exploitées sans requête
+  par fichier. Les dates malformées sont des erreurs, jamais des valeurs devinées.
+- Analyse détaillée et limites : docs/AUDIT_PERFORMANCE_RESEAU.md.
+
 ### Audit des lectures réseau
 - L’analyse SMB réutilise jusqu’à 64 poignées de dossiers déjà vérifiés, comme
   l’analyse locale ; l’exécution garde ses parcours complets et contrôles de racine.

@@ -7,6 +7,9 @@ mod dir_options_ext;
 mod dir_utils;
 mod file_type_ext;
 mod get_path;
+// SYNCENGINE-PATCH: localized FFI; ownership/buffer review in SYNCENGINE-PATCH.md.
+#[allow(unsafe_code)]
+pub(crate) mod large_read_dir;
 mod hard_link_unchecked;
 mod is_file_read_write_impl;
 mod is_same_file;

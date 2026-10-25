@@ -11,5 +11,6 @@ connector-api.workspace = true
 connector-staging.workspace = true
 sync-core.workspace = true
 suppaftp.workspace = true
+chrono.workspace = true
 [lints]
 workspace = true

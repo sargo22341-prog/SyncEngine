@@ -54,6 +54,7 @@ rust-version = "1.99"
 publish = false
 
 [workspace.dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 sync-credentials = { path = "crates/services/sync-credentials" }
 connector-ftp-transport = { path = "crates/connectors/network/connector-ftp-transport" }
 connector-staging = { path = "crates/adapters/connector-staging" }

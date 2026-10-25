@@ -1,5 +1,9 @@
 # Architecture
 
+Les inventaires Windows utilisent un lecteur natif par lots dans l'adaptateur
+local de prévisualisation ; les moteurs restent indépendants de Win32.
+Contrats et limites : [audit des performances réseau](AUDIT_PERFORMANCE_RESEAU.md).
+
 SyncEngine est un workspace Cargo : un crate par responsabilité, tous liés à la
 compilation (pas de plugins dynamiques). Les trois exécutables partagent les
 mêmes moteurs.

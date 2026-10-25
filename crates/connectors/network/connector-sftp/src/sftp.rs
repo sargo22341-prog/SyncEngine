@@ -332,42 +332,27 @@ impl StorageConnector for SftpConnector {
             return self.pages.next(path, token);
         }
         self.pages.clear(path)?;
-        let mut slot = self
-            .listing_session
-            .lock()
-            .map_err(|_| error(Kind::Permanent, Op::List, path))?;
-        for attempt in 0..2 {
-            let session = match slot.take() {
-                Some(session) => session,
-                None => self.connect(Op::List, path, cancel)?,
-            };
-            match self.list_entries(&session, path, cancel) {
-                Ok(entries) => {
-                    *slot = Some(session);
-                    return self.pages.start(path, entries);
-                }
-                Err(e) if e.kind().is_transient() && attempt == 0 => {
-                    drop(session);
-                    crate::paging::backoff(cancel, Op::List, path, Duration::from_millis(100))?;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        Err(error(Kind::Disconnected, Op::List, path))
+        let entries = self.metadata_request(Op::List, path, cancel, |session| {
+            self.list_entries(session, path, cancel)
+        })?;
+        self.pages.start(path, entries)
     }
+
     fn stat(
         &self,
         path: &ResourcePath,
         cancel: &CancellationToken,
     ) -> Result<FileEntry, StorageError> {
-        let sftp = self.connect(Op::Stat, path, cancel)?;
-        let remote = self.remote(&sftp, path, Op::Stat, true, cancel)?;
-        let stat = sftp
-            .lstat(&remote)
-            .map_err(|e| ssh_error(e, Op::Stat, path))?;
-        crate::paging::check(cancel, Op::Stat, path)?;
-        Ok(entry(path.clone(), stat))
+        self.metadata_request(Op::Stat, path, cancel, |sftp| {
+            let remote = self.remote(sftp, path, Op::Stat, true, cancel)?;
+            let stat = sftp
+                .lstat(&remote)
+                .map_err(|e| ssh_error(e, Op::Stat, path))?;
+            crate::paging::check(cancel, Op::Stat, path)?;
+            Ok(entry(path.clone(), stat))
+        })
     }
+
     fn open_read(
         &self,
         path: &ResourcePath,
@@ -465,5 +450,40 @@ impl SftpConnector {
             }
         }
         Ok(entries)
+    }
+}
+
+impl SftpConnector {
+    fn metadata_request<T>(
+        &self,
+        op: Op,
+        path: &ResourcePath,
+        cancel: &CancellationToken,
+        mut request: impl FnMut(&Sftp) -> Result<T, StorageError>,
+    ) -> Result<T, StorageError> {
+        let mut slot = self
+            .listing_session
+            .lock()
+            .map_err(|_| error(Kind::Permanent, op, path))?;
+        crate::paging::check(cancel, op, path)?;
+        for attempt in 0..2 {
+            let session = match slot.take() {
+                Some(session) => session,
+                None => self.connect(op, path, cancel)?,
+            };
+            match request(&session) {
+                Ok(entries) => {
+                    *slot = Some(session);
+                    crate::paging::check(cancel, op, path)?;
+                    return Ok(entries);
+                }
+                Err(e) if e.kind().is_transient() && attempt == 0 => {
+                    drop(session);
+                    crate::paging::backoff(cancel, op, path, Duration::from_millis(100))?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(error(Kind::Disconnected, op, path))
     }
 }

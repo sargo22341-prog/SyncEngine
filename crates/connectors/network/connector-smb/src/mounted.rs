@@ -17,6 +17,7 @@ pub struct SmbConnector {
     root: PathBuf,
     id: ConnectorId,
     caps: StorageCapabilities,
+    preview_scan: bool,
     #[cfg(target_os = "linux")]
     mount: String,
 }
@@ -78,6 +79,7 @@ impl SmbConnector {
             root,
             id,
             caps,
+            preview_scan: reuse_handles,
             #[cfg(target_os = "linux")]
             mount,
         };
@@ -103,6 +105,17 @@ impl SmbConnector {
             return Err(err(Kind::Disconnected, op, path));
         }
         Ok(())
+    }
+
+    fn read_guard(&self, op: Op, path: &ResourcePath) -> Result<(), StorageError> {
+        // On Windows the local delegate already performs identity/availability
+        // checks from fresh root handles. Do not repeat a second network stat.
+        // Linux must still validate its CIFS mount identity on every access.
+        if self.preview_scan && cfg!(windows) {
+            Ok(())
+        } else {
+            self.guard(op, path)
+        }
     }
 }
 
@@ -171,11 +184,11 @@ impl StorageConnector for SmbConnector {
         t: Option<&PageToken>,
         c: &CancellationToken,
     ) -> Result<ListPage, StorageError> {
-        self.guard(Op::List, p)?;
+        self.read_guard(Op::List, p)?;
         self.local.list(p, t, c)
     }
     fn stat(&self, p: &ResourcePath, c: &CancellationToken) -> Result<FileEntry, StorageError> {
-        self.guard(Op::Stat, p)?;
+        self.read_guard(Op::Stat, p)?;
         self.local.stat(p, c)
     }
     fn open_read(
@@ -183,7 +196,7 @@ impl StorageConnector for SmbConnector {
         p: &ResourcePath,
         c: &CancellationToken,
     ) -> Result<Box<dyn ContentReader>, StorageError> {
-        self.guard(Op::Read, p)?;
+        self.read_guard(Op::Read, p)?;
         self.local.open_read(p, c)
     }
     fn open_write(
@@ -245,6 +258,7 @@ mod tests {
             root: root.clone(),
             id: ConnectorId::new("smb")?,
             caps,
+            preview_scan: false,
         };
         let path = ResourcePath::parse("file")?;
         let cancel = CancellationToken::new();
@@ -266,6 +280,7 @@ mod tests {
             local,
             root: root.clone(),
             id: ConnectorId::new("smb")?,
+            preview_scan: false,
         };
         assert_eq!(
             connector

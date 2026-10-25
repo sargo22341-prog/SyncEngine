@@ -645,6 +645,7 @@ dependencies = [
 name = "connector-ftp-transport"
 version = "0.1.6"
 dependencies = [
+ "chrono",
  "connector-api",
  "connector-staging",
  "suppaftp",
@@ -666,6 +667,7 @@ name = "connector-local"
 version = "0.1.6"
 dependencies = [
  "cap-fs-ext",
+ "cap-primitives",
  "cap-std",
  "connector-api",
  "sync-core",
@@ -684,6 +686,7 @@ dependencies = [
 name = "connector-onedrive"
 version = "0.1.6"
 dependencies = [
+ "chrono",
  "connector-api",
  "reqwest",
  "serde",
@@ -742,6 +745,7 @@ dependencies = [
 name = "connector-webdav"
 version = "0.1.6"
 dependencies = [
+ "chrono",
  "connector-api",
  "connector-staging",
  "percent-encoding",

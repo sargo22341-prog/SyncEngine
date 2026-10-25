@@ -3,6 +3,12 @@
 Règles de contribution (humains et agents IA) : [`AGENTS.md`](../AGENTS.md).
 Organisation du code : [Architecture](ARCHITECTURE.md).
 
+Le lecteur d'inventaire Windows vendored possède des tests séparés du workspace :
+`cargo test -p cap-primitives --lib large_read_dir --locked` (également en CI).
+Mesure locale reproductible, sans NAS :
+`cargo run --release -p sync-orchestrator --example scan_handles_timing --locked`.
+Méthode et limites : [audit des inventaires réseau](AUDIT_PERFORMANCE_RESEAU.md).
+
 ## Prérequis
 
 La chaîne Rust est épinglée dans `rust-toolchain.toml` (édition 2024) ;

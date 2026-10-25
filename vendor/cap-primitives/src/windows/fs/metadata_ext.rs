@@ -16,6 +16,25 @@ pub(crate) struct ImplMetadataExt {
 }
 
 impl ImplMetadataExt {
+    // SYNCENGINE-PATCH: facts already supplied by directory enumeration, no open/stat.
+    pub(crate) fn from_find_data(
+        data: &windows_sys::Win32::Storage::FileSystem::WIN32_FIND_DATAW,
+    ) -> Self {
+        let ticks = |time: windows_sys::Win32::Foundation::FILETIME| {
+            (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+        };
+        Self {
+            file_attributes: data.dwFileAttributes,
+            creation_time: ticks(data.ftCreationTime),
+            last_access_time: ticks(data.ftLastAccessTime),
+            last_write_time: ticks(data.ftLastWriteTime),
+            file_size: (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow),
+            volume_serial_number: None,
+            number_of_links: None,
+            file_index: None,
+        }
+    }
+
     /// Constructs a new instance of `Self` from the given [`std::fs::File`]
     /// and [`std::fs::Metadata`].
     #[inline]

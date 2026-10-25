@@ -1,5 +1,10 @@
 # Connecteurs réseau et cloud
 
+Inventaires sans empreintes : les optimisations Windows, sessions de métadonnées
+et horodatages distants sont détaillés dans
+[AUDIT_PERFORMANCE_RESEAU.md](AUDIT_PERFORMANCE_RESEAU.md). Un scan incomplet
+continue de bloquer toute suppression déduite de ses absences.
+
 En plus des dossiers locaux, un profil peut utiliser un emplacement distant.
 Ces connecteurs sont **expérimentaux** (étiquetés comme tels dans
 l'interface) : ils ont été testés contre des serveurs de test isolés, pas
