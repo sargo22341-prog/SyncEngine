@@ -68,3 +68,45 @@ de `cargo fmt --all`.
 Références :
 - https://raw.githubusercontent.com/rust-lang/rust/master/library/std/src/sys/fs/windows.rs
 - https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfileexw
+
+## Lecture directe de la poignée (complément SMB)
+
+Le chemin normalisé obtenu par `get_path` peut entraîner une requête par
+composant sur SMB. Le nouveau `HandleReadDir` préfère donc
+`GetFileInformationByHandleEx(FileIdExtdDirectoryRestartInfo)` puis
+`FileIdExtdDirectoryInfo`, sans convertir la poignée en chemin. Le buffer
+est de 64 Kio ; noms, tailles, dates et tags reparse viennent du même lot.
+Le lecteur FindFirstFileEx reste le repli pour ERROR_INVALID_FUNCTION,
+ERROR_INVALID_PARAMETER ou ERROR_NOT_SUPPORTED lors du tout premier appel.
+Aucun repli après une entrée publiée ou après une erreur réseau/d'accès.
+Le connecteur mémorise ce refus de capacité pour éviter une sonde par dossier.
+
+Justification et revue interne des trois nouveaux blocs unsafe :
+- Le buffer Vec<u64> est initialisé, aligné sur huit octets et contient
+  exactement 65 536 octets ; la poignée appartient au curseur. L'appel
+  synchrone ne conserve aucun pointeur. Le même objet fichier ne doit pas
+  être énuméré concurremment via une autre poignée dupliquée ; le connecteur
+  sérialise ses pages et n'a qu'un curseur actif.
+- GetLastError est capturé immédiatement après l'échec de l'API.
+- La vue en octets n'est construite que sur la mémoire initialisée du Vec,
+  ne dépasse pas sa longueur et ne survit pas à son emprunt. Le parsing est
+  ensuite sûr : offsets croissants alignés, taille du nom paire et bornée,
+  absence de NUL/séparateurs, taille de fichier non négative. Aucun cast vers
+  une structure distante variable, aucune confiance dans ses longueurs.
+
+Seul ERROR_NO_MORE_FILES signifie fin normale. Une réponse tronquée ou
+malformée invalide le curseur. Les jonctions, symlinks et autres name-surrogate
+restent des liens ; les tags cloud non substitutifs restent distincts.
+L'identité de fichier renvoyée par le listing n'est pas utilisée comme
+précondition d'exécution. Le tampon est réutilisé entre les appels.
+Cette revue est interne, sans validation externe indépendante.
+
+Tests : `cargo test -p cap-primitives --lib handle_read_dir --locked`,
+contrats connector-local (1 500 fichiers, plusieurs lots, redémarrage,
+identités et liens), et test de performance séparé :
+`cargo test --release -p cap-primitives --lib handle_read_dir::tests::million_records_in_bounded_batches --locked -- --ignored --nocapture`.
+
+Références Microsoft :
+- https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew
+- https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex
+- https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_extd_dir_info

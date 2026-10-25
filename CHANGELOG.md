@@ -5,6 +5,18 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Complément réseau après mesure de 205 secondes
+- Les inventaires Windows lisent des lots de 64 Kio sur la poignée de dossier
+  déjà confinée, sans GetFinalPathNameByHandle ni recherche FindFirst séparée.
+  Les attributs des liens, noms UTF-16, tailles et dates sont préservés.
+- Le lecteur précédent reste le repli si le serveur refuse explicitement la
+  classe d'information, avant toute entrée publiée. Ce refus de capacité est
+  mémorisé pour éviter une nouvelle sonde sur chaque dossier.
+- L'identité du dossier racine épinglé est lue une fois ; celle du chemin
+  actuellement désigné est toujours revérifiée avant chaque nouveau dossier
+  et avant acceptation de la dernière page d'un dossier multipage.
+- Audit ciblé, mesures comparatives et limites : docs/AUDIT_SMB_205S.md.
+
 ### Inventaires réseau sans empreintes
 - Les prévisualisations Windows utilisent un listing natif avec LARGE_FETCH,
   repli borné si le serveur refuse ce drapeau, sans ouverture par fichier.

@@ -23,7 +23,7 @@ use windows_sys::Win32::System::SystemServices::{
 };
 
 /// One directory entry; metadata comes from WIN32_FIND_DATA, never a per-file open.
-pub struct Entry(WIN32_FIND_DATAW);
+pub struct Entry(pub(super) WIN32_FIND_DATAW);
 impl std::fmt::Debug for Entry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BulkEntry")

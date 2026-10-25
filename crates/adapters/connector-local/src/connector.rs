@@ -133,17 +133,39 @@ impl std::error::Error for LocalConfigError {}
 ///   seulement ; un chemin traversant un lien est refusé, et la position
 ///   réelle du dossier parent sous la racine est revérifiée juste avant la
 ///   publication (voir `write.rs` pour la limite résiduelle).
-/// - La construction ne fait aucun accès disque : une racine absente est
-///   signalée par la première opération, comme `Disconnected`.
+/// - La construction ouvre et épingle la racine et son identité. Une erreur
+///   d'accès est conservée puis signalée par la première opération ; une
+///   racine absente est signalée comme `Disconnected`.
 #[derive(Debug)]
 pub struct LocalConnector {
     id: ConnectorId,
     root: PathBuf,
-    anchor: Result<Arc<Dir>, io::Error>,
+    anchor: Result<Anchor, io::Error>,
     capabilities: StorageCapabilities,
     precision: TimestampPrecision,
     pages: crate::paging::Pages,
     handles: Option<crate::confined::Handles>,
+}
+
+// The identity belongs to the pinned object and cannot change while its handle
+// is alive. Only the root currently named by `root` needs a fresh query.
+#[derive(Debug)]
+struct Anchor {
+    directory: Arc<Dir>,
+    dev: u64,
+    ino: u64,
+}
+impl Anchor {
+    fn open(root: &Path) -> io::Result<Self> {
+        use cap_fs_ext::MetadataExt;
+        let directory = Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+        let metadata = directory.dir_metadata()?;
+        Ok(Self {
+            directory: Arc::new(directory),
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        })
+    }
 }
 
 impl LocalConnector {
@@ -187,7 +209,7 @@ impl LocalConnector {
         capabilities.symlinks = SymlinkSupport::Reported;
         Ok(Self {
             id: crate::connector_id(),
-            anchor: Dir::open_ambient_dir(&root, cap_std::ambient_authority()).map(Arc::new),
+            anchor: Anchor::open(&root),
             root,
             capabilities,
             precision,
@@ -204,6 +226,10 @@ impl LocalConnector {
     }
 
     fn anchor(&self, operation: StorageOperation) -> Result<&Arc<Dir>, StorageError> {
+        self.root_anchor(operation).map(|anchor| &anchor.directory)
+    }
+
+    fn root_anchor(&self, operation: StorageOperation) -> Result<&Anchor, StorageError> {
         self.anchor.as_ref().map_err(|e| {
             io_error(
                 io::Error::new(e.kind(), "root handle unavailable; reconnect"),
@@ -260,13 +286,9 @@ impl LocalConnector {
         dev: u64,
         ino: u64,
     ) -> Result<(), StorageError> {
-        use cap_fs_ext::MetadataExt;
         let root = ResourcePath::root();
-        let granted = self
-            .anchor(operation)?
-            .dir_metadata()
-            .map_err(|e| io_error(e, operation, &root))?;
-        if dev != granted.dev() || ino != granted.ino() {
+        let granted = self.root_anchor(operation)?;
+        if dev != granted.dev || ino != granted.ino {
             return Err(local_error(
                 StorageErrorKind::Disconnected,
                 operation,

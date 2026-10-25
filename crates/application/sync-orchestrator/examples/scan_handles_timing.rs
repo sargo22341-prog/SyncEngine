@@ -1,4 +1,5 @@
 //! Compare complete metadata scans on a temporary deep local tree, without a NAS.
+//! Optional arguments: BRANCHES DEPTH FILES_PER_DIRECTORY (defaults: 16 12 8).
 use connector_local::{LocalConnector, LocalOptions};
 use std::error::Error;
 use std::io::Write;
@@ -8,13 +9,34 @@ use sync_filter::Filter;
 use sync_scanner::{ScanOptions, scan};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.len() > 3 {
+        return Err("usage: scan_handles_timing [branches depth files]".into());
+    }
+    let argument = |index: usize, default: usize| -> Result<usize, Box<dyn Error>> {
+        let value = args
+            .get(index)
+            .map_or(Ok(default), |v| v.parse::<usize>())?;
+        if value == 0 || value > 4096 {
+            return Err("benchmark dimensions must be between 1 and 4096".into());
+        }
+        Ok(value)
+    };
+    let (branches, depth, files) = (argument(0, 16)?, argument(1, 12)?, argument(2, 8)?);
+    let count = branches
+        .checked_mul(depth)
+        .and_then(|v| v.checked_mul(files + 1))
+        .ok_or("benchmark too large")?;
+    if count > 1_900_000 {
+        return Err("benchmark exceeds isolated fixture budget".into());
+    }
     let temp = tempfile::tempdir()?;
-    for branch in 0..16 {
+    for branch in 0..branches {
         let mut path = temp.path().join(format!("b{branch}"));
-        for level in 0..12 {
+        for level in 0..depth {
             path = path.join(format!("d{level}"));
             std::fs::create_dir_all(&path)?;
-            for file in 0..8 {
+            for file in 0..files {
                 std::fs::write(path.join(format!("f{file}")), b"fixture")?;
             }
         }

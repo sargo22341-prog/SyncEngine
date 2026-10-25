@@ -9,6 +9,8 @@ use connector_api::{
     ListPage, ListingIssue, ListingIssueKind, NameIssue, PageToken, StorageError, StorageErrorKind,
     StorageOperation,
 };
+#[cfg(windows)]
+use std::sync::atomic::AtomicBool;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -17,7 +19,7 @@ use sync_core::{CancellationToken, ResourcePath, TimestampPrecision};
 static GENERATION: AtomicU64 = AtomicU64::new(1);
 const PAGE_SIZE: usize = 256;
 #[derive(Debug, Default)]
-pub(crate) struct Pages(Mutex<Option<Cursor>>);
+pub(crate) struct Pages(Mutex<Option<Cursor>>, #[cfg(windows)] AtomicBool);
 #[derive(Debug)]
 struct Cursor {
     path: ResourcePath,
@@ -29,7 +31,7 @@ struct Cursor {
 enum DirectoryReader {
     Standard(ReadDir),
     #[cfg(windows)]
-    Bulk(cap_primitives::windows_listing::ReadDir),
+    Bulk(cap_primitives::windows_listing::HandleReadDir),
 }
 #[derive(Debug)]
 enum ListedEntry {
@@ -99,10 +101,21 @@ impl Pages {
                     .try_clone()
                     .map_err(|e| io_error(e, op, path))?
                     .into_std_file();
-                DirectoryReader::Bulk(
-                    cap_primitives::windows_listing::ReadDir::new(owned)
-                        .map_err(|e| io_error(e, op, path))?,
-                )
+                let reader = if self.1.load(Ordering::Relaxed) {
+                    cap_primitives::windows_listing::HandleReadDir::Legacy(
+                        cap_primitives::windows_listing::ReadDir::new(owned)
+                            .map_err(|e| io_error(e, op, path))?,
+                    )
+                } else {
+                    cap_primitives::windows_listing::HandleReadDir::new(owned)
+                        .map_err(|e| io_error(e, op, path))?
+                };
+                // One capability probe per connector, not one failed request
+                // per directory on older SMB servers/filesystems.
+                if !reader.uses_handle_batches() {
+                    self.1.store(true, Ordering::Relaxed);
+                }
+                DirectoryReader::Bulk(reader)
             } else {
                 DirectoryReader::Standard(dir.entries().map_err(|e| io_error(e, op, path))?)
             };

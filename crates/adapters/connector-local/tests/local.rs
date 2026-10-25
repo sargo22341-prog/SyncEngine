@@ -347,12 +347,14 @@ fn non_utf8_names_are_reported_not_dropped() {
     // Surrogate UTF-16 isolé : nom NTFS valide, non représentable en UTF-8.
     let name = OsString::from_wide(&[0x0062, 0xD800, 0x0078]);
     fs::write(dir.path().join(name), b"x").unwrap();
-    let page = list(&connector(dir.path()), "");
-    assert_eq!(page.issues().len(), 1);
-    assert_eq!(
-        page.issues()[0].kind(),
-        &ListingIssueKind::UnrepresentableName(NameIssue::NonUtf8)
-    );
+    for connector in [connector(dir.path()), reusing(dir.path())] {
+        let page = list(&connector, "");
+        assert_eq!(page.issues().len(), 1);
+        assert_eq!(
+            page.issues()[0].kind(),
+            &ListingIssueKind::UnrepresentableName(NameIssue::NonUtf8)
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -374,21 +376,22 @@ fn win32_ambiguous_names_are_reported_not_dropped() {
     // Le préfixe verbatim contourne la normalisation Win32 et crée « fin. ».
     let verbatim = format!(r"\\?\{}\fin.", dir.path().display());
     fs::write(&verbatim, b"x").unwrap();
-    let connector = connector(dir.path());
-    let page = list(&connector, "");
-    assert_eq!(page.issues().len(), 1);
-    assert_eq!(
-        page.issues()[0].kind(),
-        &ListingIssueKind::UnrepresentableName(NameIssue::PlatformAmbiguous)
-    );
-    // Désigner « fin. » par le chemin logique est refusé (Win32 lirait « fin »).
-    assert_eq!(
-        connector
-            .stat(&p("fin."), &CancellationToken::new())
-            .unwrap_err()
-            .kind(),
-        StorageErrorKind::NotSupported
-    );
+    for connector in [connector(dir.path()), reusing(dir.path())] {
+        let page = list(&connector, "");
+        assert_eq!(page.issues().len(), 1);
+        assert_eq!(
+            page.issues()[0].kind(),
+            &ListingIssueKind::UnrepresentableName(NameIssue::PlatformAmbiguous)
+        );
+        // Win32 would normalize this logical name to a different name.
+        assert_eq!(
+            connector
+                .stat(&p("fin."), &CancellationToken::new())
+                .unwrap_err()
+                .kind(),
+            StorageErrorKind::NotSupported
+        );
+    }
     fs::remove_file(&verbatim).unwrap();
 }
 
@@ -480,13 +483,13 @@ fn access_denied_is_reported_as_such() {
         );
         return;
     };
-    let connector = connector(dir.path());
-    let error = connector
-        .list(&p("docs"), None, &CancellationToken::new())
-        .unwrap_err();
-    assert_eq!(error.kind(), StorageErrorKind::PermissionDenied);
-    // Le reste de l'arborescence reste lisible.
-    assert!(!list(&connector, "").entries().is_empty());
+    for connector in [connector(dir.path()), reusing(dir.path())] {
+        let error = connector
+            .list(&p("docs"), None, &CancellationToken::new())
+            .unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::PermissionDenied);
+        assert!(!list(&connector, "").entries().is_empty());
+    }
 }
 
 #[test]
@@ -613,12 +616,43 @@ fn bulk_enumeration_preserves_cached_file_facts_after_the_name_disappears()
     let file = temp.path().join("été.txt");
     fs::write(&file, b"fixture")?;
     let dir = cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority())?;
-    let mut reader = cap_primitives::windows_listing::ReadDir::new(dir.into_std_file())?;
+    let mut reader = cap_primitives::windows_listing::HandleReadDir::new(dir.into_std_file())?;
+    assert!(
+        reader.uses_handle_batches(),
+        "fixture must exercise the handle API"
+    );
     let entry = reader.next().ok_or("missing entry")??;
     fs::remove_file(file)?;
     assert_eq!(entry.file_name(), std::ffi::OsStr::new("été.txt"));
     assert_eq!(entry.metadata().len(), 7);
     assert!(entry.metadata().is_file());
     assert!(reader.next().is_none());
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn handle_batches_span_multiple_native_buffers_and_restart()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = TempDir::new()?;
+    for n in 0_i32..1500 {
+        fs::write(
+            temp.path().join(format!("f{n:04}-été.txt")),
+            n.to_le_bytes(),
+        )?;
+    }
+    let dir = cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority())?;
+    for _ in 0..2 {
+        let reader =
+            cap_primitives::windows_listing::HandleReadDir::new(dir.try_clone()?.into_std_file())?;
+        assert!(reader.uses_handle_batches());
+        let entries = reader.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(entries.len(), 1500);
+        let mut names = std::collections::BTreeSet::new();
+        for entry in entries {
+            assert!(names.insert(entry.file_name()));
+            assert_eq!(entry.metadata().len(), std::mem::size_of::<i32>() as u64);
+        }
+    }
     Ok(())
 }

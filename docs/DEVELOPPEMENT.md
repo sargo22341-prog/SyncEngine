@@ -5,9 +5,12 @@ Organisation du code : [Architecture](ARCHITECTURE.md).
 
 Le lecteur d'inventaire Windows vendored possède des tests séparés du workspace :
 `cargo test -p cap-primitives --lib large_read_dir --locked` (également en CI).
+Exécuter aussi `cargo test -p cap-primitives --lib handle_read_dir --locked`.
 Mesure locale reproductible, sans NAS :
 `cargo run --release -p sync-orchestrator --example scan_handles_timing --locked`.
 Méthode et limites : [audit des inventaires réseau](AUDIT_PERFORMANCE_RESEAU.md).
+Le benchmark accepte aussi `-- 64 32 64` pour 133 184 entrées temporaires ;
+le [complément SMB](AUDIT_SMB_205S.md) donne la comparaison avec la version précédente.
 
 ## Prérequis
 

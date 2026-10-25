@@ -88,7 +88,9 @@ jobs:
 
       - name: Régressions du listing natif Windows
         if: runner.os == 'Windows'
-        run: cargo test -p cap-primitives --lib large_read_dir --locked
+        run: |
+          cargo test -p cap-primitives --lib large_read_dir --locked
+          cargo test -p cap-primitives --lib handle_read_dir --locked
 
       - name: Contrats SFTP, HTTPS, FTP, FTPS et OneDrive sur serveurs éphémères
         run: |

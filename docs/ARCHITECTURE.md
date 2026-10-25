@@ -1,7 +1,9 @@
 # Architecture
 
-Les inventaires Windows utilisent un lecteur natif par lots dans l'adaptateur
-local de prévisualisation ; les moteurs restent indépendants de Win32.
+Les inventaires Windows utilisent un lecteur par poignée et lots de 64 Kio
+dans l'adaptateur local de prévisualisation, sans normalisation de chemin ;
+le lecteur FindFirstFileEx reste le repli des serveurs incompatibles.
+Les moteurs restent indépendants de Win32. Voir [l'audit SMB](AUDIT_SMB_205S.md).
 Contrats et limites : [audit des performances réseau](AUDIT_PERFORMANCE_RESEAU.md).
 
 SyncEngine est un workspace Cargo : un crate par responsabilité, tous liés à la

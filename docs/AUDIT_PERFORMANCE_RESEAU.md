@@ -1,5 +1,9 @@
 # Inventaires réseau sans empreintes — 25 octobre 2026
 
+Complément après le retour « 205 s contre 60 s » :
+[audit SMB ciblé et lecture directe par poignée](AUDIT_SMB_205S.md).
+Les résultats et limites ci-dessous décrivent la première livraison 300ab55.
+
 Périmètre confirmé : « Simulation : lecture des dossiers », zéro empreinte.
 Aucun accès au NAS ni mesure sur ses données. L'objectif de gain ×2 à ×5 reste
 à vérifier par l'utilisateur. Le temps de lecture des contenus et la copie ne
