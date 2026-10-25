@@ -71,6 +71,37 @@ Références :
 
 ## Lecture directe de la poignée (complément SMB)
 
+La prévisualisation préfère désormais `HandleReadDir::new_without_file_ids`
+(`FileFullDirectoryRestartInfo` puis `FileFullDirectoryInfo`). Le NAS réel
+refuse la classe étendue précédente mais accepte cette classe sans identités,
+inutiles pour construire l'inventaire. Le constructeur `new` précédent reste
+disponible et testé. Mesures et comparaison : [audit NAS](../../docs/AUDIT_NAS_REEL.md).
+
+Le même buffer aligné et le même parseur borné acceptent les deux formats ;
+seul l'offset du nom et la présence du tag changent. Les champs fixes utilisés
+précèdent EaSize et ont les mêmes offsets. FULL ne fournit pas le tag reparse :
+pour ces seules entrées, `fs::stat` confiné avec `FollowSymlinks::No` récupère
+la classification name-surrogate, y compris jonctions, sans suivre la cible.
+Un échec invalide le listing ; aucun point reparse n'est deviné comme ordinaire.
+La classification est reportée dans Entry, sans prétendre restituer le tag brut.
+Les autres fichiers n'ont aucune requête de métadonnées individuelle.
+
+`root_identity` compose l'ouverture standard Windows (droits de métadonnées,
+BACKUP_SEMANTICS, partage lecture/écriture) et le wrapper sûr winx déjà employé
+par cap-primitives pour `GetFileInformationByHandle`. La même requête vérifie
+l'attribut répertoire et lit le couple volume/index. L'autorité ambiante est
+explicite. Les tests comparent ce couple à celui du chemin historique et
+vérifient le refus d'un fichier ou d'un nom absent. Aucun nouveau bloc unsafe
+n'est nécessaire pour ces deux extensions.
+
+Le connecteur possède jusqu'à seize curseurs indépendants, avec réservation
+du chemin pendant la lecture : deux appels ne peuvent pas énumérer en parallèle
+des duplicatas de la même poignée. Le mutex ne couvre pas les E/S ; chaque
+curseur conserve sa poignée jusqu'à sa fin. La réservation se retire sur toute
+erreur et est désarmée avant publication d'une continuation, sous le même verrou.
+Le cache de dossiers reste borné à 64 poignées. Le scanner n'active que quatre
+listings sur ce connecteur ; aucune mutation ne passe par ces raccourcis.
+
 Le chemin normalisé obtenu par `get_path` peut entraîner une requête par
 composant sur SMB. Le nouveau `HandleReadDir` préfère donc
 `GetFileInformationByHandleEx(FileIdExtdDirectoryRestartInfo)` puis

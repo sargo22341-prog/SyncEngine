@@ -69,7 +69,8 @@ impl LocalOptions {
     /// Réutilise, pour `list`, `stat` et `open_read`, les poignées des
     /// répertoires déjà atteints par un parcours confiné (au plus 64,
     /// les plus récentes) au lieu de reparcourir chaque ancêtre depuis la
-    /// racine : un scan ouvre alors chaque répertoire une seule fois.
+    /// racine, ce qui limite les réouvertures d'ancêtres. Sous Windows, ces
+    /// scans annoncent jusqu'à quatre listings indépendants en parallèle.
     ///
     /// **Sans effet si les mutations sont autorisées.** Réservé aux scans de
     /// prévisualisation : une poignée suit l'objet répertoire, pas son nom ;
@@ -244,6 +245,27 @@ impl LocalConnector {
     fn check_root(&self, operation: StorageOperation) -> Result<(), StorageError> {
         use cap_fs_ext::MetadataExt;
         let root = ResourcePath::root();
+        #[cfg(windows)]
+        if self.handles.is_some() {
+            let (dev, ino) = cap_primitives::windows_listing::root_identity(
+                &self.root,
+                cap_std::ambient_authority(),
+            )
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    local_error(
+                        StorageErrorKind::Disconnected,
+                        operation,
+                        &root,
+                        "racine introuvable (support ou montage absent ?)",
+                    )
+                    .with_source(error)
+                } else {
+                    io_error(error, operation, &root)
+                }
+            })?;
+            return self.check_identity(operation, dev, ino);
+        }
         // Windows : l'identité (volume, index) n'est lisible que par une
         // poignée. Une seule ouverture suffit quand la racine est un
         // répertoire ; tout échec est reclassé par le chemin général.
@@ -331,6 +353,16 @@ pub(crate) fn cancelled(operation: StorageOperation, path: &ResourcePath) -> Sto
 }
 
 impl StorageConnector for LocalConnector {
+    fn listing_concurrency(&self) -> std::num::NonZeroUsize {
+        // Only opt-in preview connectors have independent native cursors.
+        // Four workers hide SMB round-trip latency without unbounded requests.
+        if cfg!(windows) && self.handles.is_some() {
+            std::num::NonZeroUsize::new(4).unwrap_or(std::num::NonZeroUsize::MIN)
+        } else {
+            std::num::NonZeroUsize::MIN
+        }
+    }
+
     fn connector_id(&self) -> &ConnectorId {
         &self.id
     }

@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 2 {
         return Err(
-            "usage: preview_timing SOURCE DESTINATION [full|lazy|none] [workers] [reuse]".into(),
+            "usage: preview_timing SOURCE DESTINATION [full|lazy|none] [hash_workers] [reuse] [snapshot.json] [listing_workers]".into(),
         );
     }
     let source = PathBuf::from(&args[0]).canonicalize()?;
@@ -32,11 +32,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let hashing = ScanOptions::new()
         .with_hash(HashAlgorithm::Blake3)
         .with_hash_workers(workers);
+    let listing_workers = NonZeroUsize::new(args.get(6).map_or(Ok(4), |w| w.parse())?)
+        .ok_or("listing workers > 0")?;
     let options = if mode == "full" {
         hashing.clone()
     } else {
         ScanOptions::new()
-    };
+    }
+    .with_listing_workers(listing_workers);
     let local = if reuse {
         LocalOptions::new().with_handle_reuse()
     } else {
@@ -58,6 +61,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         start.elapsed(),
         a.len(),
         b.len()
+    )?;
+    writeln!(
+        out,
+        "source complete={} stats={:?} issues={}; destination complete={} stats={:?} issues={}",
+        a.is_complete(),
+        a.stats(),
+        a.issues().len(),
+        b.is_complete(),
+        b.stats(),
+        b.issues().len()
     )?;
     if mode == "lazy" {
         let start = Instant::now();
@@ -107,5 +120,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         start.elapsed(),
         plan.summary()
     )?;
+    if let Some(snapshot) = args.get(5) {
+        let mut file = std::io::BufWriter::new(std::fs::File::create_new(snapshot)?);
+        serde_json::to_writer(
+            &mut file,
+            &serde_json::json!({
+                "source": a.entries().collect::<Vec<_>>(),
+                "destination": b.entries().collect::<Vec<_>>(),
+                "source_issues": a.issues().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "destination_issues": b.issues().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "operations": plan.operations(),
+            }),
+        )?;
+        file.flush()?;
+    }
     Ok(())
 }

@@ -9,6 +9,7 @@ use connector_api::{
     ListPage, ListingIssue, ListingIssueKind, NameIssue, PageToken, StorageError, StorageErrorKind,
     StorageOperation,
 };
+use std::collections::HashMap;
 #[cfg(windows)]
 use std::sync::atomic::AtomicBool;
 use std::sync::{
@@ -19,10 +20,29 @@ use sync_core::{CancellationToken, ResourcePath, TimestampPrecision};
 static GENERATION: AtomicU64 = AtomicU64::new(1);
 const PAGE_SIZE: usize = 256;
 #[derive(Debug, Default)]
-pub(crate) struct Pages(Mutex<Option<Cursor>>, #[cfg(windows)] AtomicBool);
+pub(crate) struct Pages(
+    Mutex<HashMap<ResourcePath, Option<Cursor>>>,
+    #[cfg(windows)] AtomicBool,
+);
+const MAX_CURSORS: usize = 16;
+
+// None reserves an in-flight directory. Even duplicate requests for the same
+// cached handle cannot enumerate its shared Windows file object concurrently.
+struct CursorLease<'a>(&'a Pages, &'a ResourcePath, bool);
+impl Drop for CursorLease<'_> {
+    fn drop(&mut self) {
+        if self.2 {
+            return;
+        }
+        if let Ok(mut slots) = self.0.0.lock()
+            && slots.get(self.1).is_some_and(Option::is_none)
+        {
+            drop(slots.remove(self.1));
+        }
+    }
+}
 #[derive(Debug)]
 struct Cursor {
-    path: ResourcePath,
     token: String,
     reader: std::iter::Peekable<DirectoryReader>,
 }
@@ -84,16 +104,29 @@ impl Pages {
                 "invalid or consumed directory cursor",
             )
         };
-        let mut slot = self.0.lock().map_err(|_| invalid())?;
-        if let Some(token) = token {
-            if !slot
-                .as_ref()
-                .is_some_and(|c| c.path == *path && c.token == token.as_str())
+        let previous = {
+            let mut slots = self.0.lock().map_err(|_| invalid())?;
+            if slots.get(path).is_some_and(Option::is_none) {
+                return Err(invalid());
+            }
+            if let Some(token) = token
+                && !slots
+                    .get(path)
+                    .and_then(Option::as_ref)
+                    .is_some_and(|c| c.token == token.as_str())
             {
                 return Err(invalid());
             }
+            if !slots.contains_key(path) && slots.len() >= MAX_CURSORS {
+                return Err(invalid());
+            }
+            slots.insert(path.clone(), None).flatten()
+        };
+        let mut lease = CursorLease(self, path, false);
+        let mut cursor = if token.is_some() {
+            previous.ok_or_else(invalid)?
         } else {
-            *slot = None;
+            drop(previous);
             let dir = confined::directory_via(root, handles, path, op)?;
             #[cfg(windows)]
             let reader = if handles.is_some() {
@@ -107,7 +140,7 @@ impl Pages {
                             .map_err(|e| io_error(e, op, path))?,
                     )
                 } else {
-                    cap_primitives::windows_listing::HandleReadDir::new(owned)
+                    cap_primitives::windows_listing::HandleReadDir::new_without_file_ids(owned)
                         .map_err(|e| io_error(e, op, path))?
                 };
                 // One capability probe per connector, not one failed request
@@ -123,15 +156,13 @@ impl Pages {
             let reader =
                 DirectoryReader::Standard(dir.entries().map_err(|e| io_error(e, op, path))?);
             let reader = reader.peekable();
-            *slot = Some(Cursor {
-                path: path.clone(),
+            Cursor {
                 token: String::new(),
                 reader,
-            });
-        }
+            }
+        };
         // Remove the cursor while reading: failures and cancellations invalidate
         // it, never returning a successful truncated directory.
-        let mut cursor = slot.take().ok_or_else(invalid)?;
         let mut entries = Vec::new();
         let mut issues = Vec::new();
         for item in cursor.reader.by_ref().take(PAGE_SIZE) {
@@ -170,7 +201,9 @@ impl Pages {
         let next = if cursor.reader.peek().is_some() {
             cursor.token = format!("local:{}", GENERATION.fetch_add(1, Ordering::Relaxed));
             let token = PageToken::new(cursor.token.clone());
-            *slot = Some(cursor);
+            let mut slots = self.0.lock().map_err(|_| invalid())?;
+            drop(slots.insert(path.clone(), Some(cursor)));
+            lease.2 = true;
             Some(token)
         } else {
             None

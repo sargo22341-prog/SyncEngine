@@ -82,6 +82,7 @@ pub struct MemoryConnector {
     issues: BTreeMap<ResourcePath, Vec<ListingIssue>>,
     extra_entries: BTreeMap<ResourcePath, Vec<FileEntry>>,
     page_size: Option<usize>,
+    listing_workers: std::num::NonZeroUsize,
     cancel_trigger: Option<CancelTrigger>,
     disconnected: AtomicBool,
     list_calls: AtomicUsize,
@@ -108,6 +109,12 @@ fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
 }
 
 impl MemoryConnector {
+    /// Advertises independent paginated listings for parallel scanner tests.
+    #[must_use]
+    pub fn with_listing_concurrency(mut self, workers: std::num::NonZeroUsize) -> Self {
+        self.listing_workers = workers;
+        self
+    }
     /// Stockage vide, sensible à la casse, dates à la nanoseconde, non
     /// paginé, **en lecture seule** (voir [`Self::writable`]).
     #[must_use]
@@ -138,6 +145,7 @@ impl MemoryConnector {
             issues: BTreeMap::new(),
             extra_entries: BTreeMap::new(),
             page_size: None,
+            listing_workers: std::num::NonZeroUsize::MIN,
             cancel_trigger: None,
             disconnected: AtomicBool::new(false),
             list_calls: AtomicUsize::new(0),
@@ -488,6 +496,9 @@ fn fallback_id() -> ConnectorId {
 }
 
 impl StorageConnector for MemoryConnector {
+    fn listing_concurrency(&self) -> std::num::NonZeroUsize {
+        self.listing_workers
+    }
     fn connector_id(&self) -> &ConnectorId {
         &self.id
     }

@@ -14,6 +14,7 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Simulation NAS Windows : lecture compatible SMB et parcours parallèle borné, avec les mêmes protections du miroir.
 - SMB Windows : inventaire directement par poignée, sans renormaliser chaque chemin ni relire l’identité de la racine déjà épinglée.
 - Inventaires réseau : lecture Windows par lots, moins de contrôles redondants, métadonnées FTP/WebDAV/OneDrive et sessions SFTP mieux exploitées.
 - Réseau : parcours SMB optimisé, sessions SFTP/FTP/FTPS réutilisées et avertissements de cohérence distingués des erreurs de lecture.

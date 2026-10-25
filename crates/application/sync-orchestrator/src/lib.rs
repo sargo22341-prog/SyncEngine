@@ -490,7 +490,8 @@ impl Application {
                 )
                 .map_err(io)?
             } else {
-                // Listings only, both endpoints at once (one thread each).
+                // Listings only, both endpoints at once. The scanner bounds
+                // directory workers by each connector's advertised concurrency.
                 let listing = ScanOptions::new();
                 let (a, b) = both(
                     || {

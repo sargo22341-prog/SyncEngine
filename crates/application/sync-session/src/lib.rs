@@ -86,7 +86,8 @@ pub fn preview(
 /// Builds the ordinary bidirectional preview with presentation-only scan stats.
 /// `side` identifies the scanned endpoint; the callback must return promptly.
 /// It never authorizes mutations or changes baseline publication.
-/// Both endpoints are scanned concurrently (one thread each, hashes read
+/// Both endpoints are scanned concurrently (bounded directory workers when
+/// advertised by the connector, hashes read
 /// [`RECOMMENDED_HASH_WORKERS`] files at a time per endpoint), so the
 /// callback can be invoked from two threads at once.
 /// # Errors

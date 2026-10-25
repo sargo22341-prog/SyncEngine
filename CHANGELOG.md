@@ -5,6 +5,18 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Simulation NAS mesurée sur le partage de test
+- La prévisualisation Windows demande FileFullDirectoryInfo, sans identifiants
+  de fichiers non nécessaires au plan, accepté par le NAS qui refusait la
+  classe étendue précédente. Les points reparse sont classés par une lecture
+  de métadonnées confinée sans suivi ; son échec rend le dossier incomplet.
+- L'identité de la racine courante et son attribut répertoire sont vérifiés
+  en une requête, avant chaque dossier et à la dernière page multipage.
+- Le scanner utilise jusqu'à quatre workers persistants quand le connecteur
+  annonce des curseurs indépendants ; les autres restent séquentiels.
+  Budget d'entrées partagé, annulation drainée, erreurs et plans préservés.
+- Mesures NAS, égalité des inventaires et contrôles : docs/AUDIT_NAS_REEL.md.
+
 ### Complément réseau après mesure de 205 secondes
 - Les inventaires Windows lisent des lots de 64 Kio sur la poignée de dossier
   déjà confinée, sans GetFinalPathNameByHandle ni recherche FindFirst séparée.

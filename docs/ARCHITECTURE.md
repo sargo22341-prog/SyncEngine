@@ -2,8 +2,13 @@
 
 Les inventaires Windows utilisent un lecteur par poignée et lots de 64 Kio
 dans l'adaptateur local de prévisualisation, sans normalisation de chemin ;
-le lecteur FindFirstFileEx reste le repli des serveurs incompatibles.
-Les moteurs restent indépendants de Win32. Voir [l'audit SMB](AUDIT_SMB_205S.md).
+la classe FileFullDirectoryInfo évite de demander les identités des fichiers.
+Les points reparse ont une lecture de métadonnées confinée sans suivi.
+Le lecteur FindFirstFileEx reste le repli des serveurs incompatibles.
+Le scanner peut lancer quatre listings indépendants et bornés si le connecteur
+l'annonce ; les autres connecteurs gardent un listing à la fois.
+Les moteurs restent indépendants de Win32. Voir [la mesure NAS](AUDIT_NAS_REEL.md)
+et [l'audit SMB précédent](AUDIT_SMB_205S.md).
 Contrats et limites : [audit des performances réseau](AUDIT_PERFORMANCE_RESEAU.md).
 
 SyncEngine est un workspace Cargo : un crate par responsabilité, tous liés à la

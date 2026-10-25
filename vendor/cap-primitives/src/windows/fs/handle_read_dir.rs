@@ -9,12 +9,38 @@ use windows_sys::Win32::Foundation::{
     ERROR_NO_MORE_FILES,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo, GetFileInformationByHandleEx,
-    FILE_ID_EXTD_DIR_INFO as Info, WIN32_FIND_DATAW,
+    FileFullDirectoryInfo, FileFullDirectoryRestartInfo, FileIdExtdDirectoryInfo,
+    FileIdExtdDirectoryRestartInfo, GetFileInformationByHandleEx, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_FULL_DIR_INFO, FILE_ID_EXTD_DIR_INFO as Info, WIN32_FIND_DATAW,
 };
 
 const BUFFER_BYTES: usize = 64 * 1024;
 const NAME: usize = offset_of!(Info, FileName);
+
+/// Opens the currently named root and reads its directory attribute, volume
+/// serial number and file index in one query. The root itself may be a link.
+/// Requires ambient authority because `root` is an OS path, not a capability.
+pub fn root_identity(
+    root: &std::path::Path,
+    authority: crate::AmbientAuthority,
+) -> io::Result<(u64, u64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    let _ = authority;
+    let file = fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(root)?;
+    let info = winx::winapi_util::file::information(&file)?;
+    if info.file_attributes() & u64::from(FILE_ATTRIBUTE_DIRECTORY) == 0 {
+        return Err(io::Error::from(io::ErrorKind::NotADirectory));
+    }
+    Ok((info.volume_serial_number(), info.file_index()))
+}
 
 /// Exhaustive handle enumeration with a bounded 64 KiB, eight-byte aligned buffer.
 /// The caller must not enumerate another duplicated handle concurrently: Windows
@@ -31,8 +57,20 @@ impl HandleReadDir {
     /// Takes ownership of an already confined readable directory handle.
     /// Access, network and malformed-data errors are never fallback triggers.
     pub fn new(directory: fs::File) -> io::Result<Self> {
+        Self::with_format(directory, false)
+    }
+
+    /// Enumerates without requesting file identities, which some SMB servers
+    /// do not support. Reparse entries receive a confined no-follow metadata
+    /// query because FILE_FULL_DIR_INFO does not contain their tag.
+    pub fn new_without_file_ids(directory: fs::File) -> io::Result<Self> {
+        Self::with_format(directory, true)
+    }
+
+    fn with_format(directory: fs::File, full: bool) -> io::Result<Self> {
         let mut batches = Batches {
             directory,
+            full,
             buffer: vec![0_u64; BUFFER_BYTES / 8],
             next: None,
             finished: false,
@@ -68,6 +106,7 @@ impl Iterator for HandleReadDir {
 /// Internal state exposed only as an opaque variant payload.
 pub struct Batches {
     directory: fs::File,
+    full: bool,
     buffer: Vec<u64>,
     next: Option<usize>,
     finished: bool,
@@ -88,7 +127,11 @@ impl Batches {
         let success = unsafe {
             GetFileInformationByHandleEx(
                 self.directory.as_raw_handle() as _,
-                if restart {
+                if self.full && restart {
+                    FileFullDirectoryRestartInfo
+                } else if self.full {
+                    FileFullDirectoryInfo
+                } else if restart {
                     FileIdExtdDirectoryRestartInfo
                 } else {
                     FileIdExtdDirectoryInfo
@@ -134,11 +177,33 @@ impl Iterator for Batches {
             let bytes = unsafe {
                 std::slice::from_raw_parts(self.buffer.as_ptr().cast::<u8>(), BUFFER_BYTES)
             };
-            match parse_entry(bytes, at) {
-                Ok((entry, next)) => {
+            match parse_record(bytes, at, self.full) {
+                Ok((mut entry, next)) => {
                     self.next = next;
                     let name = entry.file_name();
                     if name != "." && name != ".." {
+                        if self.full && entry.0.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                        {
+                            // The name was validated as one component. Never follow
+                            // a reparse point merely to recover its classification.
+                            match crate::fs::stat(
+                                &self.directory,
+                                std::path::Path::new(&name),
+                                crate::fs::FollowSymlinks::No,
+                            ) {
+                                Ok(meta) => {
+                                    entry.0.dwReserved0 = if meta.file_type().is_symlink() {
+                                        0xa000000c
+                                    } else {
+                                        0
+                                    };
+                                }
+                                Err(error) => {
+                                    self.finished = true;
+                                    return Some(Err(error));
+                                }
+                            }
+                        }
                         return Some(Ok(entry));
                     }
                 }
@@ -161,14 +226,23 @@ fn read<const N: usize>(bytes: &[u8], at: usize) -> io::Result<[u8; N]> {
     result.copy_from_slice(slice);
     Ok(result)
 }
+#[cfg(test)]
 fn parse_entry(bytes: &[u8], at: usize) -> io::Result<(Entry, Option<usize>)> {
+    parse_record(bytes, at, false)
+}
+fn parse_record(bytes: &[u8], at: usize, full: bool) -> io::Result<(Entry, Option<usize>)> {
     if at % 8 != 0 {
         return Err(invalid());
     }
     let bytes = bytes.get(at..).ok_or_else(invalid)?;
     let next = u32::from_le_bytes(read(bytes, offset_of!(Info, NextEntryOffset))?) as usize;
     let len = u32::from_le_bytes(read(bytes, offset_of!(Info, FileNameLength))?) as usize;
-    let end = NAME.checked_add(len).ok_or_else(invalid)?;
+    let name_at = if full {
+        offset_of!(FILE_FULL_DIR_INFO, FileName)
+    } else {
+        NAME
+    };
+    let end = name_at.checked_add(len).ok_or_else(invalid)?;
     if len == 0
         || len % 2 != 0
         || len / 2 >= 260
@@ -178,7 +252,7 @@ fn parse_entry(bytes: &[u8], at: usize) -> io::Result<(Entry, Option<usize>)> {
         return Err(invalid());
     }
     let mut data = WIN32_FIND_DATAW::default();
-    for (i, pair) in bytes[NAME..end].chunks_exact(2).enumerate() {
+    for (i, pair) in bytes[name_at..end].chunks_exact(2).enumerate() {
         let ch = u16::from_le_bytes([pair[0], pair[1]]);
         if ch == 0 || ch == b'/' as u16 || ch == b'\\' as u16 {
             return Err(invalid());
@@ -186,7 +260,9 @@ fn parse_entry(bytes: &[u8], at: usize) -> io::Result<(Entry, Option<usize>)> {
         data.cFileName[i] = ch;
     }
     data.dwFileAttributes = u32::from_le_bytes(read(bytes, offset_of!(Info, FileAttributes))?);
-    data.dwReserved0 = u32::from_le_bytes(read(bytes, offset_of!(Info, ReparsePointTag))?);
+    if !full {
+        data.dwReserved0 = u32::from_le_bytes(read(bytes, offset_of!(Info, ReparsePointTag))?);
+    }
     let size = i64::from_le_bytes(read(bytes, offset_of!(Info, EndOfFile))?);
     if size < 0 {
         return Err(invalid());
@@ -232,6 +308,46 @@ mod tests {
     }
     fn put(bytes: &mut [u8], at: usize, value: u32) {
         bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    #[test]
+    fn full_records_use_the_shorter_name_offset_and_validate_the_same_bounds() {
+        // Shared fixed fields end at EaSize. FileName starts sooner in FULL;
+        // reading it at the EXTD offset would silently corrupt real NAS names.
+        assert_eq!(
+            offset_of!(Info, EaSize),
+            offset_of!(FILE_FULL_DIR_INFO, EaSize)
+        );
+        let name_at = offset_of!(FILE_FULL_DIR_INFO, FileName);
+        for name in [vec![0x00e9, 0xd800], vec![b'a' as u16; 259]] {
+            let mut bytes = vec![0; (name_at + name.len() * 2 + 7) & !7];
+            put(
+                &mut bytes,
+                offset_of!(Info, FileNameLength),
+                (name.len() * 2) as u32,
+            );
+            for (i, ch) in name.iter().enumerate() {
+                bytes[name_at + i * 2..][..2].copy_from_slice(&ch.to_le_bytes());
+            }
+            let size = (1_i64 << 40) + 17;
+            bytes[offset_of!(Info, EndOfFile)..][..8].copy_from_slice(&size.to_le_bytes());
+            let (entry, next) = parse_record(&bytes, 0, true).unwrap();
+            use std::os::windows::ffi::OsStrExt;
+            assert_eq!(entry.file_name().encode_wide().collect::<Vec<_>>(), name);
+            assert_eq!(entry.metadata().len(), size as u64);
+            assert!(next.is_none());
+            for (field, value) in [
+                (offset_of!(Info, FileNameLength), 1),
+                (offset_of!(Info, NextEntryOffset), 8),
+                (offset_of!(Info, FileNameLength), u32::MAX),
+            ] {
+                let mut corrupt = bytes.clone();
+                put(&mut corrupt, field, value);
+                assert!(parse_record(&corrupt, 0, true).is_err());
+            }
+            for len in 0..name_at + name.len() * 2 {
+                assert!(parse_record(&bytes[..len], 0, true).is_err());
+            }
+        }
     }
     #[test]
     fn records_preserve_names_large_sizes_times_and_reparse_tags() {

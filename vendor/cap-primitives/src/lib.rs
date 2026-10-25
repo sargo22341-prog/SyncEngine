@@ -29,7 +29,7 @@ pub mod time;
 /// SYNCENGINE-PATCH: explicit opt-in; existing directory APIs are unchanged.
 #[cfg(windows)]
 pub mod windows_listing {
-    pub use crate::windows::fs::handle_read_dir::HandleReadDir;
+    pub use crate::windows::fs::handle_read_dir::{HandleReadDir, root_identity};
     pub use crate::windows::fs::large_read_dir::{Entry, ReadDir};
 }
 

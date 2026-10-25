@@ -642,9 +642,13 @@ fn handle_batches_span_multiple_native_buffers_and_restart()
         )?;
     }
     let dir = cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority())?;
-    for _ in 0..2 {
-        let reader =
-            cap_primitives::windows_listing::HandleReadDir::new(dir.try_clone()?.into_std_file())?;
+    for full in [false, true, false, true] {
+        let owned = dir.try_clone()?.into_std_file();
+        let reader = if full {
+            cap_primitives::windows_listing::HandleReadDir::new_without_file_ids(owned)?
+        } else {
+            cap_primitives::windows_listing::HandleReadDir::new(owned)?
+        };
         assert!(reader.uses_handle_batches());
         let entries = reader.collect::<Result<Vec<_>, _>>()?;
         assert_eq!(entries.len(), 1500);
@@ -653,6 +657,90 @@ fn handle_batches_span_multiple_native_buffers_and_restart()
             assert!(names.insert(entry.file_name()));
             assert_eq!(entry.metadata().len(), std::mem::size_of::<i32>() as u64);
         }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn full_listing_reparse_lookup_failure_is_an_error_not_an_omitted_link()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Given: a junction observed in the initial native batch.
+    // When: its name disappears before the no-follow tag lookup.
+    // Then: the listing fails and cannot prove an absence for a mirror.
+    let temp = TempDir::new()?;
+    let outside = TempDir::new()?;
+    let junction = temp.path().join("link");
+    link_dir(outside.path(), &junction);
+    let dir = cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority())?;
+    let mut reader =
+        cap_primitives::windows_listing::HandleReadDir::new_without_file_ids(dir.into_std_file())?;
+    assert!(reader.uses_handle_batches());
+    fs::remove_dir(junction)?;
+    assert!(reader.next().ok_or("missing error")?.is_err());
+    assert!(reader.next().is_none());
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn lightweight_root_identity_matches_the_pinned_capability_and_rejects_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    use cap_fs_ext::MetadataExt;
+    let temp = TempDir::new()?;
+    let dir = cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority())?;
+    let meta = dir.dir_metadata()?;
+    assert_eq!(
+        cap_primitives::windows_listing::root_identity(temp.path(), cap_std::ambient_authority())?,
+        (meta.dev(), meta.ino())
+    );
+    let file = temp.path().join("ordinary");
+    fs::write(&file, b"data")?;
+    assert_eq!(
+        cap_primitives::windows_listing::root_identity(&file, cap_std::ambient_authority())
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::NotADirectory
+    );
+    assert!(
+        cap_primitives::windows_listing::root_identity(
+            &temp.path().join("missing"),
+            cap_std::ambient_authority()
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn independent_directory_cursors_can_be_interleaved_without_crossing_tokens()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = TempDir::new()?;
+    for name in ["a", "b"] {
+        fs::create_dir(temp.path().join(name))?;
+        for n in 0..600 {
+            fs::write(temp.path().join(name).join(format!("f{n}")), b"data")?;
+        }
+    }
+    let connector = reusing(temp.path());
+    let cancel = CancellationToken::new();
+    let a = connector.list(&p("a"), None, &cancel)?;
+    let b = connector.list(&p("b"), None, &cancel)?;
+    assert!(connector.list(&p("b"), a.next_page(), &cancel).is_err());
+    for (name, first) in [("a", a), ("b", b)] {
+        let mut count = first.entries().len();
+        let mut token = first.next_page().cloned();
+        while let Some(next) = token {
+            let page = connector.list(&p(name), Some(&next), &cancel)?;
+            assert!(
+                page.entries()
+                    .iter()
+                    .all(|e| e.path().parent() == Some(p(name)))
+            );
+            count += page.entries().len();
+            token = page.next_page().cloned();
+        }
+        assert_eq!(count, 600);
     }
     Ok(())
 }

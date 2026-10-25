@@ -53,6 +53,13 @@ pub trait ContentReader: Send {
 /// doit avoir lieu (c'est l'exécuteur qui revérifie les préconditions juste
 /// avant).
 pub trait StorageConnector: Send + Sync {
+    /// Maximum number of independent directory listings that may be interleaved
+    /// concurrently on this instance, including their pagination cursors.
+    /// The conservative default serializes listings. This never authorizes writes.
+    fn listing_concurrency(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::MIN
+    }
+
     /// Identifiant du type de connecteur (`local`, `sftp`…).
     fn connector_id(&self) -> &ConnectorId;
 

@@ -13,6 +13,9 @@
 //!   racine illisible ⇒ [`ScanError::RootUnavailable`], sous-répertoire
 //!   illisible ⇒ [`DirectoryState::Incomplete`] et
 //!   [`Inventory::presence`] répond [`Presence::Unknown`] sous ce répertoire ;
+//! - jusqu'à quatre listings indépendants par défaut, uniquement si le
+//!   connecteur les annonce ; budget d'entrées partagé et workers drainés
+//!   avant retour, y compris sur annulation ;
 //! - les liens symboliques sont inventoriés, jamais suivis ;
 //! - l'annulation conserve l'inventaire partiel ([`ScanError::Cancelled`]).
 //!

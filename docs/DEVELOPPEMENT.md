@@ -11,6 +11,10 @@ Mesure locale reproductible, sans NAS :
 Méthode et limites : [audit des inventaires réseau](AUDIT_PERFORMANCE_RESEAU.md).
 Le benchmark accepte aussi `-- 64 32 64` pour 133 184 entrées temporaires ;
 le [complément SMB](AUDIT_SMB_205S.md) donne la comparaison avec la version précédente.
+La [mesure sur NAS réel](AUDIT_NAS_REEL.md) décrit les commandes de simulation
+sans mutation, le diagnostic du repli et les limites des mesures.
+Test de volume synthétique du scanner (environ un million d'entrées, en RAM) :
+`cargo test --release -p sync-scanner --test parallel_listing --locked -- --ignored --nocapture`.
 
 ## Prérequis
 

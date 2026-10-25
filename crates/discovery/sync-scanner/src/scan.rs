@@ -14,6 +14,7 @@ use sync_errors::{ClassifiedError, ErrorClass, ErrorContext};
 use sync_filter::{Filter, FilterDecision};
 
 use crate::inventory::{DirectoryState, IncompleteReason, Inventory, ScanIssue, ScanIssueKind};
+mod parallel;
 
 /// Taille des blocs lus pour le calcul d'empreinte.
 const HASH_CHUNK: usize = 64 * 1024;
@@ -34,6 +35,7 @@ pub struct ScanOptions {
     hash: Option<HashAlgorithm>,
     entry_limit: usize,
     hash_workers: NonZeroUsize,
+    listing_workers: NonZeroUsize,
 }
 
 impl Default for ScanOptions {
@@ -42,10 +44,26 @@ impl Default for ScanOptions {
             hash: None,
             entry_limit: 2_000_000,
             hash_workers: NonZeroUsize::MIN,
+            listing_workers: NonZeroUsize::new(4).unwrap_or(NonZeroUsize::MIN),
         }
     }
 }
 impl ScanOptions {
+    /// Maximum concurrent directory listings (default 4), further bounded by
+    /// the connector's advertised concurrency and an absolute limit of 16.
+    /// Connectors which do not opt in remain sequential. No writes are made.
+    #[must_use]
+    pub fn with_listing_workers(mut self, workers: NonZeroUsize) -> Self {
+        self.listing_workers = workers;
+        self
+    }
+
+    /// Requested maximum number of simultaneous directory listings.
+    #[must_use]
+    pub fn listing_workers(&self) -> NonZeroUsize {
+        self.listing_workers
+    }
+
     /// Bounds all listed entries and anomalies, including excluded/duplicate
     /// names. Exceeding this budget marks the scan incomplete (never absent).
     #[must_use]
@@ -118,6 +136,12 @@ pub enum ScanError {
         /// Algorithme demandé.
         algorithm: HashAlgorithm,
     },
+    /// A directory worker terminated unexpectedly; the partial inventory is
+    /// diagnostic only and must never authorize mutations.
+    WorkerFailed {
+        /// Observations collected before the worker failure.
+        partial: Box<Inventory>,
+    },
 }
 
 impl fmt::Display for ScanError {
@@ -128,6 +152,7 @@ impl fmt::Display for ScanError {
             Self::HashingNotSupported { algorithm } => {
                 write!(f, "empreinte {algorithm:?} indisponible pour ce connecteur")
             }
+            Self::WorkerFailed { .. } => f.write_str("directory listing worker failed"),
         }
     }
 }
@@ -147,6 +172,7 @@ impl ClassifiedError for ScanError {
             Self::RootUnavailable(error) => error.class(),
             Self::Cancelled { .. } => ErrorClass::Cancelled,
             Self::HashingNotSupported { .. } => ErrorClass::NotSupported,
+            Self::WorkerFailed { .. } => ErrorClass::Internal,
         }
     }
 
@@ -206,44 +232,56 @@ pub fn scan_observed(
         options.hash,
     );
 
-    let mut budget = options.entry_limit;
-    let mut pending = vec![ResourcePath::root()];
-    while let Some(directory) = pending.pop() {
-        if cancel.checkpoint() {
-            pending.push(directory);
-            return Err(cancelled(inventory, &pending));
-        }
-        match list_directory(
-            connector,
-            filter,
-            &mut inventory,
-            &directory,
-            cancel,
-            &mut budget,
-        ) {
-            Ok(children) => {
-                // Ordre inverse : la pile dépile les enfants dans l'ordre trié.
-                pending.extend(children.into_iter().rev());
-            }
-            Err(error) if error.kind() == StorageErrorKind::Cancelled => {
+    let budget = AtomicUsize::new(options.entry_limit);
+    let workers = options
+        .listing_workers
+        .get()
+        .min(connector.listing_concurrency().get())
+        .min(16);
+    if workers > 1 {
+        inventory = parallel::list(
+            connector, filter, options, cancel, observe, inventory, workers,
+        )?;
+    } else {
+        let mut pending = vec![ResourcePath::root()];
+        while let Some(directory) = pending.pop() {
+            if cancel.checkpoint() {
                 pending.push(directory);
                 return Err(cancelled(inventory, &pending));
             }
-            Err(error) if directory.is_root() => return Err(ScanError::RootUnavailable(error)),
-            Err(error) => {
-                let kind = error.kind();
-                inventory.directories.insert(
-                    directory.clone(),
-                    DirectoryState::Incomplete(IncompleteReason::ListFailed(kind)),
-                );
-                inventory
-                    .issues
-                    .push(ScanIssue::new(directory, ScanIssueKind::ListFailed(kind)));
+            match list_directory(
+                connector,
+                filter,
+                &mut inventory,
+                &directory,
+                cancel,
+                &budget,
+            ) {
+                Ok(children) => {
+                    // Ordre inverse : la pile dépile les enfants dans l'ordre trié.
+                    pending.extend(children.into_iter().rev());
+                }
+                Err(error) if error.kind() == StorageErrorKind::Cancelled => {
+                    pending.push(directory);
+                    return Err(cancelled(inventory, &pending));
+                }
+                Err(error) if directory.is_root() => return Err(ScanError::RootUnavailable(error)),
+                Err(error) => {
+                    let kind = error.kind();
+                    inventory.directories.insert(
+                        directory.clone(),
+                        DirectoryState::Incomplete(IncompleteReason::ListFailed(kind)),
+                    );
+                    inventory
+                        .issues
+                        .push(ScanIssue::new(directory, ScanIssueKind::ListFailed(kind)));
+                }
             }
+            observe(&inventory.stats, inventory.issues.len());
         }
-        observe(&inventory.stats, inventory.issues.len());
     }
 
+    inventory.issues.sort_by(|a, b| a.path().cmp(b.path()));
     if let Some(algorithm) = options.hash {
         let targets = missing_hashes(&inventory, algorithm, |_| true);
         let pass = hash_files(
@@ -371,7 +409,7 @@ fn list_directory(
     inventory: &mut Inventory,
     directory: &ResourcePath,
     cancel: &CancellationToken,
-    budget: &mut usize,
+    budget: &AtomicUsize,
 ) -> Result<Vec<ResourcePath>, StorageError> {
     let mut state = if connector.capabilities().listing_consistency
         == connector_api::ListingConsistency::Strong
@@ -393,14 +431,18 @@ fn list_directory(
         let page = connector.list(directory, token.as_ref(), cancel)?;
         let (entries, issues, next) = page.into_parts();
         let cost = entries.len().saturating_add(issues.len()).max(1);
-        *budget = budget.checked_sub(cost).ok_or_else(|| {
-            StorageError::new(
-                StorageErrorKind::Permanent,
-                connector_api::StorageOperation::List,
-            )
-            .with_path(directory.clone())
-            .with_message("inventory entry/page budget exceeded; incomplete scan")
-        })?;
+        budget
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                left.checked_sub(cost)
+            })
+            .map_err(|_| {
+                StorageError::new(
+                    StorageErrorKind::Permanent,
+                    connector_api::StorageOperation::List,
+                )
+                .with_path(directory.clone())
+                .with_message("inventory entry/page budget exceeded; incomplete scan")
+            })?;
         for issue in issues {
             if issue.omits_entry() {
                 state = DirectoryState::Incomplete(IncompleteReason::OmittedEntries);

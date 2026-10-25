@@ -1,6 +1,7 @@
 //! Times a complete preview and execution through the application facade.
 //! The destination must be a new empty folder and the state folder a new
-//! folder of its own: this example writes into both.
+//! folder of its own: this example writes into both unless `preview-only` is
+//! supplied as the fifth argument (then only the isolated state is written).
 
 use std::error::Error;
 use std::io::Write;
@@ -15,9 +16,10 @@ use sync_profiles::{CompareMethod, Profile};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() < 3 {
+    if !(3..=5).contains(&args.len()) {
         return Err(
-            "usage: facade_timing SOURCE EMPTY_DESTINATION NEW_STATE [content|size]".into(),
+            "usage: facade_timing SOURCE EMPTY_DESTINATION NEW_STATE [content|size] [preview-only]"
+                .into(),
         );
     }
     let canonical = |p: &String| PathBuf::from(p).canonicalize();
@@ -31,7 +33,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let compare = match args.get(3).map(String::as_str) {
         Some("size") => CompareMethod::SizeAndDate,
-        _ => CompareMethod::Content,
+        None | Some("content") => CompareMethod::Content,
+        Some(_) => return Err("comparison must be content or size".into()),
+    };
+    let preview_only = match args.get(4).map(String::as_str) {
+        None => false,
+        Some("preview-only") => true,
+        Some(_) => return Err("fifth argument must be preview-only".into()),
     };
     let mut out = std::io::stdout().lock();
     let app = Application::open_with_lock_root(&state, state.with_extension("locks"))?;
@@ -58,6 +66,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             start.elapsed(),
             preview["summary"]
         )?;
+        if preview_only {
+            break;
+        }
         let plan = preview["plan"]["id"].as_str().ok_or("plan id")?.to_owned();
         let start = Instant::now();
         let report = app.execute(id.clone(), plan, true, false)?;

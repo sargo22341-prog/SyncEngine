@@ -176,6 +176,30 @@ fn unknown_listing_consistency_means_zero_deletions() {
 }
 
 #[test]
+fn parallel_scan_preserves_the_mirror_and_refuses_deletions_on_any_read_failure() {
+    // Given: independent parallel listings and an explicitly destructive mirror.
+    // When: one source directory is inaccessible, or the complete scan succeeds.
+    // Then: failures permit zero deletions; complete plans equal the serial plan.
+    let workers = std::num::NonZeroUsize::new(4).unwrap();
+    let serial = build(&report(&source(), &destination()), &with_deletions()).unwrap();
+    let parallel_source = source().with_listing_concurrency(workers).with_page_size(1);
+    let parallel = build(&report(&parallel_source, &destination()), &with_deletions()).unwrap();
+    assert_eq!(serial, parallel);
+    for kind in [
+        StorageErrorKind::PermissionDenied,
+        StorageErrorKind::Disconnected,
+    ] {
+        let failed = source()
+            .with_listing_concurrency(workers)
+            .with_page_size(1)
+            .fail("docs", StorageOperation::List, kind);
+        let plan = build(&report(&failed, &destination()), &with_deletions()).unwrap();
+        assert_eq!(plan.summary().delete, 0);
+        assert!(plan.summary().deletions_refused > 0);
+    }
+}
+
+#[test]
 fn deletions_require_an_explicit_policy() {
     let report = report(&source(), &destination());
     let plan = build(&report, &MirrorStrategy::default_policy()).unwrap();

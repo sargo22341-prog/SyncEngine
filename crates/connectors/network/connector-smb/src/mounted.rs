@@ -172,6 +172,9 @@ fn mount_identity(root: &Path) -> Result<String, StorageError> {
         .ok_or_else(|| err(Kind::Disconnected, Op::Connect, &path))
 }
 impl StorageConnector for SmbConnector {
+    fn listing_concurrency(&self) -> std::num::NonZeroUsize {
+        self.local.listing_concurrency()
+    }
     fn connector_id(&self) -> &ConnectorId {
         &self.id
     }
