@@ -51,7 +51,7 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
             ));
         }
         "stop" if args.len() == 2 => {
-            std::fs::File::create(state.join("agent-stop.request"))?.sync_all()?;
+            sync_orchestrator::request_agent_stop(&state)?;
             return Ok((serde_json::json!({"stop_requested":true}), 0));
         }
         "resume" if args.len() == 2 => {
@@ -81,13 +81,6 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
             let id = ProfileId::new(&args[2])?;
             let app = Application::open(&state)?;
             app.acknowledge_interrupted(&id, true)?;
-            if scheduler
-                .list()?
-                .iter()
-                .any(|row| row.schedule.approved.id == id && row.running_slot.is_some())
-            {
-                scheduler.acknowledge(&id)?;
-            }
             Ok((
                 serde_json::json!({"interruption_acknowledged":true,"next_run_requires_fresh_scan":true}),
                 0,
@@ -276,6 +269,16 @@ struct Agent<'a> {
     state: &'a Path,
 }
 impl ScheduledApplication for Agent<'_> {
+    fn queue_changed(
+        &self,
+        current: Option<&sync_scheduler::QueuedProfile>,
+        pending: &[sync_scheduler::QueuedProfile],
+    ) {
+        if let Err(error) = sync_orchestrator::LiveQueue::publish(self.state, current, pending) {
+            let warning = serde_json::json!({"warning":format!("queue observation: {error}")});
+            let _stderr_closed = writeln!(std::io::stderr().lock(), "{warning}").is_err();
+        }
+    }
     fn run(&self, schedule: &Schedule, cancel: &CancellationToken) -> Completion {
         if schedule.show_window
             && let Err(e) = open_window(self.state)

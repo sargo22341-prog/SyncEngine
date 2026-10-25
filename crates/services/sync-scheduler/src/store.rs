@@ -245,25 +245,8 @@ impl Scheduler {
             )
             .optional()?;
         let logon = resident_logon.or(legacy_logon);
-        let mut results = Vec::new();
-        for state in self.list()? {
-            if cancel.is_cancelled() {
-                break;
-            }
-            if let Some(slot) = state.running_slot {
-                results.push(DispatchReceipt {
-                    profile: state.schedule.approved.id.clone(),
-                    occurrence: slot,
-                    completion: Completion {
-                        status: JobStatus::Attention,
-                        code: "in_flight_or_interrupted_requires_diagnosis".into(),
-                    },
-                });
-                continue;
-            }
-            let due = if matches!(state.schedule.trigger, crate::Trigger::Logon)
-                && resident_logon.is_some()
-            {
+        let due_slot = |state: &ScheduleState| {
+            if matches!(state.schedule.trigger, crate::Trigger::Logon) && resident_logon.is_some() {
                 resident_logon
                     .filter(|event| {
                         state.schedule.enabled
@@ -283,7 +266,46 @@ impl Scheduler {
                     })
             } else {
                 state.schedule.slot(now, wake)
+            }
+        };
+        let mut waiting: std::collections::VecDeque<_> = self
+            .list()?
+            .into_iter()
+            .map(|state| {
+                let due = due_slot(&state);
+                (state, due)
+            })
+            .collect();
+        let pending = |waiting: &std::collections::VecDeque<(ScheduleState, Option<i64>)>| {
+            waiting
+                .iter()
+                .filter(|(state, due)| {
+                    state.running_slot.is_none()
+                        && due.is_some_and(|due| state.last_slot.is_none_or(|last| last < due))
+                })
+                .map(|(state, _)| crate::QueuedProfile {
+                    id: state.schedule.approved.id.clone(),
+                    name: state.schedule.approved.name.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut results = Vec::new();
+        while !cancel.is_cancelled() {
+            let Some((state, due)) = waiting.pop_front() else {
+                break;
             };
+
+            if let Some(slot) = state.running_slot {
+                results.push(DispatchReceipt {
+                    profile: state.schedule.approved.id.clone(),
+                    occurrence: slot,
+                    completion: Completion {
+                        status: JobStatus::Attention,
+                        code: "in_flight_or_interrupted_requires_diagnosis".into(),
+                    },
+                });
+                continue;
+            }
             let Some(slot) = due else {
                 continue;
             };
@@ -291,6 +313,11 @@ impl Scheduler {
             let id = state.schedule.approved.id.as_str();
             // Atomic compare-and-claim handles concurrent dispatchers and edits.
             if self.0.execute("UPDATE schedules SET running_slot=?2,result=NULL WHERE profile=?1 AND config=?3 AND running_slot IS NULL AND (last_slot IS NULL OR last_slot<?2)",params![id,slot,json])?!=1 {continue;}
+            let current = crate::QueuedProfile {
+                id: state.schedule.approved.id.clone(),
+                name: state.schedule.approved.name.clone(),
+            };
+            app.queue_changed(Some(&current), &pending(&waiting));
             let result = app.run(&state.schedule, cancel);
             let receipt = serde_json::to_string(&result)?;
             self.0.execute("UPDATE schedules SET last_slot=CASE WHEN ?3 THEN last_slot ELSE running_slot END,running_slot=NULL,result=?4 WHERE profile=?1 AND running_slot=?2",params![id,slot,result.status==JobStatus::Deferred,receipt])?;
@@ -300,6 +327,7 @@ impl Scheduler {
                 completion: result,
             });
         }
+        app.queue_changed(None, &pending(&waiting));
         Ok(results)
     }
 }

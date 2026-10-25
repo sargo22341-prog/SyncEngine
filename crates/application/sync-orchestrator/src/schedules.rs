@@ -3,6 +3,16 @@ use crate::{AppError, Application, error, io};
 use sync_core::{ProfileId, Timestamp};
 use sync_scheduler::{MissedJobs, Schedule, ScheduleState, Scheduler, Trigger};
 
+fn configuration_error(cause: sync_scheduler::SchedulerError) -> AppError {
+    match cause {
+        sync_scheduler::SchedulerError::Invalid("running claim requires diagnosis") => error(
+            "interrupted",
+            "Une exécution est en cours ou interrompue. Si elle est arrêtée, ouvrez le profil et choisissez « Diagnostiquer l’interruption » avant de modifier ou retirer sa planification.",
+        ),
+        other => io(other),
+    }
+}
+
 impl Application {
     /// Lists actual persistent authorizations and interrupted claims.
     /// # Errors
@@ -65,7 +75,7 @@ impl Application {
         Scheduler::open(self.state.join("scheduler.sqlite"))
             .map_err(io)?
             .save(&schedule)
-            .map_err(io)
+            .map_err(configuration_error)
     }
 
     /// Removes authorization only; refuses a running/interrupted claim.
@@ -76,7 +86,7 @@ impl Application {
         Scheduler::open(self.state.join("scheduler.sqlite"))
             .map_err(io)?
             .remove(&id)
-            .map_err(io)
+            .map_err(configuration_error)
     }
 
     /// State directory to use when exporting/installing native agent tasks.

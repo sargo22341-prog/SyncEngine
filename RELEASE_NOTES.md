@@ -14,4 +14,9 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Suivi de l’agent : graphe de débit, annulation et arrêt accessibles dès l’ouverture, file des profils en attente et flèches de synchronisation redessinées.
+- Planification : diagnostic explicite des transferts interrompus depuis l’interface et badges de profil répartis sur plusieurs lignes.
+- Windows : l’ouverture de l’interface suit la progression et reprend automatiquement si l’agent occupe l’état ; l’agent attend aussi une opération manuelle en cours.
+- Windows : la page Planification affiche désormais la cause précise d’un échec de démarrage de l’agent.
+- Windows : correction du refus de planification lorsque le compte de la tâche est renvoyé par son nom plutôt que son SID.
 

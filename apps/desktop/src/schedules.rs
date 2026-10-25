@@ -362,6 +362,13 @@ impl App {
                         ),
                         ui::icon_button(
                             p,
+                            Glyph::Check,
+                            "Diagnostiquer l’interruption",
+                            (s.running_slot.is_some() && !self.running_on(&id) && !self.busy())
+                                .then(|| Message::AskDiagnose(id.clone()))
+                        ),
+                        ui::icon_button(
+                            p,
                             Glyph::Trash,
                             "Retirer la planification",
                             (s.running_slot.is_none() && !self.busy())
@@ -422,6 +429,8 @@ impl App {
                     p.warning,
                     "Agent indisponible — dernière observation périmée",
                 )
+            } else if observed.phase == sync_orchestrator::ResidentPhase::Starting {
+                (p.info, "Agent en cours de démarrage")
             } else if observed.updated_at.abs_diff(now) > 30 && self.agent_job.is_none() {
                 (
                     p.warning,
@@ -429,10 +438,24 @@ impl App {
                 )
             } else if self.agent_job.is_some() {
                 (p.info, "Synchronisation en cours")
+            } else if observed.phase == sync_orchestrator::ResidentPhase::Attention {
+                (
+                    p.warning,
+                    "Agent démarré — un profil nécessite votre attention",
+                )
             } else {
                 (p.success, "Agent disponible")
             };
             page = page.push(ui::colored(color, label, 13.0));
+            if let Some(diagnostic) = &observed.diagnostic {
+                page = page.push(ui::callout(
+                    p,
+                    p.danger,
+                    Glyph::Info,
+                    "Dernière erreur du processus agent",
+                    diagnostic,
+                ));
+            }
         }
         if self.ws.agent_stopped {
             page = page.push(

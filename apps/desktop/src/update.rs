@@ -2,7 +2,7 @@
 
 use crate::anim::{Ease, Tween};
 use crate::app::{App, Dialog, Drag, LastRun, Menu, Message, Nav, PreviewState, ToastKind};
-use crate::backend::{self, Failure, Opened};
+use crate::backend::{self, Failure, Opened, Opening};
 use crate::draft::{ProfileDraft, ScheduleDraft};
 use crate::model::{self, Outcome};
 use crate::native;
@@ -28,12 +28,17 @@ impl App {
     fn dispatch(&mut self, message: Message) -> Task<Message> {
         self.now = Instant::now();
         match message {
-            Message::Booted(Ok(Opened(app, ws))) => {
+            Message::Booted(Ok(Opening::Ready(Opened(app, ws)))) => {
+                self.boot_polling = false;
+                self.boot_wait = None;
+                self.boot_error = None;
                 // Without the marker the agent may open a second window: only
                 // a presentation nuisance, never a data risk.
-                self.presence = sync_orchestrator::hold_desktop_presence(app.state_directory())
-                    .ok()
-                    .flatten();
+                if self.presence.is_none() {
+                    self.presence = sync_orchestrator::hold_desktop_presence(app.state_directory())
+                        .ok()
+                        .flatten();
+                }
                 self.backend = Some(app);
                 self.apply_workspace(ws);
                 self.page_t.replay(0.0, 1.0, self.now);
@@ -42,13 +47,51 @@ impl App {
                 {
                     self.selected = Some(id);
                 }
+                if self.boot_cancel_requested {
+                    self.boot_cancel_requested = false;
+                    if let Some(app) = &self.backend {
+                        return Task::perform(
+                            backend::call(app, sync_orchestrator::Application::agent_cancel_clear),
+                            Message::AgentResumed,
+                        );
+                    }
+                }
                 Task::none()
             }
+            Message::Booted(Ok(Opening::Waiting(observation))) => {
+                self.boot_polling = false;
+                self.boot_error = None;
+                let live = observation
+                    .live
+                    .clone()
+                    .filter(|_| observation.resident.available);
+                let task = self.agent_observed(Ok((
+                    live,
+                    observation.resident.clone(),
+                    self.ws.agent_stopped,
+                    observation.queue.clone(),
+                )));
+                self.boot_wait = Some(observation);
+                if self.presence.is_none()
+                    && let Some(state) = &self.state_dir
+                {
+                    self.presence = sync_orchestrator::hold_desktop_presence(state)
+                        .ok()
+                        .flatten();
+                }
+                task
+            }
             Message::Booted(Err(e)) => {
+                self.boot_polling = false;
+                self.boot_wait = None;
                 self.boot_error = Some(e);
                 Task::none()
             }
             Message::Retry => {
+                if self.boot_polling || self.backend.is_some() {
+                    return Task::none();
+                }
+                self.boot_polling = true;
                 self.boot_error = None;
                 Task::perform(backend::open(), Message::Booted)
             }
@@ -115,7 +158,33 @@ impl App {
             Message::AgentTick => self.poll_agent(),
             Message::AgentLive(result) => self.agent_observed(result),
             Message::CancelAgent => self.cancel_agent(),
+            Message::StopAgent => {
+                self.boot_control_error = None;
+                let Some(state) = self.state_dir.clone() else {
+                    return Task::none();
+                };
+                if let Some(job) = &mut self.agent_job {
+                    job.cancel_requested = true;
+                }
+                self.ws.agent_stopped = true;
+                Task::perform(
+                    backend::blocking(move || {
+                        sync_orchestrator::request_agent_stop(&state)
+                            .map_err(|e| Failure::new("unavailable", e.to_string()))
+                    }),
+                    Message::AgentCancelSent,
+                )
+            }
             Message::AgentCancelSent(result) => {
+                if self.backend.is_none() {
+                    self.boot_control_error = result.as_ref().err().cloned();
+                    if result.is_err() {
+                        self.ws.agent_stopped = self
+                            .state_dir
+                            .as_deref()
+                            .is_some_and(sync_orchestrator::agent_stop_pending);
+                    }
+                }
                 match result {
                     Ok(()) => self.toast(
                         ToastKind::Info,
@@ -123,6 +192,7 @@ impl App {
                         "La synchronisation planifiée s’arrête proprement à la fin de l’opération en cours.",
                     ),
                     Err(e) => {
+                        if self.backend.is_none() { self.boot_cancel_requested = false; }
                         if let Some(job) = &mut self.agent_job {
                             job.cancel_requested = false;
                         }
@@ -407,6 +477,30 @@ impl App {
             Message::AskRemove(id) => {
                 self.open_dialog(Dialog::Remove { profile: id });
                 Task::none()
+            }
+            Message::AskDiagnose(id) => {
+                self.open_dialog(Dialog::Diagnose { profile: id });
+                Task::none()
+            }
+            Message::Diagnose(id) => {
+                self.close_dialog();
+                let Some(app) = &self.backend else {
+                    return Task::none();
+                };
+                Task::perform(
+                    backend::call(app, move |app| app.acknowledge_interrupted(&id, true)),
+                    Message::Diagnosed,
+                )
+            }
+            Message::Diagnosed(result) => {
+                match result {
+                    Ok(()) => {
+                        self.preview = None;
+                        self.toast(ToastKind::Info, "Interruption diagnostiquée", "L’exécution reste signalée en échec. Vous pouvez recalculer une simulation, modifier la planification ou retirer le profil.");
+                    }
+                    Err(error) => self.fail(&error),
+                }
+                self.refresh()
             }
             Message::Remove(id) => {
                 self.close_dialog();

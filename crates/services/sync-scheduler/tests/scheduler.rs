@@ -31,6 +31,96 @@ struct Mock {
     calls: Cell<usize>,
     status: JobStatus,
 }
+
+#[test]
+fn same_logon_profiles_queue_sequentially_and_cancellation_keeps_pending_work()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::cell::RefCell;
+    struct Queued {
+        path: std::path::PathBuf,
+        calls: RefCell<Vec<String>>,
+        queues: RefCell<Vec<(Option<String>, Vec<String>)>>,
+        cancel_first: bool,
+    }
+    impl ScheduledApplication for Queued {
+        fn run(&self, schedule: &Schedule, cancel: &CancellationToken) -> Completion {
+            let db = rusqlite::Connection::open(&self.path).unwrap();
+            let count: i64 = db
+                .query_row(
+                    "SELECT count(*) FROM schedules WHERE running_slot IS NOT NULL",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "only the current profile may be claimed");
+            self.calls
+                .borrow_mut()
+                .push(schedule.approved.id.to_string());
+            if self.cancel_first {
+                cancel.cancel();
+            }
+            Completion {
+                status: JobStatus::Failed,
+                code: "isolated business failure".into(),
+            }
+        }
+        fn queue_changed(&self, current: Option<&QueuedProfile>, pending: &[QueuedProfile]) {
+            self.queues.borrow_mut().push((
+                current.map(|p| p.id.to_string()),
+                pending.iter().map(|p| p.id.to_string()).collect(),
+            ));
+        }
+    }
+    for cancel_first in [false, true] {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("scheduler.sqlite");
+        let mut db = Scheduler::open(&path)?;
+        for id in ["a", "b", "c"] {
+            let mut s = schedule(&temp)?;
+            s.approved.id = ProfileId::new(id)?;
+            s.approved.name = format!("Profile {id}");
+            s.trigger = Trigger::Logon;
+            db.save(&s)?;
+        }
+        db.observe_session("isolated-logon", 200)?;
+        let app = Queued {
+            path,
+            calls: RefCell::new(Vec::new()),
+            queues: RefCell::new(Vec::new()),
+            cancel_first,
+        };
+        db.dispatch(200, Wake::Clock, &app, &CancellationToken::new())?;
+        assert_eq!(
+            app.queues.borrow()[0],
+            (Some("a".into()), vec!["b".into(), "c".into()])
+        );
+        if cancel_first {
+            assert_eq!(*app.calls.borrow(), vec!["a"]);
+            assert_eq!(
+                app.queues.borrow().last(),
+                Some(&(None, vec!["b".into(), "c".into()]))
+            );
+            assert!(
+                db.list()?
+                    .iter()
+                    .skip(1)
+                    .all(|row| row.last_slot.is_none() && row.running_slot.is_none())
+            );
+            let resumed = Queued {
+                cancel_first: false,
+                ..app
+            };
+            db.dispatch(200, Wake::Clock, &resumed, &CancellationToken::new())?;
+            assert_eq!(*resumed.calls.borrow(), vec!["a", "b", "c"]);
+        } else {
+            assert_eq!(*app.calls.borrow(), vec!["a", "b", "c"]);
+            assert_eq!(app.queues.borrow()[1], (Some("b".into()), vec!["c".into()]));
+            assert_eq!(app.queues.borrow().last(), Some(&(None, vec![])));
+        }
+        assert!(db.list()?.iter().all(|row| row.running_slot.is_none()));
+    }
+    Ok(())
+}
 impl ScheduledApplication for Mock {
     fn run(&self, _: &Schedule, _: &CancellationToken) -> Completion {
         self.calls.set(self.calls.get() + 1);

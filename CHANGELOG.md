@@ -6,6 +6,27 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 ## [Non publié]
 
 ### Planification
+- Le suivi avant ouverture des bases reprend le graphe, le pourcentage et les
+  commandes de l’interface principale. Annuler vise le transfert courant ; arrêter
+  l’agent suspend les suivants jusqu’à reprise explicite. Une file bornée publiée
+  par le scheduler montre le profil actif et les échéances en attente, dans l’ordre
+  séquentiel réel. Les deux vues partagent le dessin corrigé des flèches.
+- Après un arrêt forcé, le profil propose un diagnostic explicite qui conserve
+  les fichiers et les journaux, marque l’exécution en échec et acquitte sa prise
+  de planification sans la rejouer. Les refus de modification et de retrait sont
+  expliqués en français. Les badges du profil utilisent toute la largeur et
+  passent sur plusieurs lignes sur les petites fenêtres.
+- L’ouverture de l’interface pendant un travail de l’agent affiche une attente
+  avec progression et réessaie automatiquement chaque seconde, sans contourner
+  le verrou ni migrer les bases pendant l’occupation. Au démarrage, le résident
+  attend aussi un verrou occupé, avec arrêt coopératif ; les autres erreurs
+  restent fatales et diagnostiquées.
+- Les erreurs du processus résident conservent leur étape de démarrage et un
+  diagnostic caviardé borné dans `agent-status.json`, affiché dans Planification.
+  Une nouvelle observation remplace ce diagnostic ; aucun journal ne grossit.
+- Windows : résolution du compte des tâches en SID avant vérification d’appartenance,
+  pour accepter le nom renvoyé par Task Scheduler sans autoriser un autre compte,
+  un autre dossier d’état ou des privilèges différents.
 - Agent Windows résident : une tâche utilisateur de connexion, trois relances
   espacées d'une minute après échec, horaires SQLite relus toutes les cinq
   secondes au repos, connexion WTS persistée et délais ancrés au logon réel.

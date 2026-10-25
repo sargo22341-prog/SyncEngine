@@ -21,10 +21,11 @@ pub(super) fn job_lock(root: &Path) -> Result<File, AppError> {
 impl Application {
     /// Acknowledges stopped executions AFTER manual inspection of journals and
     /// synchronized roots. Keeps old baselines and records interruption as failure.
+    /// Also acknowledges the scheduler claim when present, without replaying it.
     /// This never replays a plan or removes temporary/versioned content.
     /// # Errors
-    /// Explicit diagnosis missing, busy owner, or persistence failure. The two
-    /// databases are updated sequentially; retry diagnosis if either write fails.
+    /// Explicit diagnosis missing, busy owner, or persistence failure. The stores
+    /// are updated sequentially; retry diagnosis if any write fails.
     pub fn acknowledge_interrupted(
         &self,
         id: &sync_core::ProfileId,
@@ -46,6 +47,18 @@ impl Application {
             }
         }
         super::runs::acknowledge(&self.state, id)?;
+        let scheduler_path = self.state.join("scheduler.sqlite");
+        if scheduler_path.try_exists().map_err(io)? {
+            let scheduler = sync_scheduler::Scheduler::open(scheduler_path).map_err(io)?;
+            if scheduler
+                .list()
+                .map_err(io)?
+                .iter()
+                .any(|row| &row.schedule.approved.id == id && row.running_slot.is_some())
+            {
+                scheduler.acknowledge(id).map_err(io)?;
+            }
+        }
         *super::lock(&self.cache)? = None;
         Ok(())
     }

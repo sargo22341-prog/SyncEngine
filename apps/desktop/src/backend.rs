@@ -129,17 +129,45 @@ pub(crate) fn state_directory() -> Result<PathBuf, Failure> {
     Ok(base.join(ID))
 }
 
-pub(crate) async fn open() -> Result<Opened, Failure> {
+/// A busy command is a normal startup wait, not a failed application.
+#[derive(Debug, Clone)]
+pub(crate) enum Opening {
+    Ready(Opened),
+    Waiting(StartupObservation),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StartupObservation {
+    pub(crate) resident: sync_orchestrator::ResidentStatus,
+    pub(crate) live: Option<sync_orchestrator::LiveJob>,
+    pub(crate) queue: Option<sync_orchestrator::LiveQueue>,
+}
+
+fn opening_failure(path: &std::path::Path, error: AppError) -> Result<Opening, Failure> {
+    if error.code != "busy" {
+        return Err(error.into());
+    }
+    Ok(Opening::Waiting(StartupObservation {
+        resident: sync_orchestrator::resident_status(path).map_err(Failure::from)?,
+        live: sync_orchestrator::LiveJob::read(path).map_err(Failure::from)?,
+        queue: sync_orchestrator::LiveQueue::read(path).map_err(Failure::from)?,
+    }))
+}
+
+pub(crate) async fn open() -> Result<Opening, Failure> {
     blocking(|| {
         let path = state_directory()?;
         std::fs::create_dir_all(&path)
             .map_err(|e| Failure::new("unavailable", format!("{} : {e}", path.display())))?;
-        let app = Arc::new(Application::open(&path).map_err(Failure::from)?);
+        let app = match Application::open(&path) {
+            Ok(app) => Arc::new(app),
+            Err(error) => return opening_failure(&path, error),
+        };
         let mut workspace = load(&app, Vec::new())?;
         if cfg!(windows) && workspace.schedules.iter().any(|s| s.schedule.enabled) {
             workspace.supervision_error = crate::native::prepare_agent(app.state_directory()).err();
         }
-        Ok(Opened(app, workspace))
+        Ok(Opening::Ready(Opened(app, workspace)))
     })
     .await
 }
@@ -469,6 +497,7 @@ pub(crate) type AgentObservation = (
     Option<sync_orchestrator::LiveJob>,
     sync_orchestrator::ResidentStatus,
     bool,
+    Option<sync_orchestrator::LiveQueue>,
 );
 
 /// Resumes both pause and explicit process stop, then asks the existing native
@@ -481,4 +510,81 @@ pub(crate) fn resume_agent(app: &Shared) -> impl Future<Output = Result<(), Fail
         app.agent_cancel_clear().map_err(Failure::from)?;
         crate::native::prepare_agent(app.state_directory())
     })
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn startup_observes_a_busy_agent_without_initializing_or_unlocking_stores()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let state = temp.path().join("state");
+        std::fs::create_dir(&state)?;
+        let locks = temp.path().join("locks");
+        let app = Application::open_with_lock_root(&state, &locks)?;
+        let owner = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(state.join("desktop.lock"))?;
+        owner.try_lock()?;
+        let _presence = sync_orchestrator::hold_agent_presence(&state)?;
+        sync_orchestrator::publish_resident_status(
+            &state,
+            sync_orchestrator::ResidentPhase::Dispatching,
+        )?;
+        let live = sync_orchestrator::LiveJob {
+            format: sync_orchestrator::LIVE_FORMAT,
+            updated_at: 1,
+            snapshot: sync_orchestrator::JobSnapshot {
+                active: true,
+                entries_done: 3,
+                ..Default::default()
+            },
+        };
+        std::fs::write(state.join("agent-live.json"), serde_json::to_vec(&live)?)?;
+        let error = match Application::open_with_lock_root(&state, &locks) {
+            Ok(_) => return Err("command lock was bypassed".into()),
+            Err(error) => error,
+        };
+        let Opening::Waiting(wait) =
+            opening_failure(&state, error).map_err(|e| std::io::Error::other(e.to_string()))?
+        else {
+            return Err("busy startup did not wait".into());
+        };
+        assert!(wait.resident.available);
+        assert_eq!(
+            wait.live
+                .ok_or("missing live observation")?
+                .snapshot
+                .entries_done,
+            3
+        );
+        assert!(!state.join("scheduler.sqlite").exists());
+        assert!(app.preferences_save(app.preferences()?).is_err());
+        assert!(app.schedules().is_err());
+        drop(owner);
+        let reopened = Application::open_with_lock_root(&state, &locks)?;
+        assert!(
+            load(&reopened, Vec::new())
+                .map_err(|e| std::io::Error::other(e.to_string()))?
+                .profiles
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn startup_does_not_retry_integrity_or_permission_failures() {
+        for code in ["integrity", "unavailable", "invalid_input"] {
+            let error = AppError {
+                code: code.into(),
+                message: "test failure".into(),
+                profile: None,
+            };
+            let failure = opening_failure(std::path::Path::new("unused"), error);
+            assert!(matches!(failure, Err(error) if error.code == code));
+        }
+    }
 }

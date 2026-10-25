@@ -6,6 +6,57 @@ use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Strok
 use iced::{Color, Element, Length, Point, Radians, Rectangle, Renderer, Theme};
 use std::f32::consts::PI;
 
+/// Shared sync symbol: rounded shafts join filled, tangent arrowheads cleanly.
+pub(crate) fn sync_arrows(
+    frame: &mut Frame,
+    center: Point,
+    radius: f32,
+    width: f32,
+    rotation: f32,
+    color: Color,
+) {
+    let length = radius * 0.42;
+    let half = width * 0.95;
+    for base in [20.0_f32, 200.0] {
+        let start = base.to_radians() + rotation;
+        let tip_angle = (base + 125.0).to_radians() + rotation;
+        let shaft_end = tip_angle - length * 0.55 / radius;
+        frame.stroke(
+            &Path::new(|b| {
+                b.arc(Arc {
+                    center,
+                    radius,
+                    start_angle: Radians(start),
+                    end_angle: Radians(shaft_end),
+                })
+            }),
+            Stroke::default()
+                .with_color(color)
+                .with_width(width)
+                .with_line_cap(LineCap::Round),
+        );
+        let tip = Point::new(
+            center.x + radius * tip_angle.cos(),
+            center.y + radius * tip_angle.sin(),
+        );
+        let tangent = (-tip_angle.sin(), tip_angle.cos());
+        let normal = (tip_angle.cos(), tip_angle.sin());
+        let head = Path::new(|b| {
+            b.move_to(tip);
+            b.line_to(Point::new(
+                tip.x - tangent.0 * length + normal.0 * half,
+                tip.y - tangent.1 * length + normal.1 * half,
+            ));
+            b.line_to(Point::new(
+                tip.x - tangent.0 * length - normal.0 * half,
+                tip.y - tangent.1 * length - normal.1 * half,
+            ));
+            b.close();
+        });
+        frame.fill(&head, color);
+    }
+}
+
 /// Icon catalogue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Glyph {
@@ -325,10 +376,15 @@ impl<M> canvas::Program<M> for Icon {
 fn draw(glyph: Glyph, d: &mut Pen<'_>) {
     match glyph {
         Glyph::Logo | Glyph::Sync => {
-            d.arc(12.0, 12.0, 7.5, 200.0, 330.0);
-            d.arc_head(12.0, 12.0, 7.5, 330.0, true);
-            d.arc(12.0, 12.0, 7.5, 20.0, 150.0);
-            d.arc_head(12.0, 12.0, 7.5, 150.0, true);
+            let center = d.p(12.0, 12.0);
+            sync_arrows(
+                d.frame,
+                center,
+                7.5 * d.scale,
+                d.stroke.width,
+                d.rotation,
+                d.color,
+            );
             if glyph == Glyph::Logo {
                 d.dot(12.0, 12.0, 2.0);
             }

@@ -42,6 +42,55 @@ pub(crate) fn outcome_color(p: &Palette, o: Outcome) -> Color {
 }
 
 impl App {
+    /// Agent-published queue; no schedule decisions are reconstructed in the UI.
+    pub(crate) fn agent_queue_panel(&self, p: &Palette) -> Option<El<'_, Message>> {
+        let queue = self.agent_queue.as_ref()?;
+        let job = self.agent_job.as_ref()?;
+        let current = queue
+            .current
+            .as_ref()
+            .filter(|current| current.id == job.profile)?;
+        if !self.ws.resident.available {
+            return None;
+        }
+        let mut rows = column![
+            row![
+                icons::spinning(
+                    Glyph::Sync,
+                    20.0,
+                    p.accent,
+                    self.now
+                        .saturating_duration_since(self.started)
+                        .as_secs_f32()
+                        * 0.6
+                ),
+                container(ui::strong(p.text, current.name.clone(), 15.0)).width(Length::Fill),
+                ui::pill(p.accent, "En cours"),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(12);
+        for (index, profile) in queue.pending.iter().enumerate() {
+            rows = rows.push(
+                row![
+                    ui::colored(p.muted, format!("{}", index + 1), 13.0),
+                    container(ui::muted(p, profile.name.clone())).width(Length::Fill),
+                    ui::caption(p, "En attente"),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            );
+        }
+        if queue.pending.is_empty() {
+            rows = rows.push(ui::caption(p, "Aucun autre profil en attente."));
+        }
+        Some(container(column![
+            ui::strong(p.text, format!("File d’attente · {} profil(s)", queue.pending.len() + 1), 16.0),
+            container(scrollable(rows).height(Length::Shrink).style(theme::scroll(*p))).max_height(220.0),
+            ui::caption(p, "Un seul profil est exécuté à la fois. Les suivants démarrent après sa fin ; toute modification reste revérifiée avant exécution."),
+        ].spacing(14)).padding(20).width(Length::Fill).style(theme::card(*p, 0.0, false)).into())
+    }
     pub(crate) fn view(&self) -> El<'_, Message> {
         let p = self.palette();
         let body = match &self.backend {
@@ -92,6 +141,56 @@ impl App {
             .saturating_duration_since(self.started)
             .as_secs_f32()
             * 0.6;
+        if let Some(wait) = &self.boot_wait {
+            let live = wait.live.as_ref().filter(|live| {
+                wait.resident.available
+                    && live.is_live(model::now_secs(), crate::app::AGENT_STALE_SECS)
+            });
+            let mut body = column![
+                row![charts::mark(Mark { from: p.accent, to: p.info, turn }, 48.0), ui::title(p, "Suivi des synchronisations", 24.0)].spacing(14).align_y(Alignment::Center),
+                ui::caption(p, "L'interface complète s'ouvrira automatiquement après l'opération. Les commandes restent disponibles pendant le transfert."),
+            ].spacing(20);
+            if live.is_some()
+                && let Some(job) = &self.agent_job
+            {
+                body = body.push(self.live_panel(p, job, true));
+            } else {
+                body = body.push(ui::muted(
+                    p,
+                    "En attente de l'opération en cours — aucune progression récente disponible.",
+                ));
+                if wait.resident.available {
+                    body = body.push(ui::action(
+                        p,
+                        Tone::Secondary,
+                        Some(Glyph::Power),
+                        "Arrêter l’agent",
+                        (!self.ws.agent_stopped).then_some(Message::StopAgent),
+                    ));
+                }
+            }
+            if let Some(error) = &self.boot_control_error {
+                body = body.push(ui::callout(
+                    p,
+                    p.danger,
+                    Glyph::Alert,
+                    "Commande non appliquée",
+                    error.to_string(),
+                ));
+            }
+            if let Some(queue) = self.agent_queue_panel(p) {
+                body = body.push(queue);
+            }
+            return scrollable(
+                container(container(body).max_width(1040.0))
+                    .padding(24)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+            )
+            .style(theme::scroll(*p))
+            .height(Length::Fill)
+            .into();
+        }
         let body: El<'_, Message> = match &self.boot_error {
             None => column![
                 charts::mark(Mark { from: p.accent, to: theme::mix(p.accent, p.info, 0.6), turn }, 84.0),

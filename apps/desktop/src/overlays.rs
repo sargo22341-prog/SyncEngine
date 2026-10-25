@@ -263,12 +263,16 @@ impl App {
                     .profile(profile)
                     .map_or(String::new(), |pr| pr.name.clone());
                 let scheduled = self.schedule_of(profile).is_some();
+                let interrupted = self.schedule_of(profile).is_some_and(|s| s.running_slot.is_some())
+                    || self.last_run(profile).is_some_and(|run| run.outcome == crate::model::Outcome::Interrupted);
                 (
                     480.0,
                     column![
                         dialog_head(&dp, Glyph::Trash, dp.danger, &format!("Retirer « {name} » ?")),
                         ui::muted(&dp, "Seule la configuration est retirée : vos fichiers, l’historique et les versions conservées restent intacts."),
-                        if scheduled {
+                        if interrupted {
+                            ui::callout(&dp, dp.warning, Glyph::Alert, "Diagnostic requis", "Une exécution est encore marquée en cours ou interrompue. Si elle est arrêtée, vérifiez son résultat et confirmez le diagnostic avant de retirer ce profil.")
+                        } else if scheduled {
                             ui::callout(&dp, dp.warning, Glyph::Clock, "Planification associée", "Son autorisation sera retirée d’abord.")
                         } else {
                             Space::new().into()
@@ -276,7 +280,11 @@ impl App {
                         row![
                             ui::fill(),
                             ui::action(&dp, Tone::Ghost, None, "Annuler", Some(Message::CloseDialog)),
-                            ui::action(&dp, Tone::Danger, Some(Glyph::Trash), "Retirer", Some(Message::Remove(profile.clone()))),
+                            if interrupted {
+                                ui::action(&dp, Tone::Secondary, Some(Glyph::Check), "Diagnostiquer", (!self.running_on(profile)).then(|| Message::AskDiagnose(profile.clone())))
+                            } else {
+                                ui::action(&dp, Tone::Danger, Some(Glyph::Trash), "Retirer", Some(Message::Remove(profile.clone())))
+                            },
                         ]
                         .spacing(10),
                     ]
@@ -284,6 +292,19 @@ impl App {
                     .into(),
                 )
             }
+            Dialog::Diagnose { profile } => (
+                560.0,
+                column![
+                    dialog_head(&dp, Glyph::Alert, dp.warning, "Confirmer le diagnostic de l’interruption"),
+                    ui::muted(&dp, "Vérifiez que le transfert est arrêté, puis examinez les fichiers et l’historique. Des copies partielles ou des versions temporaires peuvent subsister après un arrêt forcé."),
+                    ui::muted(&dp, "Votre confirmation marque l’ancienne exécution en échec et lève son blocage. Les fichiers, journaux et versions sont conservés. L’ancienne échéance n’est pas rejouée ; les prochaines échéances autorisées pourront s’exécuter après une nouvelle analyse."),
+                    row![
+                        ui::fill(),
+                        ui::action(&dp, Tone::Ghost, None, "Annuler", Some(Message::CloseDialog)),
+                        ui::action(&dp, Tone::Primary, Some(Glyph::Check), "J’ai vérifié : lever le blocage", (!self.running_on(profile)).then(|| Message::Diagnose(profile.clone()))),
+                    ].spacing(10),
+                ].spacing(16).into(),
+            ),
             Dialog::Group {
                 original,
                 name,

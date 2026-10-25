@@ -297,6 +297,9 @@ impl App {
         for job in &live {
             col = col.push(self.live_panel(p, job, true));
         }
+        if let Some(queue) = self.agent_queue_panel(p) {
+            col = col.push(queue);
+        }
         if !live.is_empty() {
             // Live panels above; the last result returns once they end.
         } else if let Some(last) = &self.last_run {

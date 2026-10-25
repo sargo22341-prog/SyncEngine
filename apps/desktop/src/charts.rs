@@ -292,46 +292,14 @@ impl<M> canvas::Program<M> for Mark {
                 .add_stop(0.0, self.from)
                 .add_stop(1.0, self.to),
         );
-        let c = Point::new(s / 2.0, s / 2.0);
-        let r = s * 0.27;
-        let rot = self.turn * 2.0 * PI;
-        let stroke = Stroke::default()
-            .with_color(Color::WHITE)
-            .with_width(s * 0.085)
-            .with_line_cap(LineCap::Round);
-        for base in [200.0_f32, 20.0] {
-            let a0 = base.to_radians() + rot;
-            let a1 = (base + 125.0).to_radians() + rot;
-            frame.stroke(
-                &Path::new(|b| {
-                    b.arc(Arc {
-                        center: c,
-                        radius: r,
-                        start_angle: Radians(a0),
-                        end_angle: Radians(a1),
-                    });
-                }),
-                stroke,
-            );
-            let tip = Point::new(c.x + r * a1.cos(), c.y + r * a1.sin());
-            let (tx, ty) = (-a1.sin(), a1.cos());
-            let (nx, ny) = (a1.cos(), a1.sin());
-            let l = s * 0.12;
-            frame.stroke(
-                &Path::new(|b| {
-                    b.move_to(Point::new(
-                        tip.x - tx * l + nx * l * 0.8,
-                        tip.y - ty * l + ny * l * 0.8,
-                    ));
-                    b.line_to(tip);
-                    b.line_to(Point::new(
-                        tip.x - tx * l - nx * l * 0.8,
-                        tip.y - ty * l - ny * l * 0.8,
-                    ));
-                }),
-                stroke,
-            );
-        }
+        crate::icons::sync_arrows(
+            &mut frame,
+            Point::new(s / 2.0, s / 2.0),
+            s * 0.27,
+            s * 0.065,
+            self.turn * 2.0 * PI,
+            Color::WHITE,
+        );
         vec![frame.into_geometry()]
     }
 }

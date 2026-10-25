@@ -172,10 +172,23 @@ pub struct DispatchReceipt {
     #[serde(flatten)]
     pub completion: Completion,
 }
-/// Application port. Implementations must repeat authorization/root validation,
-/// use durable plans, preserve partial work and honor cancellation cooperatively.
+/// Presentation identity of a due profile; never contains endpoints or credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedProfile {
+    /// Stable profile identity.
+    pub id: sync_core::ProfileId,
+    /// User-facing profile name.
+    pub name: String,
+}
+
+/// Application port. Repeat authorization/root validation, preserve partial work,
+/// and honor cancellation cooperatively. Queue observations never authorize work.
 pub trait ScheduledApplication {
     /// Executes the approved profile using the ordinary application engines.
     /// Business failures are explicit completions; a process crash leaves a claim.
     fn run(&self, schedule: &Schedule, cancel: &CancellationToken) -> Completion;
+    /// Observes the current claim and remaining due profiles in execution order.
+    /// Presentation only: observers must not use this to authorize mutations.
+    /// Jobs remain sequential and each claim rechecks its persisted configuration.
+    fn queue_changed(&self, _current: Option<&QueuedProfile>, _pending: &[QueuedProfile]) {}
 }

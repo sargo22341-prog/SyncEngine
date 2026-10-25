@@ -389,6 +389,108 @@ fn interrupted_scheduled_intent_requires_explicit_diagnosis_before_rescan()
 }
 
 #[test]
+fn explicit_diagnosis_clears_stale_schedule_without_replay_and_preserves_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_scheduler::{
+        Completion, JobStatus, MissedJobs, Schedule, ScheduledApplication, Scheduler, Trigger, Wake,
+    };
+    struct Counter(std::cell::Cell<usize>);
+    impl ScheduledApplication for Counter {
+        fn run(&self, _: &Schedule, _: &sync_core::CancellationToken) -> Completion {
+            self.0.set(self.0.get() + 1);
+            Completion {
+                status: JobStatus::Succeeded,
+                code: "test".into(),
+            }
+        }
+    }
+    let (temp, app, p) = fixture(SyncMode::Mirror)?;
+    fs::write(p.source.join("file"), b"source")?;
+    fs::write(p.destination.join("keep"), b"destination")?;
+    let scheduler_path = temp.path().join("state/scheduler.sqlite");
+    Scheduler::open(&scheduler_path)?.save(&Schedule {
+        approved: p.clone(),
+        trigger: Trigger::Interval { seconds: 60 },
+        created_at: 0,
+        enabled: true,
+        allow_deletions: false,
+        missed: MissedJobs::RunOnce,
+        show_window: false,
+    })?;
+    rusqlite::Connection::open(&scheduler_path)?.execute(
+        "UPDATE schedules SET running_slot=60 WHERE profile=?1",
+        [p.id.as_str()],
+    )?;
+    assert_eq!(
+        app.schedule_remove(p.id.clone())
+            .err()
+            .ok_or("missing refusal")?
+            .code,
+        "interrupted"
+    );
+    assert_eq!(
+        app.schedule_save(
+            p.id.clone(),
+            Trigger::Interval { seconds: 60 },
+            MissedJobs::RunOnce,
+            true,
+            false,
+            false
+        )
+        .err()
+        .ok_or("missing save refusal")?
+        .code,
+        "interrupted"
+    );
+    assert!(app.acknowledge_interrupted(&p.id, false).is_err());
+    let owner = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(temp.path().join("state/desktop.lock"))?;
+    owner.try_lock()?;
+    assert_eq!(
+        app.acknowledge_interrupted(&p.id, true)
+            .err()
+            .ok_or("missing busy refusal")?
+            .code,
+        "busy"
+    );
+    assert_eq!(
+        Scheduler::open(&scheduler_path)?.list()?[0].running_slot,
+        Some(60)
+    );
+    drop(owner);
+    let execution = sync_executor::execution_lock(&temp.path().join("locks"))?;
+    assert!(app.acknowledge_interrupted(&p.id, true).is_err());
+    drop(execution);
+    app.acknowledge_interrupted(&p.id, true)?;
+    app.acknowledge_interrupted(&p.id, true)?; // Retrying a partial diagnosis is safe.
+    let mut scheduler = Scheduler::open(&scheduler_path)?;
+    let row = scheduler.list()?.remove(0);
+    assert_eq!(row.running_slot, None);
+    assert_eq!(row.last_slot, Some(60));
+    assert_eq!(
+        row.result.ok_or("missing receipt")?.status,
+        JobStatus::Failed
+    );
+    let counter = Counter(std::cell::Cell::new(0));
+    scheduler.dispatch(
+        60,
+        Wake::Clock,
+        &counter,
+        &sync_core::CancellationToken::new(),
+    )?;
+    assert_eq!(counter.0.get(), 0);
+    assert_eq!(fs::read(p.destination.join("keep"))?, b"destination");
+    assert!(!p.destination.join("file").exists());
+    app.schedule_remove(p.id.clone())?;
+    app.profile_remove(p.id)?;
+    assert!(app.profiles_list()?.is_empty());
+    assert!(scheduler.list()?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn gui_schedule_approval_is_bound_to_current_profile_and_idle_window_allows_dispatch()
 -> Result<(), Box<dyn std::error::Error>> {
     use sync_scheduler::{MissedJobs, Scheduler, Trigger, Wake};

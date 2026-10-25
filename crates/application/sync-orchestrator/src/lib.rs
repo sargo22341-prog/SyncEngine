@@ -8,7 +8,7 @@ mod live;
 mod resident;
 pub use resident::{
     ResidentPhase, ResidentStatus, agent_stop_pending, clear_agent_stop, hold_agent_presence,
-    publish_resident_status, resident_status,
+    publish_resident_failure, publish_resident_status, request_agent_stop, resident_status,
 };
 mod pages;
 mod runs;
@@ -17,7 +17,7 @@ mod schedules;
 
 use connector_local::{LocalConnector, LocalOptions};
 pub use live::{
-    LIVE_FORMAT, LiveJob, agent_cancel_marker, clear_agent_cancel, desktop_present,
+    LIVE_FORMAT, LiveJob, LiveQueue, agent_cancel_marker, clear_agent_cancel, desktop_present,
     hold_desktop_presence, request_agent_cancel,
 };
 pub use runs::Run;

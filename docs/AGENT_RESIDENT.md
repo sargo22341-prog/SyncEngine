@@ -73,6 +73,48 @@ sa sémantique `manager-start` : aucun événement Windows n'y est simulé.
 
 ## Présence, pause et arrêt
 
+Le suivi ouvert pendant un transfert affiche le même graphe de débit que la page
+Activité (moyenne sur quatre secondes, trente secondes de courbe), le pourcentage,
+les opérations et le nom du profil. Les mesures commencent à l’ouverture du suivi :
+aucun historique antérieur n’est inventé. Les observations périmées arrêtent le suivi.
+**Annuler** demande l’annulation coopérative du transfert courant ; les planifications
+reprennent ensuite. **Arrêter l’agent** demande l’arrêt coopératif du processus et
+reste persistant jusqu’à **Reprendre les planifications**. Aucune pause avec reprise
+au même octet n’est proposée. Une E/S OS bloquée reste non interruptible de force.
+
+Si plusieurs profils sont dus à la même connexion, ils passent l’un après l’autre,
+dans l’ordre stable des identifiants de profil, sans priorité configurable.
+Le panneau **File d’attente**, présent dans le suivi initial et dans Activité,
+affiche le profil actif avec un indicateur animé puis les profils encore en attente.
+Il observe `agent-queue.json` (format v1, au plus 1000 profils et 2 Mio) ; il ne décide
+ni des échéances ni des mutations. Chaque prise revérifie la configuration persistée :
+un profil modifié ou retiré pendant l’attente peut donc être écarté. Une erreur métier
+d’un profil ne déclenche pas tous les autres en parallèle ; l’annulation interrompt
+la distribution et laisse les profils non pris disponibles pour le passage suivant.
+Exemple : programmer trois profils à la connexion ; A termine avant le démarrage de B,
+puis C. L’interface conserve uniquement un historique borné de mesures en mémoire.
+
+Après un arrêt forcé, l’agent peut être présent alors que le profil reste bloqué
+sur une prise interrompue. Dans le profil, choisir **Diagnostiquer l’interruption**,
+vérifier l’historique et les fichiers, puis confirmer **J’ai vérifié : lever le
+blocage**. L’ancienne exécution reste un échec ; les journaux, fichiers temporaires
+et versions sont conservés. La prise correspondante est acquittée sans être
+rejouée. Il devient ensuite possible de retirer le profil ou revoir son horaire.
+Une exécution réellement active reste protégée par les verrous de commande et
+d’exécution. L’action de diagnostic ne lance pas elle-même un transfert ; les
+échéances futures autorisées restent actives et repartent d’une nouvelle analyse.
+
+Ouvrir la fenêtre pendant une synchronisation planifiée peut rencontrer le
+verrou de commande. La fenêtre affiche alors l’attente et la progression récente
+de l’agent, sans ouvrir ni migrer les bases. Elle réessaie automatiquement chaque
+seconde et ouvre l’interface complète après libération du verrou. Une observation
+périmée n’est jamais affichée comme un transfert actif. En sens inverse, le
+résident attend si une commande manuelle occupe l’état à son démarrage ; un arrêt
+ou une demande de retrait reste pris en compte pendant cette attente. Les erreurs
+de permissions, d’intégrité et de schéma ne sont pas réessayées silencieusement.
+Exemple : lancer une synchronisation puis ouvrir la fenêtre ; le transfert
+continue, son avancement est visible et la fenêtre s’ouvre après sa fin.
+
 `agent.lock` est un verrou OS gardé ouvert : une seconde instance, même dans
 une autre session du même compte, est refusée. La première session possède
 l'agent de ce dossier jusqu'à sa sortie ; un second bureau ne déclenche pas
@@ -119,7 +161,11 @@ tâches désactivées restent récupérables ; une nouvelle tentative reprend la
 migration. Les noms historiques globaux et les noms par état sont examinés.
 L'appartenance exige une seule action `syncengine-agent.exe`, les arguments
 exacts du dossier d'état, le SID attendu et un principal interactif à privilèges
-ordinaires. Les instances actives sont interrogées avec `GetInstances(0)`,
+ordinaires. Le compte renvoyé par Windows (SID ou nom `DOMAINE\utilisateur`)
+est résolu en SID avant comparaison ; un compte non résolu reste refusé.
+Après une mise à jour corrigeant ce refus, réenregistrer le même horaire
+suffit : ne pas supprimer manuellement la tâche.
+Les instances actives sont interrogées avec `GetInstances(0)`,
 indépendamment du statut désactivé de la définition. Une tâche étrangère sous notre nom
 isolé provoque un refus ; une tâche historique globale étrangère est conservée.
 Les erreurs d'UAC et installations partielles restent des erreurs de
@@ -151,6 +197,18 @@ horaire enlève ce marqueur automatique, jamais le marqueur d'arrêt explicite.
    sauvegardées restent conservés. Une prise en cours exige d'attendre sa fin.
 
 ## Journaux et validation
+
+En cas d’« Erreur de l’agent », la page Planification affiche le diagnostic
+du processus et son étape : `scheduler_open`, `windows_session`,
+`session_observation`, `application_open` ou `scheduler_dispatch`.
+Le même diagnostic est conservé dans le champ facultatif `diagnostic` de
+`agent-status.json` et retourné par `syncengine-agent status ETAT`.
+Il est caviardé et limité à 2048 caractères. Les anciens fichiers d’état
+restent lisibles. Un nouveau démarrage publie `starting` et retire l’ancienne
+erreur ; les résultats des sauvegardes restent dans leurs reçus et historiques.
+Par exemple, transmettre cette observation après un échec permet de distinguer
+un verrou occupé (`application_open [busy]`) d’une base illisible, sans compiler
+une version debug ni enregistrer des logs continus.
 
 Le résident n'écrit aucun journal à chaque passage : présence, session et
 dernier reçu sont de taille bornée. `agent-live.json` conserve seulement la

@@ -218,6 +218,34 @@ fn windows_executable_uses_gui_subsystem_without_console_window() -> Result<(), 
 }
 
 struct Resident(std::process::Child);
+
+#[test]
+fn failed_resident_preserves_startup_cause_without_a_console() -> Result<(), Error> {
+    let temp = tempfile::tempdir()?;
+    let state = temp.path().join("state");
+    std::fs::create_dir(&state)?;
+    std::fs::write(
+        state.join("scheduler.sqlite"),
+        b"invalid database for isolated test",
+    )?;
+    let output = command(temp.path(), "resident", &[])?;
+    assert!(!output.status.success());
+    let status = sync_orchestrator::resident_status(&state)?;
+    assert!(!status.available);
+    assert_eq!(status.phase, sync_orchestrator::ResidentPhase::Error);
+    assert!(
+        status
+            .diagnostic
+            .ok_or("missing startup diagnostic")?
+            .contains("scheduler_open")
+    );
+    assert!(String::from_utf8(output.stderr)?.contains("scheduler_open"));
+    assert_eq!(
+        std::fs::read(state.join("scheduler.sqlite"))?,
+        b"invalid database for isolated test"
+    );
+    Ok(())
+}
 impl Drop for Resident {
     fn drop(&mut self) {
         let _already_exited = self.0.kill().is_err();
@@ -236,6 +264,49 @@ fn start_resident(root: &Path) -> Result<Resident, Error> {
             .stderr(std::process::Stdio::null())
             .spawn()?,
     ))
+}
+
+#[test]
+fn resident_waits_for_a_foreground_command_and_can_stop_while_waiting() -> Result<(), Error> {
+    let (temp, profile) = fixture()?;
+    let state = temp.path().join("state");
+    let owner = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(state.join("desktop.lock"))?;
+    owner.try_lock()?;
+    let mut resident = start_resident(temp.path())?;
+    wait_until(|| Ok(sync_orchestrator::resident_status(&state)?.available))?;
+    // Longer than the native session query in ordinary operation. The command
+    // remains locked throughout; neither profiles nor destinations may change.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    assert!(resident.0.try_wait()?.is_none());
+    assert_eq!(
+        sync_orchestrator::resident_status(&state)?.phase,
+        sync_orchestrator::ResidentPhase::Starting
+    );
+    assert!(std::fs::read_dir(&profile.destination)?.next().is_none());
+    drop(owner);
+    wait_until(|| {
+        Ok(sync_orchestrator::resident_status(&state)?.phase
+            == sync_orchestrator::ResidentPhase::Idle)
+    })?;
+    assert!(command(temp.path(), "stop", &[])?.status.success());
+    wait_until(|| Ok(resident.0.try_wait()?.is_some()))?;
+    assert!(resident.0.wait()?.success());
+    std::fs::remove_file(state.join("agent-stop.request"))?;
+    let owner = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(state.join("desktop.lock"))?;
+    owner.try_lock()?;
+    let mut waiting = start_resident(temp.path())?;
+    wait_until(|| Ok(sync_orchestrator::resident_status(&state)?.available))?;
+    assert!(command(temp.path(), "stop", &[])?.status.success());
+    wait_until(|| Ok(waiting.0.try_wait()?.is_some()))?;
+    assert!(waiting.0.wait()?.success());
+    assert!(std::fs::read_dir(&profile.destination)?.next().is_none());
+    Ok(())
 }
 fn wait_until(mut condition: impl FnMut() -> Result<bool, Error>) -> Result<(), Error> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);

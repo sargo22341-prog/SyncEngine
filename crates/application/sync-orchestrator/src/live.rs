@@ -33,7 +33,85 @@ pub struct LiveJob {
     pub snapshot: JobSnapshot,
 }
 
+/// Versioned, bounded observation of the resident's sequential dispatch queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveQueue {
+    /// Format version, currently 1.
+    pub format: u32,
+    /// Publication time in UTC seconds, independent of job success.
+    pub updated_at: i64,
+    /// Currently claimed profile, if any.
+    pub current: Option<sync_scheduler::QueuedProfile>,
+    /// Due profiles awaiting their turn, in scheduler order.
+    pub pending: Vec<sync_scheduler::QueuedProfile>,
+}
+impl LiveQueue {
+    /// Reads the queue without initializing stores.
+    /// # Errors
+    /// Invalid, oversized, unreadable or unsupported observation.
+    pub fn read(state: &Path) -> Result<Option<Self>, AppError> {
+        let path = state.join("agent-queue.json");
+        let metadata = match path.metadata() {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(io(e)),
+        };
+        if metadata.len() > 2 * 1024 * 1024 {
+            return Err(error("format", "file de profils trop volumineuse"));
+        }
+        let queue: Self = serde_json::from_slice(&std::fs::read(path).map_err(io)?).map_err(io)?;
+        if queue.format != 1 || queue.pending.len() + usize::from(queue.current.is_some()) > 1000 {
+            return Err(error("format", "format de file de profils inconnu"));
+        }
+        Ok(Some(queue))
+    }
+    /// Replaces a bounded queue observation. The caller holds the resident lock.
+    /// This is presentation only and never authorizes a job.
+    /// # Errors
+    /// Clock, serialization, size limit or storage failure.
+    pub fn publish(
+        state: &Path,
+        current: Option<&sync_scheduler::QueuedProfile>,
+        pending: &[sync_scheduler::QueuedProfile],
+    ) -> Result<(), AppError> {
+        if pending.len() + usize::from(current.is_some()) > 1000 {
+            return Err(error("invalid_input", "file de profils trop longue"));
+        }
+        let queue = Self {
+            format: 1,
+            updated_at: Timestamp::now().map_err(io)?.secs(),
+            current: current.cloned(),
+            pending: pending.to_vec(),
+        };
+        let bytes = serde_json::to_vec(&queue).map_err(io)?;
+        if bytes.len() > 2 * 1024 * 1024 {
+            return Err(error("invalid_input", "file de profils trop volumineuse"));
+        }
+        let temp = state.join("agent-queue.json.tmp");
+        std::fs::write(&temp, bytes).map_err(io)?;
+        std::fs::rename(temp, state.join("agent-queue.json")).map_err(io)
+    }
+}
+
 impl LiveJob {
+    /// Reads the agent observation without opening or migrating application stores.
+    /// This allows a window to follow a job while that job owns the command lock.
+    /// Check [`Self::is_live`] before presenting it as running.
+    /// # Errors
+    /// Unreadable, malformed or unsupported observation. Missing means `None`.
+    pub fn read(state: &Path) -> Result<Option<Self>, AppError> {
+        let bytes = match std::fs::read(state.join(LIVE_FILE)) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(io(e)),
+        };
+        let live: Self = serde_json::from_slice(&bytes).map_err(|e| error("format", e))?;
+        if live.format != LIVE_FORMAT {
+            return Err(error("format", "format de progression inconnu"));
+        }
+        Ok(Some(live))
+    }
+
     /// True while the job runs and was refreshed at most `max_age` seconds
     /// before `now`. An older active file means the agent stopped abruptly:
     /// the scheduler's interrupted claim then tells the truth.
@@ -72,16 +150,7 @@ impl Application {
     /// Unreadable file (for instance while it is being replaced), unknown
     /// format or malformed content.
     pub fn agent_live(&self) -> Result<Option<LiveJob>, AppError> {
-        let bytes = match std::fs::read(self.state.join(LIVE_FILE)) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(io(e)),
-        };
-        let live: LiveJob = serde_json::from_slice(&bytes).map_err(|e| error("format", e))?;
-        if live.format != LIVE_FORMAT {
-            return Err(error("format", "format de progression inconnu"));
-        }
-        Ok(Some(live))
+        LiveJob::read(&self.state)
     }
 
     /// Leaves a persistent stop request for the agent: the running scheduled
@@ -160,4 +229,50 @@ pub fn hold_desktop_presence(state: &Path) -> std::io::Result<Option<File>> {
 pub fn desktop_present(state: &Path) -> std::io::Result<bool> {
     // Holding the lock for an instant is harmless: it is released on drop.
     Ok(hold_desktop_presence(state)?.is_none())
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+    #[test]
+    fn queue_observation_is_optional_versioned_and_contains_no_store_initialization()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        assert!(LiveQueue::read(temp.path())?.is_none());
+        let a = sync_scheduler::QueuedProfile {
+            id: sync_core::ProfileId::new("a")?,
+            name: "Photos".into(),
+        };
+        let b = sync_scheduler::QueuedProfile {
+            id: sync_core::ProfileId::new("b")?,
+            name: "Documents".into(),
+        };
+        LiveQueue::publish(temp.path(), Some(&a), std::slice::from_ref(&b))?;
+        let queue = LiveQueue::read(temp.path())?.ok_or("missing queue")?;
+        assert_eq!(queue.current, Some(a));
+        assert_eq!(queue.pending, vec![b]);
+        let overflow = vec![queue.pending[0].clone(); 1000];
+        assert!(LiveQueue::publish(temp.path(), queue.current.as_ref(), &overflow).is_err());
+        assert_eq!(
+            LiveQueue::read(temp.path())?
+                .ok_or("lost valid queue")?
+                .pending
+                .len(),
+            1
+        );
+        assert!(!temp.path().join("scheduler.sqlite").exists());
+        let mut invalid = queue;
+        invalid.format = 2;
+        std::fs::write(
+            temp.path().join("agent-queue.json"),
+            serde_json::to_vec(&invalid)?,
+        )?;
+        assert!(LiveQueue::read(temp.path()).is_err());
+        std::fs::write(
+            temp.path().join("agent-queue.json"),
+            vec![b' '; 2 * 1024 * 1024 + 1],
+        )?;
+        assert!(LiveQueue::read(temp.path()).is_err());
+        Ok(())
+    }
 }

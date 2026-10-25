@@ -16,7 +16,20 @@ fn bind_user(xml: &str, sid: &str) -> String {
         )
 }
 
-const OWNERSHIP: &str = r#"function Owned($task,$expectedArguments,$sid) { return $task.Definition.Actions.Count -eq 1 -and [IO.Path]::GetFileName($task.Definition.Actions.Item(1).Path) -eq 'syncengine-agent.exe' -and $task.Definition.Actions.Item(1).Arguments -eq $expectedArguments -and $task.Definition.Principal.UserId -eq $sid -and $task.Definition.Principal.RunLevel -eq 0 -and $task.Definition.Principal.LogonType -eq 3 };"#;
+// Task Scheduler may return DOMAIN\user even when registration used a SID.
+// Resolve that identity before comparing; unresolved accounts fail closed.
+const OWNERSHIP: &str = r#"function SameUser($userId,$sid) {
+    if ([string]::IsNullOrWhiteSpace($userId)) { return $false }
+    try {
+        if ($userId -match '^S-1-') {
+            $actual=[System.Security.Principal.SecurityIdentifier]::new($userId)
+        } else {
+            $actual=[System.Security.Principal.NTAccount]::new($userId).Translate([System.Security.Principal.SecurityIdentifier])
+        }
+        return $actual.Value -eq $sid
+    } catch { return $false }
+};
+function Owned($task,$expectedArguments,$sid) { return $task.Definition.Actions.Count -eq 1 -and [IO.Path]::GetFileName($task.Definition.Actions.Item(1).Path) -eq 'syncengine-agent.exe' -and $task.Definition.Actions.Item(1).Arguments -eq $expectedArguments -and (SameUser $task.Definition.Principal.UserId $sid) -and $task.Definition.Principal.RunLevel -eq 0 -and $task.Definition.Principal.LogonType -eq 3 };"#;
 
 fn registration_script(operations: &str) -> String {
     format!(
@@ -304,6 +317,43 @@ mod tests {
         }
         Ok(())
     }
+    #[test]
+    fn ownership_resolves_account_names_and_rejects_other_principals() -> Result<(), Failure> {
+        // Given a task returned as DOMAIN\user, accept only the original SID.
+        // No task is installed and no personal state directory is accessed.
+        let setup = include_str!("windows_tasks_mock.ps1");
+        let output = powershell(&format!(
+            r#"$ErrorActionPreference='Stop'; {setup} {OWNERSHIP}
+$identity=[System.Security.Principal.WindowsIdentity]::GetCurrent();
+$sid=$identity.User.Value; $task=NewTask 'test' 'resident "C:\etat"';
+foreach ($userId in @($sid,$identity.Name)) {{
+    $task.Definition.Principal.UserId=$userId;
+    if (!(Owned $task 'resident "C:\etat"' $sid)) {{ throw 'same account rejected' }}
+    if (Owned $task 'resident "C:\etat"' 'S-1-0-0') {{ throw 'foreign account accepted' }}
+}}
+foreach ($userId in @('', 'S-1-invalid', 'SyncEngine-nonexistent-account-7b19')) {{
+    $task.Definition.Principal.UserId=$userId;
+    if (Owned $task 'resident "C:\etat"' $sid) {{ throw 'unresolved account accepted' }}
+}}
+$task.Definition.Principal.UserId=$identity.Name;
+$task.Definition.Principal.RunLevel=1;
+if (Owned $task 'resident "C:\etat"' $sid) {{ throw 'elevated task accepted' }}
+$task.Definition.Principal.RunLevel=0; $task.Definition.Principal.LogonType=1;
+if (Owned $task 'resident "C:\etat"' $sid) {{ throw 'noninteractive task accepted' }}
+$task.Definition.Principal.LogonType=3;
+if (Owned $task 'resident "C:\other"' $sid) {{ throw 'foreign state accepted' }}
+$task.Definition.Actions.Value.Path='C:\foreign.exe';
+if (Owned $task 'resident "C:\etat"' $sid) {{ throw 'foreign action accepted' }}
+"#
+        ))?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
     #[test]
     fn powershell_literals_preserve_untrusted_paths() -> Result<(), Failure> {
         let value = "C:\\l'utilisateur\\$HOME; $(exit 9) & état";

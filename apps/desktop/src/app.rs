@@ -3,7 +3,7 @@
 
 use crate::anim::{Ease, Tween};
 use crate::backend::{
-    self, Executed, Failure, HistoryPage, Opened, PlanPage, Saved, ScheduleView, Shared, Workspace,
+    self, Executed, Failure, HistoryPage, Opening, PlanPage, Saved, ScheduleView, Shared, Workspace,
 };
 use crate::charts;
 use crate::draft::ScheduleDraft;
@@ -177,6 +177,9 @@ pub(crate) enum Dialog {
     Remove {
         profile: ProfileId,
     },
+    Diagnose {
+        profile: ProfileId,
+    },
     Group {
         original: Option<String>,
         name: String,
@@ -197,7 +200,7 @@ pub(crate) enum Dialog {
 /// Messages of the whole application.
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
-    Booted(Result<Opened, Failure>),
+    Booted(Result<Opening, Failure>),
     Retry,
     Frame(Instant),
     Cursor(Point),
@@ -248,6 +251,7 @@ pub(crate) enum Message {
     AgentLive(Result<backend::AgentObservation, Failure>),
     /// Stop request for the scheduled run followed in this window.
     CancelAgent,
+    StopAgent,
     AgentCancelSent(Result<(), Failure>),
     /// Lifts a pending stop request so scheduled runs start again.
     ResumeAgent,
@@ -258,6 +262,9 @@ pub(crate) enum Message {
     AskRemove(ProfileId),
     Remove(ProfileId),
     Removed(Result<(), Failure>),
+    AskDiagnose(ProfileId),
+    Diagnose(ProfileId),
+    Diagnosed(Result<(), Failure>),
     MoveTo(ProfileId, String),
     Moved(backend::Batch),
     // Groups.
@@ -302,6 +309,11 @@ pub(crate) enum Message {
 pub(crate) struct App {
     pub(crate) backend: Option<Shared>,
     pub(crate) boot_error: Option<Failure>,
+    pub(crate) boot_wait: Option<backend::StartupObservation>,
+    pub(crate) boot_polling: bool,
+    pub(crate) boot_cancel_requested: bool,
+    pub(crate) boot_control_error: Option<Failure>,
+    pub(crate) agent_queue: Option<sync_orchestrator::LiveQueue>,
     pub(crate) state_dir: Option<PathBuf>,
     pub(crate) now: Instant,
     pub(crate) started: Instant,
@@ -369,6 +381,11 @@ impl App {
         let mut app = Self {
             backend: None,
             boot_error: None,
+            boot_wait: None,
+            boot_polling: true,
+            boot_cancel_requested: false,
+            boot_control_error: None,
+            agent_queue: None,
             state_dir,
             now,
             started: now,
@@ -680,6 +697,9 @@ impl App {
             tray::events().map(Message::Tray),
             iced::system::theme_changes().map(Message::SystemTheme),
         ];
+        if self.backend.is_none() && self.boot_wait.is_some() {
+            subs.push(time::every(Duration::from_secs(1)).map(|_| Message::Retry));
+        }
         if self.animating() {
             subs.push(window::frames().map(Message::Frame));
         } else if self.live_job().is_some() || self.backend.is_none() {

@@ -99,6 +99,7 @@ impl App {
                     sync_orchestrator::resident_status(app.state_directory())?,
                     app.agent_cancel_pending()
                         || sync_orchestrator::agent_stop_pending(app.state_directory()),
+                    sync_orchestrator::LiveQueue::read(app.state_directory())?,
                 ))
             }),
             Message::AgentLive,
@@ -113,7 +114,7 @@ impl App {
         result: Result<backend::AgentObservation, Failure>,
     ) -> Task<Message> {
         self.agent_polling = false;
-        let (live, resident, paused) = match result {
+        let (live, resident, paused, queue) = match result {
             Ok(value) => value,
             Err(error) => {
                 self.ws.resident.phase = sync_orchestrator::ResidentPhase::Error;
@@ -122,6 +123,7 @@ impl App {
             }
         };
         self.ws.resident = resident;
+        self.agent_queue = queue;
         self.ws.agent_stopped = paused;
         let Some(live) = live
             .clone()
@@ -144,13 +146,23 @@ impl App {
             operations: s.entries_done,
             scanned: s.entries_scanned.saturating_add(s.entries_hashed),
         };
+        let name = self
+            .agent_queue
+            .as_ref()
+            .and_then(|queue| queue.current.as_ref())
+            .filter(|current| current.id == profile)
+            .map(|current| current.name.clone())
+            .or_else(|| self.profile(&profile).map(|p| p.name.clone()))
+            .unwrap_or_else(|| "Profil planifié".to_owned());
         let mut task = Task::none();
         match &mut self.agent_job {
             Some(job) if job.profile == profile => {
+                job.name = name.clone();
                 if job.kind != kind {
                     // Analysis then writes: rates restart with the new unit.
                     job.kind = kind;
                     job.samples.clear();
+                    job.started = self.now;
                 }
                 job.samples.push_back(sample);
                 while job.samples.len() > 2 && job.samples[1].at + speed::RETAIN <= self.now {
@@ -158,9 +170,6 @@ impl App {
                 }
             }
             _ => {
-                let name = self
-                    .profile(&profile)
-                    .map_or_else(|| profile.to_string(), |p| p.name.clone());
                 if self
                     .schedule_of(&profile)
                     .is_some_and(|s| s.schedule.show_window)
@@ -247,10 +256,24 @@ impl App {
 
     /// Leaves a stop request for the followed scheduled run.
     pub(crate) fn cancel_agent(&mut self) -> Task<Message> {
-        let (Some(job), Some(app)) = (&mut self.agent_job, &self.backend) else {
+        self.boot_control_error = None;
+        let Some(job) = &mut self.agent_job else {
             return Task::none();
         };
         job.cancel_requested = true;
+        let Some(app) = &self.backend else {
+            let Some(state) = self.state_dir.clone() else {
+                return Task::none();
+            };
+            self.boot_cancel_requested = true;
+            return Task::perform(
+                backend::blocking(move || {
+                    sync_orchestrator::request_agent_cancel(&state)
+                        .map_err(|e| Failure::new("unavailable", e.to_string()))
+                }),
+                Message::AgentCancelSent,
+            );
+        };
         Task::perform(
             backend::call(app, Application::agent_cancel_request),
             Message::AgentCancelSent,

@@ -138,16 +138,43 @@ impl App {
                 (!busy).then(|| Message::Simulate(id.clone())),
             ),
         };
-        let hero = row![
+        let heading = row![
             ui::glyph_box(mode_glyph(profile.mode), color, 60.0),
-            column![ui::title(p, profile.name.clone(), 26.0), pills]
-                .spacing(8)
-                .width(Length::Fill),
+            container(ui::title(p, profile.name.clone(), 26.0)).width(Length::Fill),
             main_action,
         ]
         .spacing(18)
         .align_y(Alignment::Center);
+        let hero = column![heading, pills.wrap()].spacing(12);
 
+        let interrupted = self
+            .last_run(id)
+            .is_some_and(|run| run.outcome == model::Outcome::Interrupted)
+            || self
+                .schedule_of(id)
+                .is_some_and(|schedule| schedule.running_slot.is_some());
+        let diagnosis: El<'a, Message> = if interrupted && !self.running_on(id) {
+            ui::callout(
+                p,
+                p.warning,
+                Glyph::Alert,
+                "Exécution interrompue à vérifier",
+                "L’agent peut être démarré, mais ce profil reste bloqué après une interruption. Vérifiez les fichiers et l’historique, puis confirmez le diagnostic pour autoriser une nouvelle simulation ou retirer le profil.",
+            )
+        } else {
+            Space::new().into()
+        };
+        let diagnosis_action: El<'a, Message> = if interrupted && !self.running_on(id) {
+            ui::action(
+                p,
+                Tone::Secondary,
+                Some(Glyph::Check),
+                "Diagnostiquer l’interruption",
+                (!busy).then(|| Message::AskDiagnose(id.clone())),
+            )
+        } else {
+            Space::new().into()
+        };
         let turn = self
             .now
             .saturating_duration_since(self.started)
@@ -181,14 +208,14 @@ impl App {
         .spacing(10)
         .align_y(Alignment::Center);
 
-        let page = column![
-            crumbs,
-            hero,
-            endpoints,
-            self.sim_panel(p, profile),
-            self.profile_footer(p, profile)
-        ]
-        .spacing(22);
+        let mut page = column![crumbs, hero].spacing(22);
+        if interrupted && !self.running_on(id) {
+            page = page.push(diagnosis).push(diagnosis_action);
+        }
+        let page = page
+            .push(endpoints)
+            .push(self.sim_panel(p, profile))
+            .push(self.profile_footer(p, profile));
         scrollable(
             container(
                 container(page)
@@ -487,6 +514,12 @@ impl App {
             .spacing(12)
             .align_y(Alignment::Center),
         );
+        if job.agent {
+            body = body.push(row![
+                container(ui::caption(p, "Arrêter l’agent annule le transfert et suspend les jobs jusqu’à « Reprendre les planifications ». Aucun processus n’est tué de force.")).width(Length::Fill),
+                ui::action(p, Tone::Secondary, Some(Glyph::Power), "Arrêter l’agent", (!self.ws.agent_stopped).then_some(Message::StopAgent)),
+            ].spacing(12).align_y(Alignment::Center));
+        }
         container(row![ring, body].spacing(24).align_y(Alignment::Center))
             .padding(22)
             .width(Length::Fill)
