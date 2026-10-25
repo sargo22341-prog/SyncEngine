@@ -246,6 +246,12 @@ pub(crate) enum Message {
     Execute,
     Executed(Result<Executed, Failure>),
     Cancel,
+    SetPaused {
+        agent: bool,
+        control_id: Option<String>,
+        paused: bool,
+    },
+    PauseSent(Result<(), Failure>),
     /// Periodic read of the agent's published snapshot.
     AgentTick,
     AgentLive(Result<backend::AgentObservation, Failure>),

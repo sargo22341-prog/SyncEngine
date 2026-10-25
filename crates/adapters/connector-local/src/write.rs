@@ -348,7 +348,7 @@ impl ContentWriter for LocalWriter {
             .and_then(|()| file.rewind())
             .map_err(|e| io_error(e, op, &self.staging))?;
         loop {
-            if self.cancel.is_cancelled() {
+            if self.cancel.checkpoint() {
                 return Err(cancelled(op, &self.staging));
             }
             match file.read(buffer) {

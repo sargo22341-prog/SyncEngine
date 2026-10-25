@@ -18,7 +18,7 @@ mod schedules;
 use connector_local::{LocalConnector, LocalOptions};
 pub use live::{
     LIVE_FORMAT, LiveJob, LiveQueue, agent_cancel_marker, clear_agent_cancel, desktop_present,
-    hold_desktop_presence, request_agent_cancel,
+    hold_desktop_presence, request_agent_cancel, request_agent_pause,
 };
 pub use runs::Run;
 use serde::{Deserialize, Serialize};
@@ -102,6 +102,12 @@ pub enum JobPhase {
 /// Also published by the agent for other processes (see [`LiveJob`]).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JobSnapshot {
+    /// Unique identity of this command for cross-process pause requests.
+    #[serde(default)]
+    pub control_id: Option<String>,
+    /// A cooperative pause was requested; in-flight system calls may finish.
+    #[serde(default)]
+    pub pause_requested: bool,
     /// True until the blocking command has completed, including final state writes.
     pub active: bool,
     /// Phase: idle, scanning, executing, finished, error.
@@ -389,6 +395,7 @@ impl Application {
         self.transferred.store(0, Relaxed);
         *lock(&self.snapshot)? = JobSnapshot {
             active: true,
+            control_id: Some(unique("control")?),
             phase,
             profile: Some(id.clone()),
             ..JobSnapshot::default()
@@ -543,6 +550,9 @@ impl Application {
                         .map_err(io)?
                     }
                 };
+                if cancel.checkpoint() {
+                    return Err(error("cancelled", "analyse annulée"));
+                }
                 let comparison =
                     sync_compare::compare(&a, &b, &sync_compare::CompareOptions::new())
                         .map_err(io)?;
@@ -558,6 +568,9 @@ impl Application {
                 }
                 .map_err(io)?
             };
+            if cancel.checkpoint() {
+                return Err(error("cancelled", "analyse annulée"));
+            }
             let summary = plan.summary();
             let value: serde_json::Value = if paged {
                 serde_json::json!({"id":plan.id(), "profile":plan.profile(), "mode":plan.mode(), "source":plan.source(), "destination":plan.destination(), "operations":plan.operations().iter().take(100).collect::<Vec<_>>()})
@@ -739,11 +752,21 @@ impl Application {
         Ok(())
     }
 
+    /// Pauses or resumes the current scan/transfer without releasing ownership.
+    /// # Errors
+    /// Internal state poisoned.
+    pub fn set_paused(&self, paused: bool) -> Result<(), AppError> {
+        lock(&self.cancel)?.set_paused(paused);
+        Ok(())
+    }
+
     /// Latest bounded observation, independent of the worker gate.
     /// # Errors
     /// Internal state poisoned.
     pub fn snapshot(&self) -> Result<JobSnapshot, AppError> {
+        let paused = lock(&self.cancel)?.is_paused();
         let mut snapshot = lock(&self.snapshot)?.clone();
+        snapshot.pause_requested = snapshot.active && paused;
         // Validated bytes were transferred too, even if an event was coalesced.
         snapshot.bytes_transferred = self.transferred.load(Relaxed).max(snapshot.bytes_done);
         Ok(snapshot)

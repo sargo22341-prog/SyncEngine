@@ -189,3 +189,67 @@ fn staging_is_observed_before_content_and_observer_failure_aborts() {
     assert_eq!(error.kind(), StorageErrorKind::PermissionDenied);
     assert!(destination.paths().is_empty());
 }
+
+#[test]
+fn pause_mid_transfer_resumes_same_stream_or_cancels_without_publication() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    for cancel in [false, true] {
+        let source = source();
+        let destination = MemoryConnector::new("destination").writable();
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let (paused_tx, paused_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let destination = &destination;
+            let worker = scope.spawn(move || {
+                let at = path("gros.bin");
+                let request =
+                    CopyRequest::new(&source, &at, destination, &at).with_buffer_size(1024);
+                let mut blocks = 0;
+                let staged = stage_copy(
+                    &request,
+                    &mut |_| {
+                        blocks += 1;
+                        if blocks == 1 {
+                            worker_token.set_paused(true);
+                            paused_tx.send(()).unwrap();
+                        }
+                    },
+                    &worker_token,
+                );
+                let succeeded = match staged {
+                    Ok(staged) => {
+                        staged.commit(CommitMode::CreateNew).unwrap();
+                        true
+                    }
+                    Err(e) => {
+                        assert_eq!(e.kind(), StorageErrorKind::Cancelled);
+                        false
+                    }
+                };
+                done_tx.send((succeeded, blocks)).unwrap();
+            });
+            paused_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let blocked = done_rx.recv_timeout(Duration::from_millis(40)).is_err();
+            let unpublished = destination.content("gros.bin").is_none();
+            if cancel {
+                token.cancel();
+            } else {
+                token.set_paused(false);
+            }
+            let (succeeded, blocks) = done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            worker.join().unwrap();
+            assert!(blocked && unpublished);
+            assert_eq!(succeeded, !cancel);
+            assert_eq!(blocks, if cancel { 1 } else { 10 });
+        });
+        assert_eq!(
+            destination.content("gros.bin"),
+            if cancel { None } else { Some(big()) }
+        );
+        no_staging_left(&destination);
+    }
+}

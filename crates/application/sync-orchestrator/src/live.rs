@@ -276,3 +276,91 @@ mod queue_tests {
         Ok(())
     }
 }
+
+/// Requests a reversible pause for exactly the observed agent command.
+/// Old requests cannot pause a later command. Does not open application stores.
+/// # Errors
+/// Missing control identity, serialization or state-directory write failure.
+pub fn request_agent_pause(state: &Path, control_id: &str, paused: bool) -> Result<(), AppError> {
+    if control_id.is_empty() || control_id.len() > 256 {
+        return Err(error("invalid_input", "identité de commande invalide"));
+    }
+    let bytes = serde_json::to_vec(&(control_id, paused)).map_err(io)?;
+    let temp = state.join("agent-pause.request.tmp");
+    std::fs::write(&temp, bytes).map_err(io)?;
+    std::fs::rename(temp, state.join("agent-pause.request")).map_err(io)
+}
+
+impl Application {
+    /// Applies a pause request for this command only (called by the agent watcher).
+    /// An absent or stale request does not affect an existing token.
+    /// # Errors
+    /// Unreadable, oversized or malformed request, or internal state poisoned.
+    pub fn poll_agent_pause(&self) -> Result<(), AppError> {
+        let path = self.state.join("agent-pause.request");
+        match path.metadata() {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(io(e)),
+            Ok(m) if m.len() > 1024 => return Err(error("format", "requête de pause trop longue")),
+            Ok(_) => {}
+        }
+        let (id, paused): (String, bool) =
+            serde_json::from_slice(&std::fs::read(path).map_err(io)?).map_err(io)?;
+        let token = super::lock(&self.cancel)?;
+        let snapshot = super::lock(&self.snapshot)?;
+        if snapshot.active && snapshot.control_id.as_deref() == Some(&id) {
+            token.set_paused(paused);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod pause_tests {
+    use super::*;
+
+    #[test]
+    fn cross_process_pause_is_scoped_and_keeps_cancellation_available()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let state = temp.path().join("state");
+        std::fs::create_dir(&state)?;
+        let app = Application::open_with_lock_root(state.clone(), temp.path().join("locks"))?;
+        let id = sync_core::ProfileId::new("test")?;
+        let token = app.begin(&id, JobPhase::Scanning, None)?;
+        let control = app.snapshot()?.control_id.ok_or("missing identity")?;
+        request_agent_pause(&state, "old-command", true)?;
+        app.poll_agent_pause()?;
+        assert!(!token.is_paused());
+        request_agent_pause(&state, &control, true)?;
+        app.poll_agent_pause()?;
+        assert!(token.is_paused());
+        app.publish_live()?;
+        assert!(
+            LiveJob::read(&state)?
+                .ok_or("missing observation")?
+                .snapshot
+                .pause_requested
+        );
+        request_agent_pause(&state, &control, false)?;
+        app.poll_agent_pause()?;
+        assert!(!token.is_paused());
+        app.set_paused(true)?;
+        app.cancel()?;
+        assert!(token.checkpoint());
+        assert!(!app.snapshot()?.pause_requested);
+        let next = app.begin(&id, JobPhase::Executing, None)?;
+        request_agent_pause(&state, &control, true)?;
+        app.poll_agent_pause()?;
+        assert!(!next.is_paused());
+        assert_ne!(
+            app.snapshot()?.control_id.as_deref(),
+            Some(control.as_str())
+        );
+        assert!(request_agent_pause(&state, "", true).is_err());
+        std::fs::write(state.join("agent-pause.request"), b"invalid")?;
+        assert!(app.poll_agent_pause().is_err());
+        assert!(!next.is_paused());
+        Ok(())
+    }
+}

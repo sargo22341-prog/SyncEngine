@@ -322,7 +322,7 @@ pub fn stage_copy_observed(
     on_staging: &mut dyn FnMut(Option<&ResourcePath>) -> Result<(), StorageError>,
     cancel: &CancellationToken,
 ) -> Result<StagedCopy, CopyError> {
-    if cancel.is_cancelled() {
+    if cancel.checkpoint() {
         return Err(CopyError::new(
             CopyStage::OpenSource,
             cancelled(StorageOperation::Read, request.source_path),
@@ -359,7 +359,7 @@ pub fn stage_copy_observed(
     let mut hasher = blake3::Hasher::new();
     let mut bytes: u64 = 0;
     let failure = loop {
-        if cancel.is_cancelled() {
+        if cancel.checkpoint() {
             break CopyError::new(
                 CopyStage::Read,
                 cancelled(StorageOperation::Read, request.source_path),

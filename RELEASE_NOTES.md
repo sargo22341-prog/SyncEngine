@@ -14,6 +14,8 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Windows : correction des chemins UNC des partages réseau signalés à tort comme introuvables.
+- Exécutions : boutons Pause/Reprendre pour l’analyse et les transferts, dans l’application et la fenêtre de suivi de l’agent.
 - Suivi de l’agent : graphe de débit, annulation et arrêt accessibles dès l’ouverture, file des profils en attente et flèches de synchronisation redessinées.
 - Planification : diagnostic explicite des transferts interrompus depuis l’interface et badges de profil répartis sur plusieurs lignes.
 - Windows : l’ouverture de l’interface suit la progression et reprend automatiquement si l’agent occupe l’état ; l’agent attend aussi une opération manuelle en cours.

@@ -471,7 +471,7 @@ struct LocalReader {
 impl ContentReader for LocalReader {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, StorageError> {
         loop {
-            if self.cancel.is_cancelled() {
+            if self.cancel.checkpoint() {
                 return Err(cancelled(StorageOperation::Read, &self.path));
             }
             match self.file.read(buf) {

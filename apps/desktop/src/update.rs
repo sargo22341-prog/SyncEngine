@@ -440,6 +440,41 @@ impl App {
                 });
                 self.finish_job_tasks()
             }
+            Message::SetPaused {
+                agent,
+                control_id,
+                paused,
+            } => {
+                if agent {
+                    let (Some(state), Some(id)) = (self.state_dir.clone(), control_id) else {
+                        return Task::none();
+                    };
+                    return Task::perform(
+                        backend::blocking(move || {
+                            sync_orchestrator::request_agent_pause(&state, &id, paused)
+                                .map_err(Failure::from)
+                        }),
+                        Message::PauseSent,
+                    );
+                }
+                if let Some(app) = &self.backend {
+                    if let Err(e) = app.set_paused(paused) {
+                        self.fail(&Failure::from(e));
+                    } else if let Some(job) = &mut self.job {
+                        job.snapshot.pause_requested = paused;
+                    }
+                }
+                Task::none()
+            }
+            Message::PauseSent(result) => {
+                if self.backend.is_none() {
+                    self.boot_control_error = result.as_ref().err().cloned();
+                }
+                if let Err(e) = result {
+                    self.fail(&e);
+                }
+                Task::none()
+            }
             Message::Cancel => {
                 if let (Some(job), Some(app)) = (&mut self.job, &self.backend) {
                     job.cancel_requested = true;

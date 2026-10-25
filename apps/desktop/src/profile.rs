@@ -119,17 +119,22 @@ impl App {
             pills = pills.push(ui::pill(outcome_color(p, run.outcome), run.label.clone()));
         }
         let main_action: El<'a, Message> = match running {
-            Some(job) => ui::action(
-                p,
-                Tone::Secondary,
-                Some(Glyph::Stop),
-                if job.cancel_requested {
-                    "Annulation…"
-                } else {
-                    "Annuler"
-                },
-                (!job.cancel_requested).then_some(Message::Cancel),
-            ),
+            Some(job) => row![
+                pause_button(p, job),
+                ui::action(
+                    p,
+                    Tone::Secondary,
+                    Some(Glyph::Stop),
+                    if job.cancel_requested {
+                        "Annulation…"
+                    } else {
+                        "Annuler"
+                    },
+                    (!job.cancel_requested).then_some(cancel_message(job)),
+                ),
+            ]
+            .spacing(8)
+            .into(),
             None => ui::action(
                 p,
                 Tone::Primary,
@@ -322,19 +327,23 @@ impl App {
         let s = &job.snapshot;
         let elapsed = self.now.saturating_duration_since(job.started);
         let turn = elapsed.as_secs_f32();
-        let (title, color) = match job.kind {
-            JobKind::Preview if job.agent => ("Synchronisation planifiée : analyse", p.accent),
-            JobKind::Execute if job.agent => {
-                ("Synchronisation planifiée : écritures en cours", p.success)
+        let (title, color) = if s.pause_requested {
+            ("Pause demandée — Reprendre pour continuer", p.warning)
+        } else {
+            match job.kind {
+                JobKind::Preview if job.agent => ("Synchronisation planifiée : analyse", p.accent),
+                JobKind::Execute if job.agent => {
+                    ("Synchronisation planifiée : écritures en cours", p.success)
+                }
+                JobKind::Preview if s.hash_target > 0 => {
+                    ("Simulation : comparaison du contenu", p.accent)
+                }
+                JobKind::Preview if s.entries_hashed > 0 => {
+                    ("Simulation : lecture et empreintes", p.accent)
+                }
+                JobKind::Preview => ("Simulation : lecture des dossiers", p.accent),
+                JobKind::Execute => ("Exécution réelle en cours", p.success),
             }
-            JobKind::Preview if s.hash_target > 0 => {
-                ("Simulation : comparaison du contenu", p.accent)
-            }
-            JobKind::Preview if s.entries_hashed > 0 => {
-                ("Simulation : lecture et empreintes", p.accent)
-            }
-            JobKind::Preview => ("Simulation : lecture des dossiers", p.accent),
-            JobKind::Execute => ("Exécution réelle en cours", p.success),
         };
         let progress = job.progress();
         let percent = progress.map(model::percent);
@@ -509,6 +518,7 @@ impl App {
                 // Fill: the explanation wraps instead of squeezing the button.
                 container(ui::caption(p, if job.cancel_requested { "Annulation coopérative demandée : l’opération en cours se termine proprement." } else { "Vous pouvez annuler à tout moment ; l’état partiel est conservé et journalisé." }))
                     .width(Length::Fill),
+                pause_button(p, job),
                 ui::action(p, Tone::Secondary, Some(Glyph::Stop), "Annuler", (!job.cancel_requested).then_some(cancel_message(job))),
             ]
             .spacing(12)
@@ -1055,4 +1065,23 @@ pub(crate) fn cancel_message(job: &Job) -> Message {
     } else {
         Message::Cancel
     }
+}
+
+/// Shared control for full, compact and agent views.
+pub(crate) fn pause_button<'a>(p: &Palette, job: &Job) -> El<'a, Message> {
+    let paused = job.snapshot.pause_requested;
+    ui::action(
+        p,
+        Tone::Secondary,
+        Some(if paused { Glyph::Play } else { Glyph::Pause }),
+        if paused { "Reprendre" } else { "Pause" },
+        (job.snapshot.active
+            && !job.cancel_requested
+            && (!job.agent || job.snapshot.control_id.is_some()))
+        .then(|| Message::SetPaused {
+            agent: job.agent,
+            control_id: job.snapshot.control_id.clone(),
+            paused: !paused,
+        }),
+    )
 }

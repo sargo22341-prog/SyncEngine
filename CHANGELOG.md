@@ -5,6 +5,23 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Partages réseau Windows
+- Correction de la conversion des chemins UNC étendus retournés pour les
+  handles : la racine réseau reste absolue. Correctif local de
+  `cap-primitives 4.0.3`, licences et provenance incluses, régressions testées
+  sur des chemins fictifs sans accéder à un partage réel. Aucun échec de lecture
+  n’est converti en dossier vide ni en autorisation de suppression.
+
+### Pause et reprise
+- Boutons Pause/Reprendre dans la fiche profil, le suivi d’activité, le contrôle
+  latéral et la fenêtre de suivi de l’agent, dès l’ouverture de session.
+- Pause coopérative de l’inventaire, des empreintes et des transferts par blocs.
+  La reprise conserve le même travail et les verrous ; l’annulation réveille
+  les workers en pause. Les appels système et les phases CPU de comparaison
+  et de planification déjà engagés peuvent finir avant l’attente.
+- Les demandes à l’agent ciblent une commande unique : une ancienne requête
+  ne bloque pas une commande ultérieure. La pause ne survit pas au processus.
+
 ### Planification
 - Le suivi avant ouverture des bases reprend le graphe, le pourcentage et les
   commandes de l’interface principale. Annuler vise le transfert courant ; arrêter

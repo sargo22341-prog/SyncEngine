@@ -209,7 +209,7 @@ pub fn scan_observed(
     let mut budget = options.entry_limit;
     let mut pending = vec![ResourcePath::root()];
     while let Some(directory) = pending.pop() {
-        if cancel.is_cancelled() {
+        if cancel.checkpoint() {
             pending.push(directory);
             return Err(cancelled(inventory, &pending));
         }
@@ -422,7 +422,7 @@ fn list_directory(
         }
         match next {
             Some(next) => {
-                if cancel.is_cancelled() {
+                if cancel.checkpoint() {
                     return Err(StorageError::new(
                         StorageErrorKind::Cancelled,
                         connector_api::StorageOperation::List,
@@ -536,7 +536,7 @@ fn hash_files(
     if workers == 1 {
         let mut buffer = vec![0u8; HASH_CHUNK];
         for (slot, entry) in results.iter_mut().zip(&targets) {
-            if cancel.is_cancelled() {
+            if cancel.checkpoint() {
                 break;
             }
             let outcome = hash_one(connector, entry, can_restat, &mut buffer, cancel);
@@ -561,7 +561,7 @@ fn hash_files(
                         let Some(entry) = targets.get(index) else {
                             break;
                         };
-                        if cancel.is_cancelled() {
+                        if cancel.checkpoint() {
                             break;
                         }
                         let outcome = hash_one(connector, entry, can_restat, &mut buffer, cancel);
@@ -595,7 +595,7 @@ fn hash_files(
             Some(Hashed::Cancelled) | None => pass = HashPass::Cancelled,
         }
     }
-    if cancel.is_cancelled() {
+    if cancel.checkpoint() {
         pass = HashPass::Cancelled;
     }
     pass

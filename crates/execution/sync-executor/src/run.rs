@@ -217,7 +217,7 @@ impl<'a> Run<'a> {
         if self.stop.is_some() {
             return OutcomeStatus::NotStarted;
         }
-        if self.req.cancel.is_cancelled() {
+        if self.req.cancel.checkpoint() {
             self.stop = Some(StopCause::Cancelled);
             return OutcomeStatus::NotStarted;
         }

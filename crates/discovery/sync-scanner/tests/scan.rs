@@ -723,3 +723,55 @@ fn selected_hashing_requires_an_algorithm_and_keeps_partial_work_on_cancel() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn analysis_pause_resumes_or_returns_explicit_incomplete_inventory() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+    use std::time::Duration;
+
+    for cancel in [false, true] {
+        let connector = sample();
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let (paused_tx, paused_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let first = AtomicBool::new(true);
+            let result = sync_scanner::scan_observed(
+                &connector,
+                &Filter::include_all(),
+                &ScanOptions::new(),
+                &worker_token,
+                &|_, _| {
+                    if first.swap(false, Ordering::Relaxed) {
+                        worker_token.set_paused(true);
+                        paused_tx.send(()).unwrap();
+                    }
+                },
+            );
+            done_tx.send(result).unwrap();
+        });
+        paused_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let blocked = done_rx.recv_timeout(Duration::from_millis(40)).is_err();
+        if cancel {
+            token.cancel();
+        } else {
+            token.set_paused(false);
+        }
+        let result = done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        worker.join().unwrap();
+        assert!(blocked);
+        if cancel {
+            assert!(
+                matches!(result, Err(ScanError::Cancelled { partial }) if !partial.is_complete())
+            );
+        } else {
+            let inventory = result.unwrap();
+            assert!(inventory.is_complete());
+            assert_eq!(inventory.stats().files, 3);
+        }
+    }
+}

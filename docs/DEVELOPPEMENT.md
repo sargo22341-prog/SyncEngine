@@ -23,6 +23,17 @@ de clés WinCNG sous Windows, libssh2#2583 non encore publié ; voir son
 `SYNCENGINE-PATCH.md`). `cargo audit` ne contrôle pas ces copies locales :
 surveiller à la main les avis visant `suppaftp`, `libssh2-sys` et `ssh2`.
 
+Les chemins de handles Windows utilisent aussi un correctif local de
+`cap-primitives 4.0.3` : conversion des racines UNC étendues sans les transformer
+en chemins relatifs (voir [provenance et tests](../vendor/cap-primitives/SYNCENGINE-PATCH.md)).
+Ses licences sont incluses ; surveiller également les avis `cap-primitives` et
+`cap-std`. Les tests de conversion sont exécutés dans le workspace Windows,
+sans aucun accès à un NAS :
+
+```sh
+cargo test -p connector-local --lib unc_path_regression
+```
+
 ## Lancer
 
 ```sh

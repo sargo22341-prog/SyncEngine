@@ -4,6 +4,28 @@ SyncEngine synchronise des dossiers selon des **profils**. Chaque exécution sui
 le même cycle : **simulation** (rien n'est écrit) → lecture du plan →
 **exécution confirmée** de ce plan exact.
 
+## Mettre une exécution en pause
+
+Pendant une simulation ou une exécution, cliquez sur **Pause** dans la fiche du
+profil, le suivi d’activité ou le contrôle latéral. Le même bouton est disponible
+dans la fenêtre de suivi de l’agent, y compris dès l’ouverture de session.
+Cliquez sur **Reprendre** pour continuer le même travail.
+
+La pause est coopérative : elle attend le prochain point sûr de l’inventaire,
+du calcul d’empreinte ou du transfert par blocs. « Pause demandée » indique la
+demande, pas que tous les appels système se sont déjà arrêtés. Un appel réseau,
+une opération de publication ou une phase CPU de comparaison/planification déjà
+engagée peut finir avant l’attente. Les verrous restent détenus : un autre job
+ne peut pas prendre la même destination pendant la pause. **Annuler** reste
+disponible et réveille les workers ; **Arrêter l’agent** conserve son sens
+d’arrêt des planifications.
+
+Exemple : pendant la copie d’un gros fichier, cliquez sur **Pause**, puis sur
+**Reprendre** ; le transfert poursuit le même flux temporaire sans recommencer
+le fichier. Une pause ne survit pas à l’arrêt du processus et n’est pas une
+reprise après redémarrage. Avec l’agent, comptez le délai d’observation (environ
+0,5 s) pour voir le bouton et la progression actualisés.
+
 ## Les trois modes
 
 | Mode | Effet | Suppressions |

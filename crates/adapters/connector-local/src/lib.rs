@@ -43,6 +43,12 @@ mod paging;
 mod paths;
 mod write;
 
+// Exercise the exact vendored conversion in workspace CI, without any network
+// share, account, mount or permission change. This is Windows-only OS syntax.
+#[cfg(all(test, windows))]
+#[path = "../../../../vendor/cap-primitives/src/windows/fs/normalize_path.rs"]
+mod unc_path_regression;
+
 pub use connector::{LocalConfigError, LocalConnector, LocalOptions};
 
 /// Vrai si `name` est un nom de fichier temporaire d'écriture de ce

@@ -217,23 +217,29 @@ fn dispatch(
     {
         token.cancel();
     }
-    let watcher = std::thread::spawn(move || {
-        while !done_worker.load(std::sync::atomic::Ordering::Acquire) {
-            if shutdown.is_cancelled()
-                || !matches!(retire_marker.try_exists(), Ok(false))
-                || !matches!(stop_marker.try_exists(), Ok(false))
-                || !matches!(marker.try_exists(), Ok(false))
-            {
-                worker_token.cancel();
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    });
     let now = Timestamp::now().map(|time| time.secs());
     let agent = Agent { app, state };
     let (stop, stopped) = std::sync::mpsc::channel::<()>();
     let result = std::thread::scope(|scope| {
+        let watcher = scope.spawn(move || {
+            while !done_worker.load(std::sync::atomic::Ordering::Acquire) {
+                if shutdown.is_cancelled()
+                    || !matches!(retire_marker.try_exists(), Ok(false))
+                    || !matches!(stop_marker.try_exists(), Ok(false))
+                    || !matches!(marker.try_exists(), Ok(false))
+                {
+                    worker_token.cancel();
+                    break;
+                }
+                if let Err(e) = app.poll_agent_pause() {
+                    worker_token.cancel();
+                    return Err(e);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Ok(())
+        });
+
         let publisher = app;
         // Live progress for windows (presentation only, about twice a
         // second); a failed publication never affects the job.
@@ -254,11 +260,13 @@ fn dispatch(
             Err(_) => Err(sync_scheduler::SchedulerError::Invalid("clock unavailable")),
         };
         drop(stop);
-        result
+        done.store(true, std::sync::atomic::Ordering::Release);
+        watcher
+            .join()
+            .map_err(|_| "cancellation observer failed")??;
+        Ok::<_, Failure>(result)
     });
-    done.store(true, std::sync::atomic::Ordering::Release);
-    watcher.join().map_err(|_| "cancellation observer failed")?;
-    let receipts = result?;
+    let receipts = result??;
     Ok(receipts)
 }
 

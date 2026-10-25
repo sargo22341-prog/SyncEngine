@@ -72,3 +72,21 @@ base plus récente, étrangère ou corrompue est refusée, jamais réinitialisé
 La baseline bidirectionnelle n'est publiée qu'après une exécution cohérente.
 Les plans et journaux sont des formats JSON versionnés. Contenu du dossier
 d'état : [Guide](GUIDE.md#données-de-lapplication).
+
+## Contrôle pause/reprise
+
+Le jeton partagé de `sync-core` conserve une interrogation d’annulation
+non bloquante et expose `checkpoint` aux workers synchrones. Une variable de
+condition suspend les workers sans scrutation ; reprise et annulation les
+réveillent. Aucun verrou de présentation ne doit être détenu pendant l’attente.
+Les scanners, la copie, l’exécuteur et les lectures locales utilisent ces
+points sûrs ; les sections de publication ne sont pas suspendues.
+
+La façade expose `Application::set_paused` et publie `pause_requested` dans
+`JobSnapshot`. Pour l’agent, la fenêtre écrit une requête remplacée par renommage
+(`agent-pause.request`, tuple JSON identité de commande/booléen). Le watcher
+l’applique seulement si son identité correspond à la commande active. Les
+champs supplémentaires du snapshot ont des valeurs par défaut pour lire les
+anciennes observations ; une ancienne observation sans identité n’offre pas
+de bouton de pause actif. La requête ne constitue jamais une autorisation
+d’écriture, une baseline ou un résultat durable.

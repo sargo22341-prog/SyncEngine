@@ -691,6 +691,7 @@ impl App {
                 ]
                 .spacing(1)
                 .width(Length::Fill),
+                crate::profile::pause_button(p, job),
                 ui::icon_button(
                     p,
                     Glyph::Stop,

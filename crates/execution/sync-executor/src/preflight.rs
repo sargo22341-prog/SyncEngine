@@ -16,7 +16,7 @@ fn nanos_between(earlier: sync_core::Timestamp, later: sync_core::Timestamp) -> 
 }
 
 pub(crate) fn check(request: &ExecutionRequest<'_>) -> Result<(), ExecutionError> {
-    if request.cancel.is_cancelled() {
+    if request.cancel.checkpoint() {
         return Err(ExecutionError::Cancelled);
     }
     check_age(request)?;

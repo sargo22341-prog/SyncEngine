@@ -288,6 +288,53 @@ fn unfinished_intent_remains_visible_after_restart() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn paused_scheduled_analysis_keeps_ownership_and_can_resume_or_cancel()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    for cancel in [false, true] {
+        let (_temp, app, profile) = fixture(SyncMode::Backup)?;
+        fs::write(profile.source.join("file"), b"content")?;
+        let token = sync_core::CancellationToken::new();
+        token.set_paused(true);
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| -> Result<(), Box<dyn std::error::Error>> {
+            let worker = scope.spawn(|| {
+                let result = app.execute_scheduled(&profile, false, &token);
+                done_tx.send(result).unwrap();
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !app.snapshot()?.active && !worker.is_finished() && Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+            let snapshot = app.snapshot()?;
+            let blocked = done_rx.recv_timeout(Duration::from_millis(40)).is_err();
+            let busy = app.profile_remove(profile.id.clone()).is_err();
+            let untouched = !profile.destination.join("file").exists();
+            if cancel {
+                app.cancel()?;
+            } else {
+                app.set_paused(false)?;
+            }
+            let result = done_rx.recv_timeout(Duration::from_secs(5))?;
+            worker.join().map_err(|_| "scheduled worker panicked")?;
+            assert!(snapshot.active && snapshot.pause_requested);
+            assert!(blocked && busy && untouched);
+            assert!(!app.snapshot()?.active);
+            if cancel {
+                assert!(result.is_err());
+                assert!(!profile.destination.join("file").exists());
+            } else {
+                assert_eq!(result?["status"], "succeeded");
+                assert_eq!(fs::read(profile.destination.join("file"))?, b"content");
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+#[test]
 fn scheduled_authorization_checks_profile_deletions_and_report_status()
 -> Result<(), Box<dyn std::error::Error>> {
     use sync_core::CancellationToken;

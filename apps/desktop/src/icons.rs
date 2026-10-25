@@ -73,6 +73,7 @@ pub(crate) enum Glyph {
     Terminal,
     Lock,
     Play,
+    Pause,
     Stop,
     Pencil,
     Clock,
@@ -498,6 +499,10 @@ fn draw(glyph: Glyph, d: &mut Pen<'_>) {
         }
         Glyph::Play => {
             d.poly(&[(7.5, 4.5), (19.0, 12.0), (7.5, 19.5)], true);
+        }
+        Glyph::Pause => {
+            d.line((8.0, 5.0), (8.0, 19.0));
+            d.line((16.0, 5.0), (16.0, 19.0));
         }
         Glyph::Stop => {
             d.rect(6.0, 6.0, 12.0, 12.0, 2.0);

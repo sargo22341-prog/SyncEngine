@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-exclude = ["vendor/suppaftp", "vendor/libssh2-sys"]
+exclude = ["vendor/suppaftp", "vendor/libssh2-sys", "vendor/cap-primitives"]
 members = [
     "crates/services/sync-credentials",
     "crates/connectors/cloud/connector-onedrive",
@@ -122,6 +122,8 @@ print_stderr = "warn"
 let_underscore_must_use = "warn"
 
 [patch.crates-io]
+# Preserve UNC roots when resolving Windows handles; see its SYNCENGINE-PATCH.md.
+cap-primitives = { path = "vendor/cap-primitives" }
 # SuppaFTP 12.2.1 logs PASS and server replies at TRACE; local minimal redaction.
 suppaftp = { path = "vendor/suppaftp" }
 # libssh2-sys 0.3.3 (libssh2 1.11.1_DEV), WinCNG: upstream DH/ECDH leading-zero fix

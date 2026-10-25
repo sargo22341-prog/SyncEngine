@@ -308,6 +308,12 @@ pub fn verify_content(
     let mut hasher = blake3::Hasher::new();
     let mut bytes: u64 = 0;
     loop {
+        if cancel.checkpoint() {
+            return Err(VerifyError::Storage(
+                StorageError::new(StorageErrorKind::Cancelled, StorageOperation::Read)
+                    .with_path(path.clone()),
+            ));
+        }
         let read = reader.read(&mut buffer).map_err(VerifyError::Storage)?;
         if read == 0 {
             break;
