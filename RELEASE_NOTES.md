@@ -14,4 +14,5 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Planification Windows automatique à l’enregistrement, demande UAC si nécessaire, autorisations conservées en édition et icône de titre restaurée.
 

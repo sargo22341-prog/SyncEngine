@@ -10,12 +10,39 @@ peut donc rester fermée.
 
 1. Dans l'assistant ou la page Planification, choisir un déclencheur et cocher
    explicitement les autorisations (écritures, et suppressions si besoin).
-   Rien n'est jamais pré-coché, et toute modification du profil demande une
-   nouvelle autorisation.
-2. **Windows** : « Activer l'agent » installe deux tâches utilisateur dans le
-   Planificateur de tâches (`SyncEngine-clock`, `SyncEngine-logon`), sans droits
-   administrateur. L'agent doit se trouver à côté de `syncengine-desktop`.
+   Un nouvel horaire n'a aucune autorisation pré-cochée. En édition, les
+   autorisations existantes sont conservées si le profil est inchangé ; une
+   modification du profil les invalide. Un groupe ne reprend les cases que si
+   tous ses membres ont les mêmes réglages et une autorisation valide.
+2. **Windows** : enregistrer l'horaire installe ou actualise automatiquement
+   les deux tâches partagées (horloge et ouverture de session). Aucun bouton
+   d'activation supplémentaire. L'agent doit se trouver à côté de
+   `syncengine-desktop.exe`. Windows PowerShell et le service Planificateur
+   de tâches doivent être disponibles. Une demande UAC apparaît seulement
+   si l'enregistrement retourne « accès refusé » ; la refuser empêche de
+   confirmer la nouvelle planification. Les tâches exécutent toujours l'agent
+   avec les droits ordinaires du compte initial, même si un autre compte
+   administrateur autorise l'UAC.
 3. **Linux** : installer les unités systemd à la main (ci-dessous).
+
+Les noms Windows incluent le SID du compte et une empreinte du chemin absolu
+du dossier d'état : deux dossiers d'état ne remplacent pas leurs tâches.
+Les horaires restent dans SQLite, sans tâche Windows individuelle par profil.
+Modifier un horaire actualise ces tâches ; retirer un profil ou un horaire
+retire son autorisation. Les deux tâches sont supprimées après retrait de la
+dernière planification active. Un échec de nettoyage est signalé ; une tâche
+résiduelle ne trouve plus l'autorisation supprimée et ne synchronise rien.
+Les anciennes tâches `SyncEngine-clock` / `SyncEngine-logon` sont retirées
+lors de l'enregistrement si leur action correspond exactement à l'agent et
+au dossier d'état utilisés. Les tâches étrangères ne sont pas supprimées.
+
+Exemple : clic droit sur un profil → **Planifier…** → **Ouverture de session**
+→ autoriser les écritures → enregistrer (accepter l'UAC si demandée).
+À la prochaine ouverture de session du compte concerné, Windows appelle
+l'agent, même si la fenêtre est fermée. Pour un délai, choisir le déclencheur
+différé ; l'événement est persisté puis repris par les passages de l'horloge.
+En cas d'échec, le dialogue affiche le diagnostic d'enregistrement Windows ;
+les profils déjà enregistrés dans un groupe restent explicitement indiqués.
 
 ## Déclencheurs
 
@@ -79,17 +106,26 @@ PowerShell : `Start-Process $agent -ArgumentList "list `"$etat`"" -Wait -WindowS
 
 ## Installation manuelle
 
-**Windows** (équivalent de « Activer l'agent ») :
+**Windows** (alternative CLI ; l'interface réalise l'installation automatiquement) :
 
 ```powershell
 syncengine-agent export $etat C:\SyncEngine\taches windows
-schtasks /Create /TN SyncEngine-Clock /XML C:\SyncEngine\taches\syncengine-clock.xml
-schtasks /Create /TN SyncEngine-Logon /XML C:\SyncEngine\taches\syncengine-logon.xml
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+foreach ($event in 'clock', 'logon') {
+    $xml = [IO.File]::ReadAllText("C:\SyncEngine\taches\syncengine-$event.xml")
+    $xml = $xml.Replace('<LogonType>', "<UserId>$sid</UserId><LogonType>")
+    $xml = $xml.Replace('</LogonTrigger>', "<UserId>$sid</UserId></LogonTrigger>")
+    Register-ScheduledTask -TaskName "SyncEngine-$event" -Xml $xml -Force
+}
 # retrait : schtasks /Delete /TN SyncEngine-Clock  (idem pour Logon)
 ```
 
 Les tâches tournent sous le compte de l'utilisateur **tant qu'il est
 connecté** ; une déconnexion peut interrompre une exécution.
+Ne pas combiner cette installation manuelle avec les tâches automatiques de
+l'interface. Pour une utilisation normale, enregistrer depuis l'interface.
+Cette variante manuelle peut nécessiter un terminal élevé ; elle n'intègre
+pas la demande UAC automatique de l'interface.
 
 **Linux** (systemd utilisateur) :
 
@@ -107,6 +143,27 @@ les unités à la dernière déconnexion. Sans systemd, appeler
 `syncengine-agent tick ETAT clock` chaque minute depuis cron.
 
 Retirer les tâches ne supprime ni profils, ni historique, ni sauvegardes.
+
+## Validation des corrections Windows
+
+- Étant donné un miroir déjà autorisé, ouvrir son horaire sans changer le
+  profil conserve les autorisations ; changer la destination ou les filtres
+  dans l'assistant exige de les recocher.
+- Étant donné un groupe contenant un profil non autorisé ou modifié, ouvrir
+  l'horaire du groupe ne reprend pas les consentements d'un autre membre.
+- Étant donné un refus d'accès à l'enregistrement, seule l'installation
+  demande l'UAC ; l'identité et les droits d'exécution restent ceux du compte
+  qui a ouvert l'application. Sans accord UAC, aucun nouvel horaire n'est
+  autorisé par ce parcours.
+- Les tests COM emploient `TASK_VALIDATE_ONLY` : aucune tâche persistante ni
+  synchronisation réelle n'est créée par les tests automatiques ordinaires.
+  L'acceptation/refus interactif de l'UAC et une réelle fermeture/réouverture
+  de session nécessitent une validation manuelle dans un compte de test.
+
+Référence consultée : les sources locales FreeFileSync
+`Source/application.cpp` chargent les configurations `.ffs_batch` et les
+exécutent sans l'interface normale. SyncEngine garde son agent autonome et
+ses autorisations persistées, avec installation intégrée au parcours graphique.
 
 ## Après une interruption
 

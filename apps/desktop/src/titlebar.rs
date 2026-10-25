@@ -10,7 +10,7 @@
 //! « minimize instead of quit » setting is honored.
 
 use crate::app::{App, Message};
-use crate::charts::{self, Mark};
+use crate::charts;
 use crate::icons::{self, Glyph};
 use crate::theme::{self, Palette};
 use crate::ui::{self, El};
@@ -144,14 +144,13 @@ impl App {
     fn title_bar(&self, p: &Palette) -> El<'_, Message> {
         let focused = self.frame.focused;
         let fg = if focused { p.text } else { p.faint };
-        let mark = charts::mark(
-            Mark {
-                from: p.accent,
-                to: theme::mix(p.accent, p.info, 0.6),
-                turn: 0.0,
-            },
-            16.0,
-        );
+        let mark = iced::widget::image(iced::widget::image::Handle::from_rgba(
+            charts::ICON_SIZE,
+            charts::ICON_SIZE,
+            charts::icon_rgba(),
+        ))
+        .width(16)
+        .height(16);
         let caption = mouse_area(
             container(
                 row![mark, ui::colored(fg, self.title(), 12.0)]

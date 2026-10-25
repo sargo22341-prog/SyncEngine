@@ -280,7 +280,7 @@ pub(crate) fn editor<'a>(
         );
         col = col.push(ui::caption(
             p,
-            "L’autorisation porte sur la configuration exacte du profil : toute modification exige de la renouveler. L’agent doit être activé dans le système.",
+            "L’autorisation porte sur la configuration exacte du profil : toute modification exige de la renouveler. Les tâches Windows sont enregistrées automatiquement.",
         ));
     }
     col.into()
@@ -378,20 +378,6 @@ impl App {
         if self.ws.schedules.is_empty() {
             list = list.push(empty(p));
         }
-        let agent: El<'a, Message> = if cfg!(windows) {
-            ui::action(
-                p,
-                Tone::Primary,
-                Some(Glyph::Bolt),
-                "Activer / réparer les tâches Windows",
-                Some(Message::ActivateAgent),
-            )
-        } else {
-            ui::muted(
-                p,
-                "Linux : activez les unités systemd utilisateur décrites dans le guide de l’agent.",
-            )
-        };
         let mut page = column![
             row![
                 column![
@@ -456,11 +442,10 @@ impl App {
                     ui::glyph_box(Glyph::Monitor, p.success, 44.0),
                     column![
                         ui::strong(p.text, "Agent système", 15.0),
-                        ui::muted(p, "Enregistrer un horaire ne l’installe pas dans le système : l’activation est une étape distincte, sans droits administrateur."),
+                        ui::muted(p, "Windows : les tâches sont enregistrées automatiquement. Une demande UAC apparaît uniquement si Windows exige des droits supplémentaires. Linux : installer les unités systemd utilisateur selon le guide."),
                     ]
                     .spacing(4)
                     .width(Length::Fill),
-                    agent,
                 ]
                 .spacing(14)
                 .align_y(Alignment::Center),

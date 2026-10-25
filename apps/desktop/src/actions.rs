@@ -509,6 +509,9 @@ impl App {
         );
         let task = backend::blocking(move || {
             let mut done = Vec::new();
+            if trigger.is_some() {
+                crate::native::prepare_agent(app.state_directory())?;
+            }
             for (id, name, allow_delete, had) in jobs {
                 let result = match &trigger {
                     Some(t) => app.schedule_save(
@@ -519,7 +522,7 @@ impl App {
                         deletions && allow_delete,
                         window,
                     ),
-                    None if had => app.schedule_remove(id),
+                    None if had => crate::native::remove_schedule(&app, id),
                     None => Ok(()),
                 };
                 if let Err(e) = result {

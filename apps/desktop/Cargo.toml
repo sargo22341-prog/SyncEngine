@@ -22,7 +22,8 @@ onedrive = ["sync-orchestrator/onedrive"]
 network = ["sync-orchestrator/network"]
 
 [dependencies]
-iced = { version = "0.14.0", features = ["canvas", "smol"] }
+# Raw embedded RGBA only: no image file codecs are needed at runtime.
+iced = { version = "0.14.0", features = ["canvas", "smol", "image-without-codecs"] }
 rfd = "0.17.2"
 # Notification-area icon; KSNI (D-Bus) backend on Linux: no GTK/AppIndicator.
 tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
@@ -38,12 +39,18 @@ serde_json.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+[target.'cfg(windows)'.dev-dependencies]
+# Validate the actual account-bound XML with native COM, without installing tasks.
+platform-api.workspace = true
+platform-windows.workspace = true
+
 [build-dependencies]
 # Windows executable icon (resource compiled by rc.exe / llvm-rc).
 embed-resource = "3.0.12"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56.0"
+blake3.workspace = true
 
 [lints]
 workspace = true

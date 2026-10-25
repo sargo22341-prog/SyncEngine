@@ -1,6 +1,6 @@
 //! Desktop OS integration in pure Rust: native file dialogs (rfd), the
 //! per-user Windows « Run » registry value (winreg) and installation of the
-//! two application-owned agent tasks. No script interpreter is involved.
+//! application-owned agent tasks (Task Scheduler COM via Windows PowerShell).
 
 use crate::backend::Failure;
 use std::path::{Path, PathBuf};
@@ -81,74 +81,59 @@ pub(crate) fn startup_save(_enabled: bool) -> Result<(), Failure> {
     ))
 }
 
-/// Installs only the two application-owned current-user tasks from the
-/// adjacent agent. The export stays inspectable under the state directory;
-/// a failed second installation is reported as partial and can be retried.
-#[cfg(windows)]
-pub(crate) fn activate_agent(state: &Path) -> Result<(), Failure> {
-    use std::os::windows::process::CommandExt;
-    const NO_WINDOW: u32 = 0x0800_0000;
-    let exe = std::env::current_exe().map_err(os)?;
-    let agent = exe
-        .parent()
-        .ok_or_else(|| os("dossier d’installation absent"))?
-        .join("syncengine-agent.exe");
-    if !agent.is_file() {
-        return Err(Failure::new(
-            "unavailable",
-            "Compagnon agent absent : utiliser l’installation complète de SyncEngine",
-        ));
-    }
-    let stamp = crate::model::now_secs();
-    let export = state.join(format!("native-tasks-{stamp}"));
-    std::fs::create_dir(&export).map_err(os)?;
-    let status = std::process::Command::new(&agent)
-        .arg("export")
-        .arg(state)
-        .arg(&export)
-        .arg("windows")
-        .creation_flags(NO_WINDOW)
-        .status()
-        .map_err(os)?;
-    if !status.success() {
-        return Err(Failure::new(
-            "unavailable",
-            "Export des tâches refusé par l’agent",
-        ));
-    }
-    let mut installed = Vec::new();
-    for event in ["clock", "logon"] {
-        let file = export.join(format!("syncengine-{event}.xml"));
-        let status = std::process::Command::new("schtasks.exe")
-            .args(["/Create", "/F", "/TN"])
-            .arg(format!("SyncEngine-{event}"))
-            .arg("/XML")
-            .arg(&file)
-            .creation_flags(NO_WINDOW)
-            .status()
-            .map_err(os)?;
-        if !status.success() {
-            return Err(Failure::new(
-                "unavailable",
-                format!(
-                    "Activation incomplète ({}). Vérifiez le Planificateur de tâches puis réessayez ; les horaires enregistrés sont conservés.",
-                    if installed.is_empty() {
-                        "aucune tâche installée".to_owned()
-                    } else {
-                        format!("installée : {}", installed.join(", "))
-                    }
-                ),
-            ));
+/// Removes shared dispatchers after the final active authorization is removed.
+pub(crate) fn reconcile_agent(app: &sync_orchestrator::Application) -> Result<(), Failure> {
+    #[cfg(windows)]
+    {
+        let needed = app
+            .schedules()
+            .map_err(Failure::from)?
+            .iter()
+            .any(|s| s.schedule.enabled);
+        if needed {
+            Ok(())
+        } else {
+            crate::windows_tasks::reconcile(app.state_directory(), false)
         }
-        installed.push(event);
     }
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Ok(())
+    }
 }
 
-#[cfg(not(windows))]
-pub(crate) fn activate_agent(_state: &Path) -> Result<(), Failure> {
-    Err(Failure::new(
-        "not_supported",
-        "Sous Linux, activez les unités systemd utilisateur décrites dans le guide de l’agent",
-    ))
+/// Ensures dispatchers exist before authorizing a new scheduled execution.
+pub(crate) fn prepare_agent(state: &Path) -> Result<(), Failure> {
+    #[cfg(windows)]
+    {
+        crate::windows_tasks::reconcile(state, true)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Ok(())
+    }
+}
+
+fn app_error(e: Failure) -> sync_orchestrator::AppError {
+    sync_orchestrator::AppError {
+        code: e.code,
+        message: e.message,
+        profile: None,
+    }
+}
+
+pub(crate) fn prepare_schedule(
+    app: &sync_orchestrator::Application,
+) -> Result<(), sync_orchestrator::AppError> {
+    prepare_agent(app.state_directory()).map_err(app_error)
+}
+
+pub(crate) fn remove_schedule(
+    app: &sync_orchestrator::Application,
+    id: sync_core::ProfileId,
+) -> Result<(), sync_orchestrator::AppError> {
+    app.schedule_remove(id)?;
+    reconcile_agent(app).map_err(app_error)
 }

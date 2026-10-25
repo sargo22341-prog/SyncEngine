@@ -44,6 +44,7 @@ impl Failure {
             "interrupted" => "Exécution interrompue à diagnostiquer",
             "integrity" => "Données d’état illisibles",
             "unavailable" => "Emplacement ou stockage indisponible",
+            "scheduler_install" => "Enregistrement de la planification Windows impossible",
             _ => "Opération impossible",
         }
     }
@@ -331,21 +332,23 @@ pub(crate) fn save(
         a.profile_save(profile)?;
         let schedule_error = match schedule {
             ScheduleChange::Keep => Ok(()),
-            ScheduleChange::Remove => a.schedule_remove(id.clone()),
+            ScheduleChange::Remove => crate::native::remove_schedule(a, id.clone()),
             ScheduleChange::Set {
                 trigger,
                 missed,
                 approve_writes,
                 approve_deletions,
                 show_window,
-            } => a.schedule_save(
-                id.clone(),
-                trigger,
-                missed,
-                approve_writes,
-                approve_deletions,
-                show_window,
-            ),
+            } => crate::native::prepare_schedule(a).and_then(|()| {
+                a.schedule_save(
+                    id.clone(),
+                    trigger,
+                    missed,
+                    approve_writes,
+                    approve_deletions,
+                    show_window,
+                )
+            }),
         }
         .err()
         .map(Failure::from);
@@ -367,6 +370,14 @@ pub(crate) fn regroup(
         .spawn(move || {
             let mut done = Vec::new();
             let mut result = Ok(());
+            // One reconciliation for the batch, before any profile is moved.
+            if moves.iter().any(|(_, schedule)| schedule.is_some())
+                && let Err(e) = crate::native::prepare_agent(app.state_directory())
+            {
+                // If the window closed, there is no receiver left to notify.
+                let _receiver_closed = tx.send(Err((done, e))).is_err();
+                return;
+            }
             for (profile, schedule) in moves {
                 if schedule.as_ref().is_some_and(|s| s.running_slot.is_some()) {
                     result = Err(Failure::new(

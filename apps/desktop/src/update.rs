@@ -430,7 +430,7 @@ impl App {
                 Task::perform(
                     backend::call(app, move |a| {
                         if scheduled {
-                            a.schedule_remove(id.clone())?;
+                            native::remove_schedule(a, id.clone())?;
                         }
                         a.profile_remove(id)
                     }),
@@ -508,12 +508,25 @@ impl App {
                     );
                     return Task::none();
                 }
-                let draft = ScheduleDraft::from_state(
+                let mut draft = ScheduleDraft::from_state(
                     targets
                         .first()
                         .and_then(|id| self.schedule_of(id))
                         .map(|s| &s.schedule),
                 );
+                // A group approval is reusable only when every member has
+                // the same valid settings; never propagate the first profile's
+                // consent onto an unscheduled or modified group member.
+                let same = targets.iter().all(|id| {
+                    self.schedule_valid(id) == Some(true)
+                        && self
+                            .schedule_of(id)
+                            .is_some_and(|s| ScheduleDraft::from_state(Some(&s.schedule)) == draft)
+                });
+                if !same {
+                    draft.approve_writes = false;
+                    draft.approve_deletions = false;
+                }
                 let title = if g.is_empty() {
                     "Sans groupe".to_owned()
                 } else {
@@ -576,7 +589,8 @@ impl App {
                     return Task::none();
                 };
                 let title = format!("Planifier « {} »", p.name);
-                let draft = ScheduleDraft::from_state(self.schedule_of(&id).map(|s| &s.schedule));
+                let draft =
+                    ScheduleDraft::for_profile(p, self.schedule_of(&id).map(|s| &s.schedule));
                 self.open_dialog(Dialog::Schedule {
                     targets: vec![id],
                     title,
@@ -625,7 +639,7 @@ impl App {
                     return Task::none();
                 };
                 Task::perform(
-                    backend::call(app, move |a| a.schedule_remove(id)),
+                    backend::call(app, move |a| native::remove_schedule(a, id)),
                     Message::ScheduleRemoved,
                 )
             }
@@ -639,30 +653,6 @@ impl App {
                     Err(e) => self.fail(&e),
                 }
                 self.refresh()
-            }
-            Message::ActivateAgent => {
-                let Some(dir) = self
-                    .backend
-                    .as_ref()
-                    .map(|a| a.state_directory().to_path_buf())
-                else {
-                    return Task::none();
-                };
-                Task::perform(
-                    backend::blocking(move || native::activate_agent(&dir)),
-                    Message::AgentActivated,
-                )
-            }
-            Message::AgentActivated(result) => {
-                match result {
-                    Ok(()) => self.toast(
-                        ToastKind::Success,
-                        "Agent activé",
-                        "Les tâches Windows de votre compte déclencheront les horaires autorisés, même fenêtre fermée.",
-                    ),
-                    Err(e) => self.fail(&e),
-                }
-                Task::none()
             }
             Message::ShowHistory(id) => {
                 self.selected = Some(id);

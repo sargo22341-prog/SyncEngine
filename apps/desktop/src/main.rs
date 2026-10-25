@@ -26,6 +26,8 @@ mod tray;
 mod ui;
 mod ui_prefs;
 mod update;
+#[cfg(windows)]
+mod windows_tasks;
 mod wizard;
 
 use app::App;

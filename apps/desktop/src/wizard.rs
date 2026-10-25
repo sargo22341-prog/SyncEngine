@@ -244,6 +244,23 @@ impl Wizard {
         if !matches!(msg, WizardMsg::Next | WizardMsg::Save(_)) {
             self.error = None;
         }
+        let before = self.draft.clone();
+        let profile_edit = matches!(
+            &msg,
+            WizardMsg::Mode(_)
+                | WizardMsg::Provider(..)
+                | WizardMsg::Field(..)
+                | WizardMsg::Flag(..)
+                | WizardMsg::Browsed(..)
+                | WizardMsg::Preset(_)
+                | WizardMsg::AddPattern(_)
+                | WizardMsg::RemovePattern(..)
+                | WizardMsg::CaseInsensitive(_)
+                | WizardMsg::AllowDelete(_)
+                | WizardMsg::Compare(_)
+                | WizardMsg::Name(_)
+                | WizardMsg::Group(_)
+        );
         match msg {
             WizardMsg::Mode(mode) => {
                 self.draft.mode = Some(mode);
@@ -376,6 +393,10 @@ impl Wizard {
                     simulate,
                 };
             }
+        }
+        if profile_edit && self.draft != before {
+            self.draft.schedule.approve_writes = false;
+            self.draft.schedule.approve_deletions = false;
         }
         Outcome::None
     }
@@ -1339,6 +1360,19 @@ impl Wizard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editing_profile_invalidates_consent_but_navigation_keeps_it() {
+        let now = Instant::now();
+        let mut w = Wizard::open(ProfileDraft::new(""), vec![], now);
+        w.draft.schedule.kind = TriggerKind::Interval;
+        w.draft.schedule.approve_writes = true;
+        w.draft.schedule.approve_deletions = true;
+        w.update(WizardMsg::Back, now);
+        assert!(w.draft.schedule.approve_writes && w.draft.schedule.approve_deletions);
+        w.update(WizardMsg::Name("new profile name".into()), now);
+        assert!(!w.draft.schedule.approve_writes && !w.draft.schedule.approve_deletions);
+    }
 
     #[test]
     fn steps_are_gated_and_name_is_suggested() {

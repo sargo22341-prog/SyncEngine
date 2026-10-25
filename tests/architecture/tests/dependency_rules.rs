@@ -116,6 +116,9 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "sync-filter",
             "sync-plan",
             "sync-scheduler",
+            // Native COM validation tests only.
+            "platform-api",
+            "platform-windows",
         ],
     ),
     (

@@ -658,11 +658,22 @@ impl Default for ScheduleDraft {
 }
 
 impl ScheduleDraft {
-    /// Pre-fills from an existing authorization. Consents are never pre-ticked:
-    /// every save is a fresh, explicit approval of the current configuration.
+    /// Keeps trigger/display settings but never reuses stale authorizations.
+    pub(crate) fn for_profile(profile: &Profile, schedule: Option<&Schedule>) -> Self {
+        let mut draft = Self::from_state(schedule);
+        if schedule.is_some_and(|s| s.approved != *profile) {
+            draft.approve_writes = false;
+            draft.approve_deletions = false;
+        }
+        draft
+    }
+    /// Restores an existing authorization for an unchanged profile.
+    /// Callers must exclude stale authorizations.
     pub(crate) fn from_state(schedule: Option<&Schedule>) -> Self {
         let mut d = Self::default();
         let Some(schedule) = schedule else { return d };
+        d.approve_writes = schedule.enabled;
+        d.approve_deletions = schedule.enabled && schedule.allow_deletions;
         d.skip_missed = schedule.missed == MissedJobs::Skip;
         d.show_window = schedule.show_window && window_supported();
         match schedule.trigger {
@@ -822,7 +833,7 @@ impl ProfileDraft {
             filters: FilterDraft::from_rules(&profile.filter),
             allow_delete: profile.allow_delete,
             compare: profile.compare,
-            schedule: ScheduleDraft::from_state(schedule),
+            schedule: ScheduleDraft::for_profile(profile, schedule),
             had_schedule: schedule.is_some(),
         }
     }
@@ -1021,6 +1032,47 @@ mod tests {
         let back = EndpointDraft::from_profile(Path::new(""), remote.as_ref());
         assert_eq!(back.ip, "192.168.1.2");
         assert!(back.acknowledge_plaintext);
+    }
+
+    #[test]
+    fn schedule_edit_restores_consent_only_for_the_approved_profile() {
+        let mut d = ProfileDraft::new("");
+        d.name = "Scheduled mirror".into();
+        d.mode = Some(SyncMode::Mirror);
+        d.source = local(&abs("source"));
+        d.destination = local(&abs("destination"));
+        d.allow_delete = true;
+        let profile = d.build().unwrap();
+        let mut schedule = Schedule {
+            approved: profile.clone(),
+            trigger: Trigger::Interval { seconds: 900 },
+            missed: MissedJobs::Skip,
+            created_at: 100,
+            enabled: true,
+            allow_deletions: true,
+            show_window: true,
+        };
+        let restored = ScheduleDraft::for_profile(&profile, Some(&schedule));
+        assert!(restored.approve_writes && restored.approve_deletions);
+        assert!(restored.skip_missed);
+        assert_eq!(restored.show_window, window_supported());
+        assert_eq!(restored.trigger().unwrap(), Some(schedule.trigger.clone()));
+        assert!(
+            ProfileDraft::edit(&profile, Some(&schedule))
+                .schedule
+                .approve_writes
+        );
+
+        let mut changed = profile.clone();
+        changed.destination = PathBuf::from(abs("another-destination"));
+        let stale = ScheduleDraft::for_profile(&changed, Some(&schedule));
+        assert!(!stale.approve_writes && !stale.approve_deletions);
+        assert_eq!(stale.trigger().unwrap(), Some(schedule.trigger.clone()));
+        schedule.enabled = false;
+        let disabled = ScheduleDraft::for_profile(&profile, Some(&schedule));
+        assert!(!disabled.approve_writes && !disabled.approve_deletions);
+        let new = ScheduleDraft::for_profile(&profile, None);
+        assert!(!new.approve_writes && !new.approve_deletions);
     }
 
     #[test]

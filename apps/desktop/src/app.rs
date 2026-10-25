@@ -276,8 +276,6 @@ pub(crate) enum Message {
     ScheduleSaved(backend::Batch),
     RemoveSchedule(ProfileId),
     ScheduleRemoved(Result<(), Failure>),
-    ActivateAgent,
-    AgentActivated(Result<(), Failure>),
     // History.
     ShowHistory(ProfileId),
     ExpandRun(String),

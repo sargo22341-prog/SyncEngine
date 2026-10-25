@@ -6,6 +6,18 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 ## [Non publié]
 
 ### Planification
+- Windows : l'enregistrement depuis un profil, un groupe ou l'assistant
+  réconcilie automatiquement les deux tâches de l'agent. Le principal et le
+  déclencheur de session ciblent explicitement le compte initial ; seule une
+  erreur d'accès déclenche une demande UAC, sans élever l'exécution de l'agent.
+  Les noms isolent compte et dossier d'état. Retirer la dernière autorisation
+  active supprime les tâches partagées ; les erreurs ne sont plus présentées
+  comme une indisponibilité du stockage. Le bouton d'activation disparaît.
+- L'édition d'un horaire conserve les consentements valides. Une modification
+  du profil les invalide ; les consentements d'un groupe hétérogène ne sont
+  jamais hérités de son premier membre.
+- La barre de titre affiche l'icône RGBA embarquée, identique à celle de la
+  fenêtre et de la zone de notification, au lieu de l'ancien dessin vectoriel.
 - Option de présentation `Schedule::show_window` (« Afficher la fenêtre de
   suivi pendant la synchronisation », `--show-window` côté agent). Ce n'est pas
   un consentement : elle est reprise de la planification existante et ne change
