@@ -6,6 +6,15 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 ## [Non publié]
 
 ### Planification
+- Agent Windows résident : une tâche utilisateur de connexion, trois relances
+  espacées d'une minute après échec, horaires SQLite relus toutes les cinq
+  secondes au repos, connexion WTS persistée et délais ancrés au logon réel.
+  Migration contrôlée des tâches ponctuelles, exclusion des doubles instances,
+  commandes `resident`, `status`, `stop`, `resume` et présence vérifiée par verrou
+  OS dans la GUI. Linux conserve ses passages systemd ponctuels. La relance
+  d'un processus bloqué n'est pas garantie. Les journaux des exécutions terminées
+  suivent la rétention existante de 100 exécutions par profil ; les interruptions
+  et les anciens journaux orphelins restent conservés pour diagnostic.
 - Windows : l'enregistrement depuis un profil, un groupe ou l'assistant
   réconcilie automatiquement les deux tâches de l'agent. Le principal et le
   déclencheur de session ciblent explicitement le compte initial ; seule une

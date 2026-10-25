@@ -216,3 +216,103 @@ fn windows_executable_uses_gui_subsystem_without_console_window() -> Result<(), 
     assert_eq!(subsystem, 2); // IMAGE_SUBSYSTEM_WINDOWS_GUI
     Ok(())
 }
+
+struct Resident(std::process::Child);
+impl Drop for Resident {
+    fn drop(&mut self) {
+        let _already_exited = self.0.kill().is_err();
+        let _reap_failed = self.0.wait().is_err();
+    }
+}
+fn start_resident(root: &Path) -> Result<Resident, Error> {
+    Ok(Resident(
+        Command::new(env!("CARGO_BIN_EXE_syncengine-agent"))
+            .arg("resident")
+            .arg(root.join("state"))
+            .env("LOCALAPPDATA", root)
+            .env("HOME", root)
+            .env("XDG_STATE_HOME", root)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?,
+    ))
+}
+fn wait_until(mut condition: impl FnMut() -> Result<bool, Error>) -> Result<(), Error> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+    loop {
+        if condition()? {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("resident observation timed out".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+#[test]
+fn resident_single_instance_live_edits_pause_stop_and_stale_presence() -> Result<(), Error> {
+    let (temp, p) = fixture()?;
+    let state = temp.path().join("state");
+    let mut resident = start_resident(temp.path())?;
+    wait_until(|| {
+        Ok(sync_orchestrator::resident_status(&state)?.phase
+            == sync_orchestrator::ResidentPhase::Idle)
+    })?;
+    let duplicate = command(temp.path(), "resident", &[])?;
+    assert!(!duplicate.status.success());
+    // The historical periodic dispatcher cannot race the resident either.
+    assert!(!command(temp.path(), "tick", &["clock"])?.status.success());
+    assert!(command(temp.path(), "cancel", &[])?.status.success());
+    wait_until(|| {
+        Ok(sync_orchestrator::resident_status(&state)?.phase
+            == sync_orchestrator::ResidentPhase::Paused)
+    })?;
+    std::fs::write(p.source.join("resident-file"), b"autonomous")?;
+    // Authorize through another process while the resident is already running.
+    assert!(
+        command(
+            temp.path(),
+            "authorize",
+            &["p", "interval", "60", "--approve-writes"]
+        )?
+        .status
+        .success()
+    );
+    assert!(!p.destination.join("resident-file").exists());
+    assert!(command(temp.path(), "clear-cancel", &[])?.status.success());
+    wait_until(|| Ok(p.destination.join("resident-file").exists()))?;
+    wait_until(|| {
+        Ok(Scheduler::open(state.join("scheduler.sqlite"))?.list()?[0]
+            .running_slot
+            .is_none())
+    })?;
+    assert!(command(temp.path(), "remove", &["p"])?.status.success());
+    assert!(
+        Scheduler::open(state.join("scheduler.sqlite"))?
+            .list()?
+            .is_empty()
+    );
+    assert!(command(temp.path(), "stop", &[])?.status.success());
+    wait_until(|| Ok(resident.0.try_wait()?.is_some()))?;
+    assert!(!sync_orchestrator::resident_status(&state)?.available);
+    assert_eq!(
+        sync_orchestrator::resident_status(&state)?.phase,
+        sync_orchestrator::ResidentPhase::Stopped
+    );
+    // A pending explicit stop also prevents an automatic login restart.
+    let mut stopped = start_resident(temp.path())?;
+    wait_until(|| Ok(stopped.0.try_wait()?.is_some()))?;
+    std::fs::remove_file(state.join("agent-stop.request"))?;
+    let mut restarted = start_resident(temp.path())?;
+    wait_until(|| {
+        Ok(sync_orchestrator::resident_status(&state)?.phase
+            == sync_orchestrator::ResidentPhase::Idle
+            && sync_orchestrator::resident_status(&state)?.available)
+    })?;
+    restarted.0.kill()?;
+    restarted.0.wait()?;
+    let stale = sync_orchestrator::resident_status(&state)?;
+    assert!(!stale.available);
+    assert_eq!(stale.phase, sync_orchestrator::ResidentPhase::Idle); // a stale observation is never live presence
+    Ok(())
+}

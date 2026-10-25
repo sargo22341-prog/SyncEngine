@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use sync_core::ProfileId;
-use sync_orchestrator::{JobSnapshot, LiveJob};
+use sync_orchestrator::JobSnapshot;
 use sync_plan::Action;
 use sync_profiles::Profile;
 
@@ -245,7 +245,7 @@ pub(crate) enum Message {
     Cancel,
     /// Periodic read of the agent's published snapshot.
     AgentTick,
-    AgentLive(Result<Option<LiveJob>, Failure>),
+    AgentLive(Result<backend::AgentObservation, Failure>),
     /// Stop request for the scheduled run followed in this window.
     CancelAgent,
     AgentCancelSent(Result<(), Failure>),

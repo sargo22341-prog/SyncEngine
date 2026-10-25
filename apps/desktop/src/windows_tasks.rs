@@ -16,9 +16,12 @@ fn bind_user(xml: &str, sid: &str) -> String {
         )
 }
 
+const OWNERSHIP: &str = r#"function Owned($task,$expectedArguments,$sid) { return $task.Definition.Actions.Count -eq 1 -and [IO.Path]::GetFileName($task.Definition.Actions.Item(1).Path) -eq 'syncengine-agent.exe' -and $task.Definition.Actions.Item(1).Arguments -eq $expectedArguments -and $task.Definition.Principal.UserId -eq $sid -and $task.Definition.Principal.RunLevel -eq 0 -and $task.Definition.Principal.LogonType -eq 3 };"#;
+
 fn registration_script(operations: &str) -> String {
     format!(
         r#"$ErrorActionPreference='Stop'; function ErrorCode($exception) {{ while ($null -ne $exception.InnerException) {{ $exception=$exception.InnerException }}; return $exception.HResult }}; try {{
+{OWNERSHIP}
 $service=New-Object -ComObject 'Schedule.Service'; $service.Connect(); $folder=$service.GetFolder('\');
 {operations}
 exit 0
@@ -76,12 +79,22 @@ pub(crate) fn reconcile(state: &Path, needed: bool) -> Result<(), Failure> {
     let prefix = format!("SyncEngine-{sid}-{}", &hash[..16]);
     let mut operations = String::new();
     if needed {
+        // A new authorized schedule resumes after automatic last-schedule cleanup.
+        // Explicit CLI stop remains persistent until the user chooses resume.
+        match std::fs::remove_file(state.join("agent-retire.request")) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(fail(e)),
+        }
         if !agent.is_file() {
             return Err(Failure::new(
                 "scheduler_install",
                 "Agent absent : syncengine-agent.exe doit être placé à côté de l’application",
             ));
         }
+        // Export canonicalizes the command too (including Windows' verbatim
+        // prefix). Compare the same representation when checking a running task.
+        let agent = agent.canonicalize().map_err(fail)?;
         // A unique temporary export avoids collisions between rapid retries.
         let export = state.join(format!(
             "native-tasks-{}-{}",
@@ -111,28 +124,24 @@ pub(crate) fn reconcile(state: &Path, needed: bool) -> Result<(), Failure> {
                     ),
                 ));
             }
-            for event in ["clock", "logon"] {
+            {
+                let event = "resident";
                 let xml = std::fs::read_to_string(export.join(format!("syncengine-{event}.xml")))
                     .map_err(fail)?;
                 // Bind BOTH principal and trigger before a possible UAC prompt.
                 // Elevation with another admin account must never change owner.
                 let xml = bind_user(&xml, &sid);
-                operations.push_str(&format!(
-                    "$null=$folder.RegisterTask({}, {}, 6, {}, $null, 3, $null);\n",
-                    literal(&format!("{prefix}-{event}")),
-                    literal(&xml),
-                    literal(&sid)
-                ));
-                // Migrate only legacy tasks with exactly the same action.
-                operations.push_str(&format!(
-                    "$old=$null; try {{ $old=$folder.GetTask({}) }} catch {{ if ((ErrorCode $_.Exception) -ne -2147024894) {{ throw }} }}; if ($null -ne $old) {{ [xml]$expected={}; $action=$old.Definition.Actions.Item(1); if ($action.Path -eq $expected.Task.Actions.Exec.Command -and $action.Arguments -eq $expected.Task.Actions.Exec.Arguments) {{ $folder.DeleteTask({},0) }} }};\n",
-                    literal(&format!("SyncEngine-{event}")), literal(&xml), literal(&format!("SyncEngine-{event}"))
-                ));
+                let invocation = platform_api::AgentInvocation {
+                    executable: agent.clone(),
+                    state: canonical.clone(),
+                };
+                operations.push_str(&migration_operations(&invocation, &prefix, &sid, &xml)?);
             }
             Ok(())
         })();
         // Only known generated files, no recursive deletion.
-        for event in ["clock", "logon"] {
+        {
+            let event = "resident";
             let path = export.join(format!("syncengine-{event}.xml"));
             if path.exists() {
                 std::fs::remove_file(path).map_err(fail)?;
@@ -141,8 +150,22 @@ pub(crate) fn reconcile(state: &Path, needed: bool) -> Result<(), Failure> {
         std::fs::remove_dir(&export).map_err(fail)?;
         rendered?;
     } else {
-        for event in ["clock", "logon"] {
-            operations.push_str(&format!("try {{ $folder.DeleteTask({},0) }} catch {{ if ((ErrorCode $_.Exception) -ne -2147024894) {{ throw }} }};\n", literal(&format!("{prefix}-{event}"))));
+        std::fs::File::create(state.join("agent-retire.request"))
+            .and_then(|f| f.sync_all())
+            .map_err(fail)?;
+        let invocation = platform_api::AgentInvocation {
+            executable: agent.clone(),
+            state: canonical.clone(),
+        };
+        for event in ["resident", "clock", "logon"] {
+            let args = if event == "resident" {
+                platform_windows::resident_arguments(&invocation)
+                    .map_err(|e| Failure::new("scheduler_install", e.to_string()))?
+            } else {
+                platform_windows::legacy_arguments(&invocation, event)
+                    .map_err(|e| Failure::new("scheduler_install", e.to_string()))?
+            };
+            operations.push_str(&format!("$old=$null; try {{ $old=$folder.GetTask({}) }} catch {{ if ((ErrorCode $_.Exception) -ne -2147024894) {{ throw }} }}; if ($null -ne $old) {{ if (!(Owned $old {} {})) {{ throw 'Tâche étrangère : retrait refusé' }}; $folder.DeleteTask({},0) }};\n", literal(&format!("{prefix}-{event}")),literal(&args),literal(&sid),literal(&format!("{prefix}-{event}"))));
         }
     }
     // No mutable script/XML is read by the elevated helper. The exact same
@@ -183,6 +206,48 @@ exit $p.ExitCode
     }
 }
 
+fn migration_operations(
+    invocation: &platform_api::AgentInvocation,
+    prefix: &str,
+    sid: &str,
+    xml: &str,
+) -> Result<String, Failure> {
+    let mut operations = String::new();
+    let expected_args = platform_windows::resident_arguments(invocation)
+        .map_err(|e| Failure::new("scheduler_install", e.to_string()))?;
+    operations.push_str(&format!(
+                    "$existing=$null; try {{ $existing=$folder.GetTask({}) }} catch {{ if ((ErrorCode $_.Exception) -ne -2147024894) {{ throw }} }}; if ($null -ne $existing) {{ if (!(Owned $existing {} {})) {{ throw 'Tâche résidente étrangère : remplacement refusé' }}; if ($existing.GetInstances(0).Count -gt 0 -and $existing.Definition.Actions.Item(1).Path -ne {}) {{ throw 'Agent actif depuis un ancien emplacement : utilisez stop, attendez son arrêt puis réenregistrez cet horaire' }} }};\n",
+                    literal(&format!("{prefix}-resident")), literal(&expected_args), literal(sid), literal(&invocation.executable.to_string_lossy())
+                ));
+    // TASK_CREATE_OR_UPDATE | TASK_DISABLE: a logon racing migration cannot
+    // start the resident before legacy jobs have finished and been removed.
+    operations.push_str(&format!(
+        "$null=$folder.RegisterTask({}, {}, 14, {}, $null, 3, $null);\n",
+        literal(&format!("{prefix}-resident")),
+        literal(xml),
+        literal(sid)
+    ));
+    // Disable verified legacy dispatchers before starting the resident.
+    // A running job is never killed or declared completed by migration.
+    operations.push_str("$legacy=@();\n");
+    for old_event in ["clock", "logon"] {
+        let args = platform_windows::legacy_arguments(invocation, old_event)
+            .map_err(|e| Failure::new("scheduler_install", e.to_string()))?;
+        for name in [
+            format!("{prefix}-{old_event}"),
+            format!("SyncEngine-{old_event}"),
+        ] {
+            operations.push_str(&format!(
+                            "$old=$null; try {{ $old=$folder.GetTask({}) }} catch {{ if ((ErrorCode $_.Exception) -ne -2147024894) {{ throw }} }}; if ($null -ne $old) {{ if (Owned $old {} {}) {{ $old.Enabled=$false; $legacy+=,$old }} else {{ if ({}.StartsWith({})) {{ throw 'Ancienne tâche étrangère : migration refusée' }} }} }};\n",
+                            literal(&name), literal(&args), literal(sid), literal(&name), literal(prefix)
+                        ));
+        }
+    }
+    operations.push_str("foreach ($old in $legacy) { if ($old.GetInstances(0).Count -gt 0) { throw 'Migration en attente : ancienne exécution en cours. Réenregistrez après sa fin.' } }; foreach ($old in $legacy) { $folder.DeleteTask($old.Name,0) };\n");
+    operations.push_str(&format!("$resident=$folder.GetTask({}); $resident.Enabled=$true; if ($resident.GetInstances(0).Count -eq 0) {{ $null=$resident.Run($null) }};\n", literal(&format!("{prefix}-resident"))));
+    Ok(operations)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,7 +286,7 @@ mod tests {
                 "<UserId>{sid}</UserId><LogonType>InteractiveToken"
             )));
             assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
-            if artifact.name.contains("logon") {
+            if artifact.name.contains("resident") {
                 assert!(xml.contains(&format!("<UserId>{sid}</UserId></LogonTrigger>")));
             }
             // TASK_VALIDATE_ONLY=1: the service parses and validates the real
@@ -245,6 +310,48 @@ mod tests {
         let output = powershell(&format!("[Console]::Write({})", literal(value)))?;
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), value);
+        Ok(())
+    }
+    #[test]
+    fn migration_is_idempotent_recoverable_and_preserves_foreign_tasks() -> Result<(), Failure> {
+        let invocation = AgentInvocation {
+            executable: "C:\\portable\\syncengine-agent.exe".into(),
+            state: "C:\\etat".into(),
+        };
+        let xml = platform_windows::WindowsScheduler
+            .render(&invocation)
+            .map_err(|e| Failure::new("scheduler_install", e.to_string()))?[0]
+            .content
+            .clone();
+        let operations = migration_operations(&invocation, "SyncEngine-test", "S-1-5-21-1", &xml)?;
+        let setup = include_str!("windows_tasks_mock.ps1");
+        for scenario in ["complete", "running", "denied", "partial", "foreign"] {
+            let checks = match scenario {
+                "complete" => format!(
+                    "{operations} {operations} if ($script:Starts -ne 1 -or $folder.Tasks.ContainsKey('SyncEngine-test-clock') -or !$folder.Tasks.ContainsKey('SyncEngine-logon')) {{ throw 'migration repeat/foreign' }}"
+                ),
+                "running" => format!(
+                    "$folder.Tasks['SyncEngine-test-clock'].State=4; $failed=$false; try {{ {operations} }} catch {{ $failed=$true }}; if (!$failed -or $folder.Tasks['SyncEngine-test-clock'].Enabled -or $script:Starts -ne 0 -or $folder.Tasks['SyncEngine-test-resident'].Enabled) {{ throw 'running job was not deferred' }}; $folder.Tasks['SyncEngine-test-clock'].State=3; {operations} if ($script:Starts -ne 1) {{ throw 'migration did not recover' }}"
+                ),
+                "denied" => format!(
+                    "$folder.Denied=$true; $failed=$false; try {{ {operations} }} catch {{ $failed=$true }}; if (!$failed -or !$folder.Tasks['SyncEngine-test-clock'].Enabled -or $script:Starts -ne 0) {{ throw 'denied changed legacy' }}; $folder.Denied=$false; {operations}"
+                ),
+                "partial" => format!(
+                    "$folder.FailDeletion=$true; $failed=$false; try {{ {operations} }} catch {{ $failed=$true }}; if (!$failed -or $script:Starts -ne 0) {{ throw 'partial migration started resident' }}; $folder.FailDeletion=$false; {operations} if ($script:Starts -ne 1) {{ throw 'partial migration did not recover' }}"
+                ),
+                _ => format!(
+                    "$folder.Tasks['SyncEngine-test-clock'].Definition.Actions.Value.Arguments='foreign state'; $failed=$false; try {{ {operations} }} catch {{ $failed=$true }}; if (!$failed -or !$folder.Tasks.ContainsKey('SyncEngine-test-clock') -or $script:Starts -ne 0) {{ throw 'foreign task overwritten' }}"
+                ),
+            };
+            let output = powershell(&format!(
+                "$ErrorActionPreference='Stop'; {setup} {OWNERSHIP} {checks}"
+            ))?;
+            assert!(
+                output.status.success(),
+                "{scenario}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         Ok(())
     }
 }

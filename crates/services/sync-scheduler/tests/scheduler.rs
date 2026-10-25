@@ -344,7 +344,7 @@ fn migration_v1_preserves_authorization_and_completion() -> Result<(), Box<dyn s
     assert_eq!(
         rusqlite::Connection::open(&path)?
             .query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
-        3
+        4
     );
     Ok(())
 }
@@ -402,5 +402,121 @@ fn show_window_is_persisted() -> Result<(), Box<dyn std::error::Error>> {
             .len(),
         1
     );
+    Ok(())
+}
+
+#[test]
+fn resident_session_restart_delay_and_new_session_are_durable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("db");
+    let mut db = Scheduler::open(&path)?;
+    let mut s = schedule(&temp)?;
+    s.trigger = Trigger::LogonDelayed { seconds: 90 };
+    db.save(&s)?;
+    db.observe_session("boot-a:session-1:2000000000", 200)?;
+    let app = Mock {
+        calls: Cell::new(0),
+        status: JobStatus::Succeeded,
+    };
+    let cancel = CancellationToken::new();
+    assert!(db.dispatch(289, Wake::Clock, &app, &cancel)?.is_empty());
+    drop(db);
+    let mut db = Scheduler::open(&path)?;
+    db.observe_session("boot-a:session-1:2000000000", 200)?;
+    assert_eq!(db.dispatch(290, Wake::Clock, &app, &cancel)?.len(), 1);
+    // A legacy logon notification or restart must not delay/replay this session.
+    assert!(
+        db.dispatch(400, Wake::Session(SessionEvent::Logon), &app, &cancel)?
+            .is_empty()
+    );
+    db.observe_session("boot-b:session-1:5000000000", 500)?;
+    assert!(db.dispatch(589, Wake::Clock, &app, &cancel)?.is_empty());
+    assert_eq!(db.dispatch(590, Wake::Clock, &app, &cancel)?.len(), 1);
+    // An older concurrent desktop session cannot replace the newest observation.
+    db.observe_session("boot-a:session-1:2000000000", 200)?;
+    assert!(db.dispatch(600, Wake::Clock, &app, &cancel)?.is_empty());
+    assert_eq!(app.calls.get(), 2);
+    Ok(())
+}
+
+#[test]
+fn resident_logon_once_skip_clock_jumps_and_schedule_edits()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("db");
+    let mut db = Scheduler::open(&path)?;
+    let mut s = schedule(&temp)?;
+    s.trigger = Trigger::Logon;
+    db.save(&s)?;
+    db.observe_session("session:200", 200)?;
+    let app = Mock {
+        calls: Cell::new(0),
+        status: JobStatus::Succeeded,
+    };
+    let token = CancellationToken::new();
+    assert_eq!(db.dispatch(205, Wake::Clock, &app, &token)?.len(), 1);
+    db.observe_session("session:200", 200)?;
+    assert!(db.dispatch(4000, Wake::Clock, &app, &token)?.is_empty());
+    assert!(db.dispatch(150, Wake::Clock, &app, &token)?.is_empty());
+    // An independent GUI/CLI connection edits the running resident's store.
+    let other = Scheduler::open(&path)?;
+    s.trigger = Trigger::Interval { seconds: 60 };
+    s.created_at = 1000;
+    s.missed = MissedJobs::Skip;
+    other.save(&s)?;
+    assert!(db.dispatch(999, Wake::Clock, &app, &token)?.is_empty());
+    assert_eq!(db.dispatch(1060, Wake::Clock, &app, &token)?.len(), 1);
+    other.remove(&s.approved.id)?;
+    assert!(db.dispatch(1120, Wake::Clock, &app, &token)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn resident_migration_does_not_replay_legacy_logon_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let mut db = Scheduler::open(temp.path().join("db"))?;
+    let mut s = schedule(&temp)?;
+    s.trigger = Trigger::Logon;
+    db.save(&s)?;
+    let app = Mock {
+        calls: Cell::new(0),
+        status: JobStatus::Succeeded,
+    };
+    let token = CancellationToken::new();
+    assert_eq!(
+        db.dispatch(205, Wake::Session(SessionEvent::Logon), &app, &token)?
+            .len(),
+        1
+    );
+    // The historical receipt is rounded to 180; actual WTS logon was 201.
+    db.observe_session("session:201", 201)?;
+    assert!(db.dispatch(250, Wake::Clock, &app, &token)?.is_empty());
+    assert_eq!(app.calls.get(), 1);
+    Ok(())
+}
+
+#[test]
+fn resident_session_missed_policy_and_ambiguous_identity_fail_closed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let mut db = Scheduler::open(temp.path().join("db"))?;
+    let mut s = schedule(&temp)?;
+    s.trigger = Trigger::LogonDelayed { seconds: 90 };
+    s.missed = MissedJobs::Skip;
+    db.save(&s)?;
+    db.observe_session("session:200", 200)?;
+    assert!(db.observe_session("different:200", 200).is_err());
+    let app = Mock {
+        calls: Cell::new(0),
+        status: JobStatus::Succeeded,
+    };
+    let token = CancellationToken::new();
+    assert!(db.dispatch(350, Wake::Clock, &app, &token)?.is_empty());
+    s.missed = MissedJobs::RunOnce;
+    db.save(&s)?;
+    assert_eq!(db.dispatch(100000, Wake::Clock, &app, &token)?.len(), 1);
+    assert!(db.dispatch(100001, Wake::Clock, &app, &token)?.is_empty());
     Ok(())
 }

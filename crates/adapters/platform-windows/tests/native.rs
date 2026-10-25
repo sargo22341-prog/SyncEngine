@@ -24,3 +24,14 @@ fn windows_scheduler_validates_xml_with_native_com() -> Result<(), Box<dyn std::
     }
     Ok(())
 }
+
+#[test]
+fn current_interactive_session_is_stable_without_administration()
+-> Result<(), Box<dyn std::error::Error>> {
+    let first = platform_windows::interactive_session()?;
+    let second = platform_windows::interactive_session()?;
+    assert_eq!(first, second);
+    assert!(first.1 > 0);
+    // Do not print the opaque identity or any account details.
+    Ok(())
+}

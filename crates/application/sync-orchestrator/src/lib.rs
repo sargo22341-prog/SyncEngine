@@ -5,6 +5,11 @@
 
 mod endpoints;
 mod live;
+mod resident;
+pub use resident::{
+    ResidentPhase, ResidentStatus, agent_stop_pending, clear_agent_stop, hold_agent_presence,
+    publish_resident_status, resident_status,
+};
 mod pages;
 mod runs;
 mod scheduled;

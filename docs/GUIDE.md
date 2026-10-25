@@ -160,6 +160,10 @@ chemin absolu avant de lancer l'interface.
 | `versions/` | copies des fichiers remplacés ou supprimés |
 | `desktop-ui.json` | thème, groupes repliés, comportement du bouton × |
 | `agent-live.json` | progression publiée par l'agent pour l'affichage (pas une source de vérité) |
+| `agent.lock` | verrou OS de l'agent par dossier d'état, libéré après la mort du processus |
+| `agent-status.json` | dernière phase du résident ; sa présence seule ne prouve pas que le processus tourne |
+| `agent-stop.request` | arrêt explicite persistant du processus résident |
+| `agent-retire.request` | arrêt automatique après retrait du dernier horaire, levé au prochain enregistrement |
 | `cancel.request` | demande d'arrêt de l'agent, présente tant que les planifications sont en pause |
 | `desktop.lock`, `window.lock` | verrous : commande en cours, fenêtre ouverte |
 

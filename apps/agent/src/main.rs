@@ -10,8 +10,10 @@ use sync_scheduler::{
     Completion, JobStatus, MissedJobs, Schedule, ScheduledApplication, Scheduler, Trigger, Wake,
 };
 
+mod resident;
+
 type Failure = Box<dyn std::error::Error>;
-const USAGE: &str = "syncengine-agent list STATE | authorize STATE PROFILE interval SECONDS|daily UTC_HOUR UTC_MINUTE|logon|logon-delay SECONDS|manager-start --approve-writes [--approve-deletions] [--skip-missed] [--show-window] | remove STATE PROFILE | acknowledge STATE PROFILE --diagnosed | tick STATE clock|logon|logon-delay SECONDS|manager-start | cancel STATE | clear-cancel STATE | export STATE OUTPUT windows|linux";
+const USAGE: &str = "syncengine-agent list STATE | authorize STATE PROFILE interval SECONDS|daily UTC_HOUR UTC_MINUTE|logon|logon-delay SECONDS|manager-start --approve-writes [--approve-deletions] [--skip-missed] [--show-window] | remove STATE PROFILE | acknowledge STATE PROFILE --diagnosed | tick STATE clock|logon|logon-delay SECONDS|manager-start | cancel STATE | clear-cancel STATE | export STATE OUTPUT windows|linux | resident STATE | stop STATE | resume STATE | status STATE";
 fn main() {
     let result = run(std::env::args().skip(1).collect());
     let code = match result {
@@ -41,6 +43,22 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
         return Err("state directory required".into());
     }
     match command {
+        "resident" if args.len() == 2 => return resident::run(&state),
+        "status" if args.len() == 2 => {
+            return Ok((
+                serde_json::to_value(sync_orchestrator::resident_status(&state)?)?,
+                0,
+            ));
+        }
+        "stop" if args.len() == 2 => {
+            std::fs::File::create(state.join("agent-stop.request"))?.sync_all()?;
+            return Ok((serde_json::json!({"stop_requested":true}), 0));
+        }
+        "resume" if args.len() == 2 => {
+            sync_orchestrator::clear_agent_stop(&state)?;
+            sync_orchestrator::clear_agent_cancel(&state)?;
+            return resident::run(&state);
+        }
         "cancel" if args.len() == 2 => {
             sync_orchestrator::request_agent_cancel(&state)?;
             return Ok((serde_json::json!({"cancel_requested":true}), 0));
@@ -145,6 +163,7 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
             Ok((serde_json::to_value(approved)?, 0))
         }
         "tick" if args.len() == 3 => {
+            let _instance = sync_orchestrator::hold_agent_presence(&state)?;
             let wake = match args[2].as_str() {
                 "clock" => Wake::Clock,
                 "logon" if cfg!(windows) => Wake::Session(SessionEvent::Logon),
@@ -163,59 +182,7 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
             let token = CancellationToken::new();
             let signal_token = token.clone();
             ctrlc::set_handler(move || signal_token.cancel())?;
-            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let done_worker = done.clone();
-            let worker_token = token.clone();
-            let marker = sync_orchestrator::agent_cancel_marker(&state);
-            // A persistent marker also prevents new jobs after a stop request.
-            let cancelled = || match marker.try_exists() {
-                Ok(false) => false,
-                Ok(true) | Err(_) => true,
-            };
-            if cancelled() {
-                token.cancel();
-            }
-            let watcher = std::thread::spawn(move || {
-                while !done_worker.load(std::sync::atomic::Ordering::Acquire) {
-                    if !matches!(marker.try_exists(), Ok(false)) {
-                        worker_token.cancel();
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-            });
-            let now = Timestamp::now().map(|time| time.secs());
-            let agent = Agent {
-                app: &app,
-                state: &state,
-            };
-            let (stop, stopped) = std::sync::mpsc::channel::<()>();
-            let result = std::thread::scope(|scope| {
-                let publisher = &app;
-                // Live progress for windows (presentation only, about twice a
-                // second); a failed publication never affects the job.
-                scope.spawn(move || {
-                    loop {
-                        let finished = !matches!(
-                            stopped.recv_timeout(std::time::Duration::from_millis(500)),
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                        );
-                        let _presentation_only = publisher.publish_live().is_ok();
-                        if finished {
-                            break;
-                        }
-                    }
-                });
-                let result = match now {
-                    Ok(now) => scheduler.dispatch(now, wake, &agent, &token),
-                    Err(_) => Err(sync_scheduler::SchedulerError::Invalid("clock unavailable")),
-                };
-                drop(stop);
-                result
-            });
-            done.store(true, std::sync::atomic::Ordering::Release);
-            watcher.join().map_err(|_| "cancellation observer failed")?;
-            let receipts = result?;
+            let receipts = dispatch(&state, &app, &mut scheduler, wake, &token, &token)?;
             let code = if token.is_cancelled()
                 || receipts
                     .iter()
@@ -230,6 +197,78 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
         _ => Err(USAGE.into()),
     }
 }
+fn dispatch(
+    state: &Path,
+    app: &Application,
+    scheduler: &mut Scheduler,
+    wake: Wake,
+    token: &CancellationToken,
+    shutdown: &CancellationToken,
+) -> Result<Vec<sync_scheduler::DispatchReceipt>, Failure> {
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let done_worker = done.clone();
+    let worker_token = token.clone();
+    let marker = sync_orchestrator::agent_cancel_marker(state);
+    let stop_marker = state.join("agent-stop.request");
+    let retire_marker = state.join("agent-retire.request");
+    let shutdown = shutdown.clone();
+    // A persistent marker also prevents new jobs after a stop request.
+    let cancelled = || match marker.try_exists() {
+        Ok(false) => false,
+        Ok(true) | Err(_) => true,
+    };
+    if cancelled()
+        || shutdown.is_cancelled()
+        || !matches!(stop_marker.try_exists(), Ok(false))
+        || !matches!(retire_marker.try_exists(), Ok(false))
+    {
+        token.cancel();
+    }
+    let watcher = std::thread::spawn(move || {
+        while !done_worker.load(std::sync::atomic::Ordering::Acquire) {
+            if shutdown.is_cancelled()
+                || !matches!(retire_marker.try_exists(), Ok(false))
+                || !matches!(stop_marker.try_exists(), Ok(false))
+                || !matches!(marker.try_exists(), Ok(false))
+            {
+                worker_token.cancel();
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    });
+    let now = Timestamp::now().map(|time| time.secs());
+    let agent = Agent { app, state };
+    let (stop, stopped) = std::sync::mpsc::channel::<()>();
+    let result = std::thread::scope(|scope| {
+        let publisher = app;
+        // Live progress for windows (presentation only, about twice a
+        // second); a failed publication never affects the job.
+        scope.spawn(move || {
+            loop {
+                let finished = !matches!(
+                    stopped.recv_timeout(std::time::Duration::from_millis(500)),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                );
+                let _presentation_only = publisher.publish_live().is_ok();
+                if finished {
+                    break;
+                }
+            }
+        });
+        let result = match now {
+            Ok(now) => scheduler.dispatch(now, wake, &agent, token),
+            Err(_) => Err(sync_scheduler::SchedulerError::Invalid("clock unavailable")),
+        };
+        drop(stop);
+        result
+    });
+    done.store(true, std::sync::atomic::Ordering::Release);
+    watcher.join().map_err(|_| "cancellation observer failed")?;
+    let receipts = result?;
+    Ok(receipts)
+}
+
 /// Agent side of the application port: opens the desktop window when the
 /// schedule asks for it, then runs the job through the ordinary facade.
 struct Agent<'a> {

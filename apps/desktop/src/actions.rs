@@ -15,7 +15,7 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 use sync_core::ProfileId;
-use sync_orchestrator::{Application, DeletionCeiling, JobPhase, JobSnapshot, LiveJob};
+use sync_orchestrator::{Application, DeletionCeiling, JobPhase, JobSnapshot};
 use sync_profiles::Profile;
 
 impl App {
@@ -93,7 +93,14 @@ impl App {
         }
         self.agent_polling = true;
         Task::perform(
-            backend::call(app, Application::agent_live),
+            backend::call(app, |app| {
+                Ok((
+                    app.agent_live()?,
+                    sync_orchestrator::resident_status(app.state_directory())?,
+                    app.agent_cancel_pending()
+                        || sync_orchestrator::agent_stop_pending(app.state_directory()),
+                ))
+            }),
             Message::AgentLive,
         )
     }
@@ -103,12 +110,19 @@ impl App {
     /// stale snapshot ends the follow-up with an explicit outcome.
     pub(crate) fn agent_observed(
         &mut self,
-        result: Result<Option<LiveJob>, Failure>,
+        result: Result<backend::AgentObservation, Failure>,
     ) -> Task<Message> {
         self.agent_polling = false;
-        let Ok(live) = result else {
-            return Task::none();
+        let (live, resident, paused) = match result {
+            Ok(value) => value,
+            Err(error) => {
+                self.ws.resident.phase = sync_orchestrator::ResidentPhase::Error;
+                self.ws.supervision_error = Some(error);
+                return Task::none();
+            }
         };
+        self.ws.resident = resident;
+        self.ws.agent_stopped = paused;
         let Some(live) = live
             .clone()
             .filter(|l| l.is_live(model::now_secs(), AGENT_STALE_SECS))

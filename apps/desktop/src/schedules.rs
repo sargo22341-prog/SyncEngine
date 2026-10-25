@@ -400,6 +400,40 @@ impl App {
             .align_y(Alignment::Center),
         ]
         .spacing(20);
+        if cfg!(windows) {
+            if let Some(error) = &self.ws.supervision_error {
+                page = page.push(ui::callout(
+                    p,
+                    p.danger,
+                    Glyph::Info,
+                    "Supervision Windows",
+                    error.to_string(),
+                ));
+            }
+            let observed = &self.ws.resident;
+            let (color, label) = if self.ws.agent_stopped
+                || observed.phase == sync_orchestrator::ResidentPhase::Paused
+            {
+                (p.warning, "Planifications suspendues")
+            } else if observed.phase == sync_orchestrator::ResidentPhase::Error {
+                (p.danger, "Erreur de l’agent")
+            } else if !observed.available {
+                (
+                    p.warning,
+                    "Agent indisponible — dernière observation périmée",
+                )
+            } else if observed.updated_at.abs_diff(now) > 30 && self.agent_job.is_none() {
+                (
+                    p.warning,
+                    "Agent sans observation récente — vérifier son état",
+                )
+            } else if self.agent_job.is_some() {
+                (p.info, "Synchronisation en cours")
+            } else {
+                (p.success, "Agent disponible")
+            };
+            page = page.push(ui::colored(color, label, 13.0));
+        }
         if self.ws.agent_stopped {
             page = page.push(
                 container(

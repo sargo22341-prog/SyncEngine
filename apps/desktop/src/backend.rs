@@ -135,7 +135,10 @@ pub(crate) async fn open() -> Result<Opened, Failure> {
         std::fs::create_dir_all(&path)
             .map_err(|e| Failure::new("unavailable", format!("{} : {e}", path.display())))?;
         let app = Arc::new(Application::open(&path).map_err(Failure::from)?);
-        let workspace = load(&app, Vec::new())?;
+        let mut workspace = load(&app, Vec::new())?;
+        if cfg!(windows) && workspace.schedules.iter().any(|s| s.schedule.enabled) {
+            workspace.supervision_error = crate::native::prepare_agent(app.state_directory()).err();
+        }
         Ok(Opened(app, workspace))
     })
     .await
@@ -181,6 +184,8 @@ pub(crate) struct Workspace {
     pub(crate) providers: Vec<&'static str>,
     /// A stop request blocks every scheduled run until lifted.
     pub(crate) agent_stopped: bool,
+    pub(crate) resident: sync_orchestrator::ResidentStatus,
+    pub(crate) supervision_error: Option<Failure>,
 }
 
 fn load(app: &Application, previous: Vec<ScheduleView>) -> Result<Workspace, Failure> {
@@ -207,7 +212,11 @@ fn load(app: &Application, previous: Vec<ScheduleView>) -> Result<Workspace, Fai
         runs,
         preferences: app.preferences().map_err(Failure::from)?,
         providers: app.providers(),
-        agent_stopped: app.agent_cancel_pending(),
+        agent_stopped: app.agent_cancel_pending()
+            || sync_orchestrator::agent_stop_pending(app.state_directory()),
+        resident: sync_orchestrator::resident_status(app.state_directory())
+            .map_err(Failure::from)?,
+        supervision_error: None,
     })
 }
 
@@ -452,5 +461,24 @@ pub(crate) fn history_page(
             rows: model::history_rows(&value),
             execution,
         })
+    })
+}
+
+/// One presentation poll: process availability and job progress are distinct.
+pub(crate) type AgentObservation = (
+    Option<sync_orchestrator::LiveJob>,
+    sync_orchestrator::ResidentStatus,
+    bool,
+);
+
+/// Resumes both pause and explicit process stop, then asks the existing native
+/// preparation path to start the least-privilege task (never a child of GUI).
+pub(crate) fn resume_agent(app: &Shared) -> impl Future<Output = Result<(), Failure>> + use<> {
+    let app = Arc::clone(app);
+    blocking(move || {
+        sync_orchestrator::clear_agent_stop(app.state_directory())
+            .map_err(|e| Failure::new("unavailable", e.to_string()))?;
+        app.agent_cancel_clear().map_err(Failure::from)?;
+        crate::native::prepare_agent(app.state_directory())
     })
 }

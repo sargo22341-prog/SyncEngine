@@ -55,6 +55,13 @@ La simulation et l'exécution utilisent le **même** plan.
   `sync-orchestrator`, sur des threads dédiés.
 - Les spécificités Windows et Linux restent dans leurs adaptateurs.
 
+Sous Windows, l'agent utilisateur reste résident ; Task Scheduler supervise
+son processus, tandis que SQLite et le scheduler applicatif gèrent les horaires.
+L'identité WTS de connexion est persistée (schéma scheduler v4). Le verrou OS
+de présence, l'observation du processus et les reçus métier sont distincts.
+Linux conserve les passages ponctuels systemd. Voir
+[le cycle de vie et la migration](AGENT_RESIDENT.md).
+
 Ces dépendances autorisées sont vérifiées par `tests/architecture` : un nouveau
 crate doit y être déclaré.
 

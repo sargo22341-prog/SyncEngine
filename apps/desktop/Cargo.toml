@@ -39,16 +39,13 @@ serde_json.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
-[target.'cfg(windows)'.dev-dependencies]
-# Validate the actual account-bound XML with native COM, without installing tasks.
-platform-api.workspace = true
-platform-windows.workspace = true
-
 [build-dependencies]
 # Windows executable icon (resource compiled by rc.exe / llvm-rc).
 embed-resource = "3.0.12"
 
 [target.'cfg(windows)'.dependencies]
+platform-api.workspace = true
+platform-windows.workspace = true
 winreg = "0.56.0"
 blake3.workspace = true
 

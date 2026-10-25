@@ -14,4 +14,5 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Windows : agent résident autonome, reprise des horaires après relance, état de présence et migration des anciennes tâches.
 

@@ -1,10 +1,12 @@
 # Planification et agent
 
 Les exécutions planifiées sont faites par `syncengine-agent`, un exécutable
-sans fenêtre qui utilise les mêmes profils et moteurs que l'interface. Il ne
-tourne pas en permanence : le planificateur du système l'appelle chaque minute
-(`tick`), il exécute les profils arrivés à échéance puis s'arrête. L'interface
-peut donc rester fermée.
+sans fenêtre qui utilise les mêmes profils et moteurs que l'interface.
+Sous Windows, il reste résident : Windows lance le processus et l'agent
+interprète les horaires persistés. Sous Linux, les passages `tick` restent
+ponctuels, une fois par minute. L'interface peut rester fermée dans les deux cas.
+Le cycle de vie et les limites Windows sont détaillés dans
+[AGENT_RESIDENT.md](AGENT_RESIDENT.md).
 
 ## Depuis l'interface
 
@@ -15,7 +17,7 @@ peut donc rester fermée.
    modification du profil les invalide. Un groupe ne reprend les cases que si
    tous ses membres ont les mêmes réglages et une autorisation valide.
 2. **Windows** : enregistrer l'horaire installe ou actualise automatiquement
-   les deux tâches partagées (horloge et ouverture de session). Aucun bouton
+   la tâche partagée de l'agent résident (ouverture de session). Aucun bouton
    d'activation supplémentaire. L'agent doit se trouver à côté de
    `syncengine-desktop.exe`. Windows PowerShell et le service Planificateur
    de tâches doivent être disponibles. Une demande UAC apparaît seulement
@@ -28,13 +30,14 @@ peut donc rester fermée.
 Les noms Windows incluent le SID du compte et une empreinte du chemin absolu
 du dossier d'état : deux dossiers d'état ne remplacent pas leurs tâches.
 Les horaires restent dans SQLite, sans tâche Windows individuelle par profil.
-Modifier un horaire actualise ces tâches ; retirer un profil ou un horaire
-retire son autorisation. Les deux tâches sont supprimées après retrait de la
+Modifier un horaire conserve cette tâche ; retirer un profil ou un horaire
+retire son autorisation. La tâche est supprimée après retrait de la
 dernière planification active. Un échec de nettoyage est signalé ; une tâche
 résiduelle ne trouve plus l'autorisation supprimée et ne synchronise rien.
-Les anciennes tâches `SyncEngine-clock` / `SyncEngine-logon` sont retirées
-lors de l'enregistrement si leur action correspond exactement à l'agent et
-au dossier d'état utilisés. Les tâches étrangères ne sont pas supprimées.
+Les anciennes tâches périodiques et de connexion sont migrées à l'ouverture
+de l'application si des horaires sont actifs, ou lors de leur enregistrement.
+L'action, le compte et les arguments du dossier d'état sont vérifiés avant
+leur désactivation et retrait. Les tâches étrangères ne sont pas supprimées.
 
 Exemple : clic droit sur un profil → **Planifier…** → **Ouverture de session**
 → autoriser les écritures → enregistrer (accepter l'UAC si demandée).
@@ -53,7 +56,8 @@ les profils déjà enregistrés dans un groupe restent explicitement indiqués.
 | `logon` / `logon-delay SECONDES` | ouverture de session (Windows seulement) |
 | `manager-start` | démarrage du gestionnaire systemd utilisateur (Linux seulement) |
 
-La précision est d'environ une minute. Si des échéances ont été manquées
+La précision est de cinq secondes au repos sous Windows, environ une minute
+sous Linux. Si des échéances ont été manquées
 (machine éteinte, en veille ou session fermée), seule la dernière est exécutée,
 une fois, dès le passage suivant de l'agent ; `--skip-missed` les ignore (on
 attend alors la prochaine échéance).
@@ -91,6 +95,10 @@ syncengine-agent list ETAT
 syncengine-agent authorize ETAT PROFIL daily 2 30 --approve-writes [--approve-deletions] [--skip-missed] [--show-window]
 syncengine-agent remove ETAT PROFIL                 # retire la planification, garde l'historique
 syncengine-agent tick ETAT clock                    # ce qu'appelle le planificateur
+syncengine-agent resident ETAT                      # processus long (Windows : lancé par sa tâche)
+syncengine-agent status ETAT                        # présence du processus, distincte du résultat métier
+syncengine-agent stop ETAT                          # annulation coopérative puis sortie ; arrêt persistant
+syncengine-agent resume ETAT                        # lève l'arrêt/la pause puis reste résident au premier plan
 syncengine-agent cancel ETAT                        # annule la tâche en cours et bloque les suivantes
 syncengine-agent clear-cancel ETAT                  # lève ce blocage
 syncengine-agent export ETAT DOSSIER windows|linux  # génère les définitions de tâches
@@ -111,13 +119,14 @@ PowerShell : `Start-Process $agent -ArgumentList "list `"$etat`"" -Wait -WindowS
 ```powershell
 syncengine-agent export $etat C:\SyncEngine\taches windows
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-foreach ($event in 'clock', 'logon') {
+foreach ($event in 'resident') {
     $xml = [IO.File]::ReadAllText("C:\SyncEngine\taches\syncengine-$event.xml")
     $xml = $xml.Replace('<LogonType>', "<UserId>$sid</UserId><LogonType>")
     $xml = $xml.Replace('</LogonTrigger>', "<UserId>$sid</UserId></LogonTrigger>")
     Register-ScheduledTask -TaskName "SyncEngine-$event" -Xml $xml -Force
 }
-# retrait : schtasks /Delete /TN SyncEngine-Clock  (idem pour Logon)
+# démarrage immédiat : Start-ScheduledTask -TaskName SyncEngine-resident
+# retrait : syncengine-agent stop $etat ; schtasks /Delete /TN SyncEngine-resident
 ```
 
 Les tâches tournent sous le compte de l'utilisateur **tant qu'il est

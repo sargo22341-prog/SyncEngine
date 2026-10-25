@@ -100,6 +100,26 @@ pub(super) fn finish(
     )
     .map_err(io)?;
     // Keep interrupted/running records; bound completed history per profile.
+    // Match journal retention to the existing 100 completed attempts. Select
+    // only persisted completed identities; never scan/delete arbitrary files.
+    let expired: Vec<String> = {
+        let mut query = tx.prepare("SELECT execution FROM runs WHERE profile=(SELECT profile FROM runs WHERE execution=?1) AND state!='running' ORDER BY rowid DESC LIMIT -1 OFFSET 100").map_err(io)?;
+        query
+            .query_map([id.as_str()], |row| row.get(0))
+            .map_err(io)?
+            .collect::<Result<_, _>>()
+            .map_err(io)?
+    };
+    for expired in expired {
+        let expired = ExecutionId::new(expired).map_err(|e| error("integrity", e))?;
+        // ExecutionId excludes separators; the appended extension is a single
+        // file in the application state directory. remove_file unlinks symlinks.
+        match std::fs::remove_file(root.join(format!("{expired}.jsonl"))) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(error("journal_retention", e)),
+        }
+    }
     tx.execute("DELETE FROM runs WHERE profile=(SELECT profile FROM runs WHERE execution=?1) AND state!='running' AND execution NOT IN (SELECT execution FROM runs WHERE profile=(SELECT profile FROM runs WHERE execution=?1) AND state!='running' ORDER BY rowid DESC LIMIT 100)",[id.as_str()]).map_err(io)?;
     tx.commit().map_err(io)
 }
@@ -185,4 +205,88 @@ pub(super) fn unfinished(root: &Path, id: &ProfileId) -> Result<bool, AppError> 
             |r| r.get(0),
         )
         .map_err(io)
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    type Failure = Box<dyn std::error::Error>;
+    fn fixture() -> Result<tempfile::TempDir, Failure> {
+        let root = tempfile::tempdir()?;
+        let db = open(root.path())?;
+        for n in 0..103 {
+            let id = format!("run-{n}");
+            db.execute(
+                "INSERT INTO runs VALUES(?1,'p','0','finished','{}','{}')",
+                [&id],
+            )?;
+            std::fs::write(
+                root.path().join(format!("{id}.jsonl")),
+                b"old completed journal",
+            )?;
+        }
+        db.execute(
+            "INSERT INTO runs VALUES('run-current','p','0','running','{}',NULL)",
+            [],
+        )?;
+        db.execute(
+            "INSERT INTO runs VALUES('run-interrupted','p','0','running','{}',NULL)",
+            [],
+        )?;
+        std::fs::write(root.path().join("run-interrupted.jsonl"), b"diagnose")?;
+        std::fs::write(root.path().join("foreign.jsonl"), b"keep")?;
+        Ok(root)
+    }
+    #[test]
+    fn completed_journals_follow_retention_but_interrupted_and_foreign_stay() -> Result<(), Failure>
+    {
+        let root = fixture()?;
+        finish(
+            root.path(),
+            &ExecutionId::new("run-current")?,
+            &Ok(serde_json::json!({})),
+        )?;
+        for n in 0..4 {
+            assert!(!root.path().join(format!("run-{n}.jsonl")).exists());
+        }
+        assert!(root.path().join("run-4.jsonl").exists());
+        assert_eq!(
+            std::fs::read(root.path().join("run-interrupted.jsonl"))?,
+            b"diagnose"
+        );
+        assert_eq!(std::fs::read(root.path().join("foreign.jsonl"))?, b"keep");
+        Ok(())
+    }
+    #[test]
+    fn retention_refuses_malicious_identity_and_reports_cleanup_failure() -> Result<(), Failure> {
+        let root = fixture()?;
+        open(root.path())?.execute(
+            "UPDATE runs SET execution='../outside' WHERE execution='run-0'",
+            [],
+        )?;
+        let id = ExecutionId::new("run-current")?;
+        assert_eq!(
+            finish(root.path(), &id, &Ok(serde_json::json!({})))
+                .err()
+                .ok_or("error")?
+                .code,
+            "integrity"
+        );
+        open(root.path())?.execute(
+            "UPDATE runs SET execution='run-0' WHERE execution='../outside'",
+            [],
+        )?;
+        std::fs::remove_file(root.path().join("run-0.jsonl"))?;
+        std::fs::create_dir(root.path().join("run-0.jsonl"))?;
+        assert_eq!(
+            finish(root.path(), &id, &Ok(serde_json::json!({})))
+                .err()
+                .ok_or("error")?
+                .code,
+            "journal_retention"
+        );
+        assert!(unfinished(root.path(), &ProfileId::new("p")?)?);
+        assert!(root.path().join("run-interrupted.jsonl").exists());
+        Ok(())
+    }
 }

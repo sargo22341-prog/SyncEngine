@@ -132,10 +132,7 @@ impl App {
                 Task::none()
             }
             Message::ResumeAgent => match &self.backend {
-                Some(app) => Task::perform(
-                    backend::call(app, sync_orchestrator::Application::agent_cancel_clear),
-                    Message::AgentResumed,
-                ),
+                Some(app) => Task::perform(backend::resume_agent(app), Message::AgentResumed),
                 None => Task::none(),
             },
             Message::AgentResumed(result) => {

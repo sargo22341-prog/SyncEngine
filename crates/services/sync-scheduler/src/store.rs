@@ -37,7 +37,7 @@ pub struct ScheduleState {
     /// Latest result only (bounded); detailed application history is separate.
     pub result: Option<Completion>,
 }
-/// SQLite v3 store (transactional v1/v2 migrations). One schedule per profile, one receipt per schedule.
+/// SQLite v4 store (transactional v1/v2 migrations). One schedule per profile, one receipt per schedule.
 /// Keep outside synchronized roots; back up with all application state at rest.
 pub struct Scheduler(Connection);
 impl Scheduler {
@@ -64,7 +64,7 @@ impl Scheduler {
                 return Err(SchedulerError::Invalid("foreign database"));
             }
             tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
-        } else if !(1..=3).contains(&version) || app != 1_398_361_682 {
+        } else if !(1..=4).contains(&version) || app != 1_398_361_682 {
             return Err(SchedulerError::Invalid("unknown scheduler schema"));
         }
         if version < 2 {
@@ -74,10 +74,57 @@ impl Scheduler {
             normalize_configs(&tx)?;
             tx.execute_batch(include_str!("../migrations/003_show_window.sql"))?;
         }
+        if version < 4 {
+            tx.execute_batch(include_str!("../migrations/004_resident.sql"))?;
+        }
         tx.commit()?;
         db.execute_batch("PRAGMA synchronous=FULL;")?;
         Ok(Self(db))
     }
+    /// Records a verified Windows interactive session once, durably. The opaque
+    /// identity must include the real logon time, not just a reboot-local LUID.
+    /// Returns the original logon instant on every restart. No identity is logged.
+    /// # Errors
+    /// Invalid session, identity collision, or transactional persistence failure.
+    pub fn observe_session(&mut self, identity: &str, logon_at: i64) -> Result<(), SchedulerError> {
+        if identity.is_empty() || identity.len() > 256 || logon_at < 0 {
+            return Err(SchedulerError::Invalid("invalid session observation"));
+        }
+        let schedules = self.list()?;
+        let tx = self
+            .0
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute("INSERT INTO resident_session(singleton,identity,logon_at) VALUES(1,?1,?2) ON CONFLICT(singleton) DO UPDATE SET identity=excluded.identity,logon_at=excluded.logon_at WHERE resident_session.logon_at<excluded.logon_at", params![identity,logon_at])?;
+        let stored: (String, i64) = tx.query_row(
+            "SELECT identity,logon_at FROM resident_session WHERE singleton=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if stored.1 == logon_at && stored.0 != identity {
+            return Err(SchedulerError::Invalid("ambiguous session identity"));
+        }
+        // Bridge historical minute-rounded immediate logon receipts on first
+        // resident installation. Never turn an in-flight claim into completion.
+        let legacy: Option<i64> = tx
+            .query_row(
+                "SELECT occurred_at FROM session_wakes WHERE event='logon'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(legacy) = legacy.filter(|event| *event >= logon_at) {
+            for row in schedules {
+                if matches!(row.schedule.trigger, crate::Trigger::Logon)
+                    && row.last_slot.is_some_and(|slot| slot >= legacy / 60 * 60)
+                {
+                    tx.execute("UPDATE schedules SET last_slot=MAX(last_slot,?2) WHERE profile=?1 AND running_slot IS NULL AND config=?3", params![row.schedule.approved.id.as_str(),logon_at,serde_json::to_string(&row.schedule)?])?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Saves an approved schedule. Running/interrupted claims cannot be overwritten.
     /// Existing completion watermark is retained, so editing cannot replay a slot.
     /// # Errors
@@ -174,12 +221,22 @@ impl Scheduler {
         if !(0..=i64::MAX - 86_400).contains(&now) {
             return Err(SchedulerError::Invalid("clock out of range"));
         }
-        if matches!(wake, Wake::Session(platform_api::SessionEvent::Logon)) {
+        let resident_logon: Option<i64> = self
+            .0
+            .query_row(
+                "SELECT logon_at FROM resident_session WHERE singleton=1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if resident_logon.is_none()
+            && matches!(wake, Wake::Session(platform_api::SessionEvent::Logon))
+        {
             // Coalesce duplicate native notifications within one minute. Never
             // let a wall-clock rollback replace a newer observed event.
             self.0.execute("INSERT INTO session_wakes VALUES('logon',?1) ON CONFLICT(event) DO UPDATE SET occurred_at=excluded.occurred_at WHERE excluded.occurred_at/60>session_wakes.occurred_at/60", [now])?;
         }
-        let logon: Option<i64> = self
+        let legacy_logon: Option<i64> = self
             .0
             .query_row(
                 "SELECT occurred_at FROM session_wakes WHERE event='logon'",
@@ -187,6 +244,7 @@ impl Scheduler {
                 |r| r.get(0),
             )
             .optional()?;
+        let logon = resident_logon.or(legacy_logon);
         let mut results = Vec::new();
         for state in self.list()? {
             if cancel.is_cancelled() {
@@ -203,7 +261,19 @@ impl Scheduler {
                 });
                 continue;
             }
-            let due = if let crate::Trigger::LogonDelayed { seconds } = state.schedule.trigger {
+            let due = if matches!(state.schedule.trigger, crate::Trigger::Logon)
+                && resident_logon.is_some()
+            {
+                resident_logon
+                    .filter(|event| {
+                        state.schedule.enabled
+                            && *event >= state.schedule.created_at
+                            && *event <= now
+                    })
+                    .filter(|due| {
+                        state.schedule.missed != crate::MissedJobs::Skip || now - *due < 60
+                    })
+            } else if let crate::Trigger::LogonDelayed { seconds } = state.schedule.trigger {
                 logon
                     .filter(|event| state.schedule.enabled && *event >= state.schedule.created_at)
                     .and_then(|event| event.checked_add(i64::from(seconds)))
