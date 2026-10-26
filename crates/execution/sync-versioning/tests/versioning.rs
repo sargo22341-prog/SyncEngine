@@ -12,6 +12,33 @@ fn destination() -> MemoryConnector {
 }
 
 #[test]
+fn version_parents_are_rechecked_after_external_changes() -> Result<(), Box<dyn std::error::Error>>
+{
+    let destination = destination();
+    let versions = MemoryConnector::new("versions").writable();
+    let store = VersionStore::new(&versions, path("exec"))?;
+    let observed = destination.entry_at("b.txt").ok_or("missing source")?;
+    let cancel = CancellationToken::new();
+    store.preserve(&destination, &path("b.txt"), observed.metadata(), &cancel)?;
+    // Given an already prepared parent, When that parent disappears, Then a fresh
+    // reservation recreates it; no existing version is overwritten.
+    versions.remove("exec");
+    store.preserve(&destination, &path("b.txt"), observed.metadata(), &cancel)?;
+    assert_eq!(versions.content("exec/b.txt"), Some(b"b".to_vec()));
+    // A non-directory at the parent must still prevent preservation.
+    versions.remove("exec");
+    versions.put_file("exec", b"keep this file", ts(30));
+    assert!(
+        store
+            .preserve(&destination, &path("b.txt"), observed.metadata(), &cancel)
+            .is_err()
+    );
+    assert_eq!(versions.content("exec"), Some(b"keep this file".to_vec()));
+    assert_eq!(destination.content("b.txt"), Some(b"b".to_vec()));
+    Ok(())
+}
+
+#[test]
 fn preserves_nested_files_with_their_date() {
     let destination = destination();
     let versions = MemoryConnector::new("versions").writable();

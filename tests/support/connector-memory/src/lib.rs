@@ -79,10 +79,12 @@ pub struct MemoryConnector {
     corrupted_writes: Vec<ResourcePath>,
     read_back: bool,
     touch_on_read: BTreeMap<ResourcePath, Timestamp>,
+    replace_on_read: BTreeMap<ResourcePath, (Vec<u8>, Timestamp)>,
     issues: BTreeMap<ResourcePath, Vec<ListingIssue>>,
     extra_entries: BTreeMap<ResourcePath, Vec<FileEntry>>,
     page_size: Option<usize>,
     listing_workers: std::num::NonZeroUsize,
+    transfer_workers: std::num::NonZeroUsize,
     cancel_trigger: Option<CancelTrigger>,
     disconnected: AtomicBool,
     list_calls: AtomicUsize,
@@ -109,6 +111,12 @@ fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
 }
 
 impl MemoryConnector {
+    /// Opts into independent transfers for executor concurrency tests.
+    #[must_use]
+    pub fn with_transfer_concurrency(mut self, workers: std::num::NonZeroUsize) -> Self {
+        self.transfer_workers = workers;
+        self
+    }
     /// Advertises independent paginated listings for parallel scanner tests.
     #[must_use]
     pub fn with_listing_concurrency(mut self, workers: std::num::NonZeroUsize) -> Self {
@@ -142,10 +150,12 @@ impl MemoryConnector {
             corrupted_writes: Vec::new(),
             read_back: false,
             touch_on_read: BTreeMap::new(),
+            replace_on_read: BTreeMap::new(),
             issues: BTreeMap::new(),
             extra_entries: BTreeMap::new(),
             page_size: None,
             listing_workers: std::num::NonZeroUsize::MIN,
+            transfer_workers: std::num::NonZeroUsize::MIN,
             cancel_trigger: None,
             disconnected: AtomicBool::new(false),
             list_calls: AtomicUsize::new(0),
@@ -305,6 +315,14 @@ impl MemoryConnector {
     #[must_use]
     pub fn touch_on_read(mut self, at: &str, modified: Timestamp) -> Self {
         self.touch_on_read.insert(path(at), modified);
+        self
+    }
+
+    /// Replace stored bytes after opening a reader of the previous content.
+    #[must_use]
+    pub fn replace_on_read(mut self, at: &str, bytes: &[u8], modified: Timestamp) -> Self {
+        self.replace_on_read
+            .insert(path(at), (bytes.to_vec(), modified));
         self
     }
 
@@ -496,6 +514,9 @@ fn fallback_id() -> ConnectorId {
 }
 
 impl StorageConnector for MemoryConnector {
+    fn transfer_concurrency(&self) -> std::num::NonZeroUsize {
+        self.transfer_workers
+    }
     fn listing_concurrency(&self) -> std::num::NonZeroUsize {
         self.listing_workers
     }
@@ -630,6 +651,14 @@ impl StorageConnector for MemoryConnector {
             return Err(self.error(StorageErrorKind::Permanent, StorageOperation::Read, at));
         }
         let content = node.content.clone();
+        if let Some((bytes, modified)) = self.replace_on_read.get(at) {
+            node.content = bytes.clone();
+            node.metadata = node
+                .metadata
+                .clone()
+                .with_size(bytes.len() as u64)
+                .with_modified(*modified, self.precision);
+        }
         if let Some(modified) = self.touch_on_read.get(at) {
             node.metadata = node
                 .metadata

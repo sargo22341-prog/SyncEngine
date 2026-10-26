@@ -14,6 +14,11 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Miroir NAS vers Windows : fusion des dossiers de casse différente et copie vérifiée des journaux qui continuent de grandir.
+- Miroir : les vrais conflits de noms et de types restent protégés sans bloquer les dossiers fusionnables.
+- Miroir SMB : absences reconnues après lecture complète, suppressions revérifiées après archivage et causes précises des éléments ignorés dans la simulation et l’historique.
+- Miroir : remplacements versionnés parallèles, source actualisée avant copie, activité de vérification visible et historique des problèmes indexé sans verrou d’écriture pour les lectures.
+- Copies locales et NAS parallèles et bornées, avec filtres d’erreurs et de refus dans l’historique et accès direct en fin de copie.
 - Simulation NAS Windows : lecture compatible SMB et parcours parallèle borné, avec les mêmes protections du miroir.
 - SMB Windows : inventaire directement par poignée, sans renormaliser chaque chemin ni relire l’identité de la racine déjà épinglée.
 - Inventaires réseau : lecture Windows par lots, moins de contrôles redondants, métadonnées FTP/WebDAV/OneDrive et sessions SFTP mieux exploitées.
@@ -25,4 +30,3 @@ liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 - Windows : l’ouverture de l’interface suit la progression et reprend automatiquement si l’agent occupe l’état ; l’agent attend aussi une opération manuelle en cours.
 - Windows : la page Planification affiche désormais la cause précise d’un échec de démarrage de l’agent.
 - Windows : correction du refus de planification lorsque le compte de la tâche est renvoyé par son nom plutôt que son SID.
-

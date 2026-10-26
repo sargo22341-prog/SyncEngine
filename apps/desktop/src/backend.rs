@@ -296,6 +296,10 @@ pub(crate) fn plan_page(
 /// Final classification of an execution started from this window.
 #[derive(Debug, Clone)]
 pub(crate) struct Executed {
+    pub(crate) execution: String,
+    pub(crate) problems_total: usize,
+    pub(crate) problems: Vec<model::HistoryRow>,
+    pub(crate) diagnostics_error: Option<String>,
     pub(crate) outcome: model::Outcome,
     pub(crate) label: String,
     pub(crate) totals: Vec<(String, u64)>,
@@ -308,7 +312,7 @@ pub(crate) fn execute(
     confirm_delete: bool,
 ) -> impl Future<Output = Result<Executed, Failure>> + use<> {
     call(app, move |a| {
-        let value = a.execute(id, plan, true, confirm_delete)?;
+        let value = a.execute(id.clone(), plan, true, confirm_delete)?;
         let report = value
             .get("execution")
             .filter(|v| v.is_object())
@@ -326,7 +330,26 @@ pub(crate) fn execute(
                     .collect()
             })
             .unwrap_or_default();
+        let execution = report["execution"].as_str().unwrap_or("").to_owned();
+        let (problems_total, problems, diagnostics_error) = match a.history_page_filtered(
+            id,
+            &execution,
+            0,
+            sync_orchestrator::HistoryFilter::Problems,
+            "",
+        ) {
+            Ok(page) => (
+                page["total"].as_u64().unwrap_or(0) as usize,
+                model::history_rows(&page).into_iter().take(5).collect(),
+                None,
+            ),
+            Err(error) => (0, Vec::new(), Some(error.message)),
+        };
         Ok(Executed {
+            execution,
+            problems_total,
+            problems,
+            diagnostics_error,
             outcome,
             label,
             totals,
@@ -469,6 +492,7 @@ pub(crate) fn regroup(
 /// One page of a historical run.
 #[derive(Debug, Clone)]
 pub(crate) struct HistoryPage {
+    pub(crate) generation: u64,
     pub(crate) execution: String,
     pub(crate) offset: usize,
     pub(crate) total: usize,
@@ -480,10 +504,14 @@ pub(crate) fn history_page(
     id: ProfileId,
     execution: String,
     offset: usize,
+    filter: sync_orchestrator::HistoryFilter,
+    query: String,
+    generation: u64,
 ) -> impl Future<Output = Result<HistoryPage, Failure>> + use<> {
     call(app, move |a| {
-        let value = a.history_page(id, &execution, offset)?;
+        let value = a.history_page_filtered(id, &execution, offset, filter, &query)?;
         Ok(HistoryPage {
+            generation,
             offset,
             total: value["total"].as_u64().unwrap_or(0) as usize,
             rows: model::history_rows(&value),

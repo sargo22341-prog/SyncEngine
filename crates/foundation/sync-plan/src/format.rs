@@ -4,7 +4,7 @@ use serde_json::Value;
 use sync_errors::{ClassifiedError, ErrorClass};
 use thiserror::Error;
 
-use crate::plan::{ExecutionPlan, PLAN_SCHEMA_VERSION, RawPlan};
+use crate::plan::{CASE_MERGE_PLAN_SCHEMA_VERSION, ExecutionPlan, PLAN_SCHEMA_VERSION, RawPlan};
 use crate::validate::PlanError;
 
 /// Erreur de lecture ou d'écriture de la forme JSON d'un plan.
@@ -68,7 +68,10 @@ impl ExecutionPlan {
             .get("schema_version")
             .and_then(Value::as_u64)
             .ok_or(PlanFormatError::MissingVersion)?;
-        if found != u64::from(PLAN_SCHEMA_VERSION) && found != 2 {
+        if found != u64::from(PLAN_SCHEMA_VERSION)
+            && found != 2
+            && found != u64::from(CASE_MERGE_PLAN_SCHEMA_VERSION)
+        {
             return Err(PlanFormatError::UnsupportedVersion { found });
         }
         let raw: RawPlan = serde_json::from_value(value).map_err(PlanFormatError::Malformed)?;

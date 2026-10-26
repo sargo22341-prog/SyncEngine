@@ -53,6 +53,12 @@ pub trait ContentReader: Send {
 /// doit avoir lieu (c'est l'exécuteur qui revérifie les préconditions juste
 /// avant).
 pub trait StorageConnector: Send + Sync {
+    /// Maximum simultaneous independent file transfers on this instance.
+    /// The default is sequential. Opt-in implementations must keep reads,
+    /// staged writes and per-file publication independent and thread safe.
+    fn transfer_concurrency(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::MIN
+    }
     /// Maximum number of independent directory listings that may be interleaved
     /// concurrently on this instance, including their pagination cursors.
     /// The conservative default serializes listings. This never authorizes writes.

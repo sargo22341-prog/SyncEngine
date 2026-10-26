@@ -10,7 +10,9 @@ pub use resident::{
     ResidentPhase, ResidentStatus, agent_stop_pending, clear_agent_stop, hold_agent_presence,
     publish_resident_failure, publish_resident_status, request_agent_stop, resident_status,
 };
+mod history;
 mod pages;
+pub use history::HistoryFilter;
 mod runs;
 mod scheduled;
 mod schedules;
@@ -125,6 +127,12 @@ pub struct JobSnapshot {
     /// throughput; bytes of a transfer that later fails are not subtracted, so
     /// it can exceed `bytes_done`. Presentation only.
     pub bytes_transferred: u64,
+    /// Auxiliary verification reads, distinct from payload transferred/validated.
+    #[serde(default)]
+    pub bytes_verified: u64,
+    /// Auxiliary bytes archived before replacement/deletion.
+    #[serde(default)]
+    pub bytes_versioned: u64,
     /// Entries observed during preview, including directories (both endpoints).
     pub entries_scanned: u64,
     /// Read/listing anomalies excluding consistency warnings. Unknown coverage
@@ -191,11 +199,23 @@ pub const LIVE_PROGRESS_BYTES: u64 = 1024 * 1024;
 
 /// Keeps only the latest transferred-byte count from executor progress
 /// events: no queue, nothing grows with the transfer size.
-struct LiveTransfer(Arc<AtomicU64>);
+struct LiveTransfer {
+    transferred: Arc<AtomicU64>,
+    verified: Arc<AtomicU64>,
+    versioned: Arc<AtomicU64>,
+}
 impl EventSink for LiveTransfer {
     fn emit(&self, event: Event) -> EmitOutcome {
         if let EventKind::Progress(progress) = event.kind() {
-            self.0.fetch_max(progress.bytes_done, Relaxed);
+            self.transferred.fetch_max(progress.bytes_done, Relaxed);
+        }
+        if let EventKind::IoActivity {
+            verification_bytes,
+            version_bytes,
+        } = event.kind()
+        {
+            self.verified.fetch_add(*verification_bytes, Relaxed);
+            self.versioned.fetch_add(*version_bytes, Relaxed);
         }
         EmitOutcome::Delivered
     }
@@ -213,6 +233,8 @@ pub struct Application {
     /// Live block-level byte count of the current execution (see
     /// [`JobSnapshot::bytes_transferred`]).
     transferred: Arc<AtomicU64>,
+    verified: Arc<AtomicU64>,
+    versioned: Arc<AtomicU64>,
 }
 impl Application {
     /// Opens an existing state directory under an initialization lock and
@@ -249,7 +271,7 @@ impl Application {
             .map_err(io)?;
         owner.try_lock().map_err(state_lock_error)?;
         Profiles::open(state.join("profiles.sqlite")).map_err(io)?;
-        runs::open(&state)?;
+        runs::initialize(&state)?;
         History::open(state.join("state.sqlite")).map_err(io)?;
         Ok(Self {
             state,
@@ -259,6 +281,8 @@ impl Application {
             cancel: Mutex::new(CancellationToken::new()),
             snapshot: Mutex::new(JobSnapshot::default()),
             transferred: Arc::new(AtomicU64::new(0)),
+            verified: Arc::new(AtomicU64::new(0)),
+            versioned: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -397,6 +421,8 @@ impl Application {
         let cancel = token.cloned().unwrap_or_default();
         *lock(&self.cancel)? = cancel.clone();
         self.transferred.store(0, Relaxed);
+        self.verified.store(0, Relaxed);
+        self.versioned.store(0, Relaxed);
         *lock(&self.snapshot)? = JobSnapshot {
             active: true,
             control_id: Some(unique("control")?),
@@ -516,14 +542,28 @@ impl Application {
                 .map_err(io)?;
                 // Content: hash only files whose equal sizes leave the
                 // question open; other verdicts cannot change.
+                let comparison_options =
+                    sync_compare::CompareOptions::new().with_directory_merge(true);
                 let (a, b) = match profile.compare {
                     CompareMethod::SizeAndDate => (a, b),
                     CompareMethod::Content => {
-                        let candidates = sync_compare::content_candidates(&a, &b);
+                        let candidates = sync_compare::content_candidates_with_options(
+                            &a,
+                            &b,
+                            &comparison_options,
+                        )
+                        .map_err(io)?;
                         // Counters are cumulative: hashes already provided
                         // by the listings are part of the target.
                         progress.target(
-                            (2 * candidates.len() as u64)
+                            (candidates
+                                .iter()
+                                .filter(|path| a.get(path).is_some())
+                                .count() as u64
+                                + candidates
+                                    .iter()
+                                    .filter(|path| b.get(path).is_some())
+                                    .count() as u64)
                                 .saturating_add(a.stats().hashed)
                                 .saturating_add(b.stats().hashed),
                         );
@@ -558,9 +598,7 @@ impl Application {
                 if cancel.checkpoint() {
                     return Err(error("cancelled", "analyse annulée"));
                 }
-                let comparison =
-                    sync_compare::compare(&a, &b, &sync_compare::CompareOptions::new())
-                        .map_err(io)?;
+                let comparison = sync_compare::compare(&a, &b, &comparison_options).map_err(io)?;
                 let input = PlanningInput::new(&comparison, &context);
                 match profile.mode {
                     SyncMode::Backup => {
@@ -697,13 +735,18 @@ impl Application {
         )
         .map_err(io)?;
         runs::begin(&self.state, &execution, &cached.profile.id, &cached.plan)?;
-        let options = ExecutionOptions::new()
+        let mut options = ExecutionOptions::new()
             .with_deletions_confirmed(confirm_delete)
             .with_progress_interval(LIVE_PROGRESS_BYTES);
+        options.refresh_mirror_source = cached.profile.mode == SyncMode::Mirror;
         let events = EventEmitter::new(
             execution.clone(),
             Some(cached.profile.id.clone()),
-            Arc::new(LiveTransfer(Arc::clone(&self.transferred))),
+            Arc::new(LiveTransfer {
+                transferred: Arc::clone(&self.transferred),
+                verified: Arc::clone(&self.verified),
+                versioned: Arc::clone(&self.versioned),
+            }),
         );
         let result = if cached.profile.mode == SyncMode::Bidirectional {
             let mut history = History::open(self.state.join("state.sqlite")).map_err(io)?;
@@ -745,7 +788,7 @@ impl Application {
                 .map_err(io)
                 .and_then(|r| serde_json::to_value(r).map_err(io))
         };
-        runs::finish(&self.state, &execution, &result)?;
+        runs::finish(&self.state, &execution, &result, Some(&cached.plan))?;
         result
     }
 
@@ -774,6 +817,8 @@ impl Application {
         snapshot.pause_requested = snapshot.active && paused;
         // Validated bytes were transferred too, even if an event was coalesced.
         snapshot.bytes_transferred = self.transferred.load(Relaxed).max(snapshot.bytes_done);
+        snapshot.bytes_verified = self.verified.load(Relaxed);
+        snapshot.bytes_versioned = self.versioned.load(Relaxed);
         Ok(snapshot)
     }
 
@@ -909,8 +954,18 @@ mod scan_progress_tests {
             .as_object_mut()
             .ok_or("not an object")?
             .remove("scan_consistency_warnings");
+        value
+            .as_object_mut()
+            .ok_or("not an object")?
+            .remove("bytes_verified");
+        value
+            .as_object_mut()
+            .ok_or("not an object")?
+            .remove("bytes_versioned");
         let snapshot: JobSnapshot = serde_json::from_value(value)?;
         assert_eq!(snapshot.scan_consistency_warnings, 0);
+        assert_eq!(snapshot.bytes_verified, 0);
+        assert_eq!(snapshot.bytes_versioned, 0);
         Ok(())
     }
 }

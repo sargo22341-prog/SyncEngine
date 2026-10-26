@@ -26,6 +26,13 @@ pub struct ProgressSnapshot {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum EventKind {
+    /// Auxiliary I/O deltas, distinct from transferred/validated payload bytes.
+    IoActivity {
+        /// Bytes reread for content verification since the previous notification.
+        verification_bytes: u64,
+        /// Bytes copied into the version store since the previous notification.
+        version_bytes: u64,
+    },
     /// Changement de statut d'exécution.
     StatusChanged {
         /// Nouveau statut.

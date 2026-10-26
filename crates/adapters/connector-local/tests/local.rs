@@ -691,6 +691,13 @@ fn lightweight_root_identity_matches_the_pinned_capability_and_rejects_files()
     let dir = cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority())?;
     let meta = dir.dir_metadata()?;
     assert_eq!(
+        cap_primitives::windows_listing::readable_root_identity(
+            temp.path(),
+            cap_std::ambient_authority()
+        )?,
+        (meta.dev(), meta.ino())
+    );
+    assert_eq!(
         cap_primitives::windows_listing::root_identity(temp.path(), cap_std::ambient_authority())?,
         (meta.dev(), meta.ino())
     );
@@ -742,5 +749,69 @@ fn independent_directory_cursors_can_be_interleaved_without_crossing_tokens()
         }
         assert_eq!(count, 600);
     }
+    Ok(())
+}
+
+#[test]
+fn a_link_parent_never_becomes_not_found_for_an_execution_precondition()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Given a missing child behind a link outside the root, When an execution
+    // stat resolves it, Then it must refuse the link, never prove absence.
+    let temp = TempDir::new()?;
+    let outside = TempDir::new()?;
+    link_dir(outside.path(), &temp.path().join("link"));
+    let source = connector(temp.path());
+    let error = source
+        .stat(&p("link/missing"), &CancellationToken::new())
+        .err()
+        .ok_or("link accepted")?;
+    assert_ne!(error.kind(), StorageErrorKind::NotFound);
+    assert_eq!(error.kind(), StorageErrorKind::Permanent);
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn minimal_directory_open_rejects_links_files_and_ambiguous_components()
+-> Result<(), Box<dyn std::error::Error>> {
+    use cap_fs_ext::MetadataExt;
+    use cap_primitives::windows_listing::open_directory_nofollow;
+    use std::ffi::OsStr;
+    let root = TempDir::new()?;
+    let outside = TempDir::new()?;
+    fs::create_dir(root.path().join("child"))?;
+    fs::write(root.path().join("file"), b"data")?;
+    link_dir(outside.path(), &root.path().join("link"));
+    let dir = cap_std::fs::Dir::open_ambient_dir(root.path(), cap_std::ambient_authority())?;
+    let expected = dir.open_dir("child")?.dir_metadata()?;
+    let parent = dir.into_std_file();
+    let child =
+        cap_std::fs::Dir::from_std_file(open_directory_nofollow(&parent, OsStr::new("child"))?);
+    let actual = child.dir_metadata()?;
+    assert_eq!(
+        (actual.dev(), actual.ino()),
+        (expected.dev(), expected.ino())
+    );
+    for invalid in [
+        "",
+        ".",
+        "..",
+        "child/..",
+        "child\\..",
+        "C:child",
+        "child.",
+        "child ",
+        "bad\0name",
+    ] {
+        assert_eq!(
+            open_directory_nofollow(&parent, OsStr::new(invalid))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+    }
+    assert!(open_directory_nofollow(&parent, OsStr::new("file")).is_err());
+    assert!(open_directory_nofollow(&parent, OsStr::new("link")).is_err());
+    assert!(open_directory_nofollow(&parent, OsStr::new("missing")).is_err());
     Ok(())
 }

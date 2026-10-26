@@ -99,9 +99,12 @@ pub(crate) fn execute_command(
         (None, None)
     };
 
-    let options = ExecutionOptions::new()
+    let mut options = ExecutionOptions::new()
         .with_verify(execute.verify)
         .with_deletions_confirmed(execute.confirm_delete);
+    if let Some(workers) = execute.workers {
+        options = options.with_copy_workers(workers);
+    }
     let cancel = crate::cancellation();
     let mut request = ExecutionRequest::new(
         &plan,

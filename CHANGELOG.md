@@ -5,6 +5,66 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Fusion de casse NAS vers Windows et journaux actifs
+- La prévisualisation unidirectionnelle projette les variantes de dossiers sur
+  une destination explicitement insensible à la casse. Les fichiers distincts
+  en collision restent protégés individuellement, sans bloquer leurs voisins.
+- Les plans projetés utilisent le schéma 3 et conservent les chemins source
+  physiques. Les suppressions revérifient toutes les variantes de leurs parents,
+  y compris après archivage ; les exclusions et scans partiels restent protégés.
+- En miroir avec actualisation de la source, la copie est bornée à sa taille
+  fraîche. Une croissance ou date modifiée exige une relecture BLAKE3 du préfixe
+  copié ; une troncature ou réécriture de ce préfixe reste refusée.
+- Le profil NAS réel a produit zéro saut/conflit en 43,69 s sans exécution.
+  L’audit isolé a vérifié une copie de casse différente, un journal actif et la
+  convergence du miroir en moins de 41 Mio. Détails : `docs/CASSE_CHEMINS_SMB.md`.
+
+### Diagnostic initial des dossiers SMB différant par la casse
+- Les collisions de dossiers protègent aussi tous leurs descendants : une
+  énumération Windows ambiguë ne peut plus produire de suppression en miroir.
+- Diagnostic en lecture seule `case_lookup_audit` et comparaison avec le
+  rapprochement et la réutilisation des dossiers de FreeFileSync :
+  `docs/CASSE_CHEMINS_SMB.md`. Cette protection intermédiaire a depuis été
+  remplacée dans la façade unidirectionnelle par la fusion décrite ci-dessus.
+
+### Absences SMB et conflits de noms
+- Les listings natifs UNC/CIFS ne rendent plus tous les dossiers incomplets par
+  défaut : seules une fin normale de toutes les pages et l’absence d’erreur
+  permettent de conclure à une absence. Les autres connecteurs restent inchangés.
+- Avant une suppression versionnée, la source est revérifiée après l’archivage :
+  une réapparition ou déconnexion conserve la destination.
+- Simulation et historique détaillent la cause des opérations ignorées : côté
+  non vérifié, filtre, métadonnées absentes, type spécial ou collision de casse.
+- Référence FreeFileSync, preuves NAS, limites de noms Windows et commandes :
+  `docs/ABSENCE_SMB_ET_CONFLITS.md`.
+
+### Stabilité des remplacements et consultation de l’historique
+- Les remplacements avec versions utilisent le pool borné ; le connecteur du
+  magasin borne aussi sa concurrence. Les créations concurrentes des dossiers
+  de versions tolèrent seulement une autre création de dossier vérifiée.
+- En miroir GUI/agent, les fichiers déjà sélectionnés sont copiés depuis une
+  observation fraîche ; un changement pendant lecture reste refusé. Autres
+  modes, conflits, destination et suppressions gardent leurs préconditions.
+- Compteurs distincts pour transfert, relecture d’intégrité et conservation des
+  versions ; aucun débit artificiel n’est ajouté au débit de copie.
+- Historique desktop v2 : WAL, contrôles d’intégrité au démarrage, index dérivé
+  des problèmes. Les lectures n’acquièrent plus de réservation d’écriture ; un
+  cache historique occupé n’empêche pas de lire la projection temporaire.
+- Analyse du journal réel, comparaison FreeFileSync et mesures plafonnées :
+  `docs/STABILITE_COPIE_HISTORIQUE.md`.
+
+### Copies NAS et diagnostic des opérations
+- Exécution concurrente bornée des copies et dossiers indépendants ; dépendances,
+  versions, vérification du contenu, journal durable et suppressions finales préservés.
+- Moins de métadonnées Windows redondantes lors de la résolution confinée des
+  chemins, sans cache de chemins pendant les mutations ni suivi des jonctions.
+- Historique filtrable : problèmes, erreurs, refus, opérations inachevées et
+  éléments ignorés ; recherche et pagination appliquées aux résultats réels.
+- Bilan de copie avec premiers problèmes et accès à leur historique détaillé.
+- CLI : `execute --workers 1..16` ; quatre workers demandés par défaut,
+  bornés par les capacités des deux connecteurs. Bidirectionnel séquentiel.
+- Mesures plafonnées et limites : `docs/AUDIT_COPIE_NAS.md`.
+
 ### Simulation NAS mesurée sur le partage de test
 - La prévisualisation Windows demande FileFullDirectoryInfo, sans identifiants
   de fichiers non nécessaires au plan, accepté par le NAS qui refusait la

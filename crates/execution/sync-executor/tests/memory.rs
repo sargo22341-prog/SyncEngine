@@ -103,6 +103,111 @@ fn source_modified_after_planning_is_refused() {
 }
 
 #[test]
+fn mirror_refreshes_planned_files_and_verifies_content_after_metadata_changes() {
+    for during in [false, true] {
+        // Given a confirmed mirror and a source changed after preview, When
+        // copying its fresh observation, Then publish only if stable throughout.
+        let source = if during {
+            source().touch_on_read("a.txt", ts(999))
+        } else {
+            source()
+        };
+        let destination =
+            MemoryConnector::new("destination")
+                .writable()
+                .file("a.txt", b"old destination", ts(1));
+        let plan = mirror_plan(&source, &destination);
+        source.put_file("a.txt", b"new current bytes", ts(150));
+        source.put_file("unplanned", b"never selected", ts(150));
+        let mut options = confirmed();
+        options.refresh_mirror_source = true;
+        let report = execute(
+            &plan,
+            &source,
+            &destination,
+            options,
+            &mut MemoryJournal::new(),
+        )
+        .unwrap();
+        assert!(is_done(&report, "a.txt"));
+        assert_eq!(
+            destination.content("a.txt"),
+            Some(b"new current bytes".to_vec())
+        );
+        assert!(destination.content("unplanned").is_none());
+        no_partial(&destination);
+    }
+}
+
+#[test]
+fn live_mirror_copies_a_verified_prefix_of_a_growing_log() {
+    // Given: a live log gains lines while its original prefix is being read.
+    let source = MemoryConnector::new("source")
+        .file("log.log", b"first line\n", ts(1))
+        .replace_on_read("log.log", b"first line\nnext line\n", ts(2));
+    let destination = MemoryConnector::new("destination").writable();
+    let plan = mirror_plan(&source, &destination);
+    let mut options = confirmed();
+    options.refresh_mirror_source = true;
+    // When: copying in live mirror mode. Then: publish a complete verified prefix.
+    let report = execute(
+        &plan,
+        &source,
+        &destination,
+        options,
+        &mut MemoryJournal::new(),
+    )
+    .unwrap();
+    assert!(is_done(&report, "log.log"));
+    assert_eq!(
+        destination.content("log.log"),
+        Some(b"first line\n".to_vec())
+    );
+    assert_eq!(
+        source.content("log.log"),
+        Some(b"first line\nnext line\n".to_vec())
+    );
+    assert!(mirror_plan(&source, &destination).summary().mutations() > 0);
+    no_partial(&destination);
+}
+
+#[test]
+fn live_mirror_still_rejects_a_rewritten_or_truncated_prefix() {
+    for bytes in [b"other line\nnext line\n".as_slice(), b"short".as_slice()] {
+        // Given: the writer changes earlier bytes or truncates the live file.
+        let source = MemoryConnector::new("source")
+            .file("log.log", b"first line\n", ts(1))
+            .replace_on_read("log.log", bytes, ts(2));
+        let destination = MemoryConnector::new("destination").writable().file(
+            "log.log",
+            b"keep old backup",
+            ts(0),
+        );
+        let plan = mirror_plan(&source, &destination);
+        let mut options = confirmed();
+        options.refresh_mirror_source = true;
+        // Then: the previous backup survives; a torn source is not published.
+        let report = execute(
+            &plan,
+            &source,
+            &destination,
+            options,
+            &mut MemoryJournal::new(),
+        )
+        .unwrap();
+        assert!(matches!(
+            refusal(&report, "log.log"),
+            Refusal::SourceChangedDuringTransfer { .. }
+        ));
+        assert_eq!(
+            destination.content("log.log"),
+            Some(b"keep old backup".to_vec())
+        );
+        no_partial(&destination);
+    }
+}
+
+#[test]
 fn source_modified_during_transfer_is_not_published() {
     // Given une copie en cours ; When la date de la source change pendant
     // la lecture ; Then le dépôt est abandonné, rien n'est publié.
@@ -610,6 +715,71 @@ fn deletion_is_refused_when_the_entry_reappears_at_the_source() {
     .unwrap();
     assert_eq!(refusal(&report, "x.txt"), Refusal::SourceReappeared);
     assert_eq!(destination.content("x.txt").unwrap(), b"x");
+}
+
+#[test]
+fn source_absence_is_rechecked_after_a_slow_version_preservation()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_journal::{JournalError, JournalSink};
+    struct Change<'a> {
+        source: &'a MemoryConnector,
+        disconnected: bool,
+        journal: MemoryJournal,
+    }
+    impl JournalSink for Change<'_> {
+        fn append(&mut self, record: JournalRecord) -> Result<(), JournalError> {
+            let archived = matches!(record, JournalRecord::VersionPreserved { .. });
+            self.journal.append(record)?;
+            if archived {
+                if self.disconnected {
+                    self.source.set_disconnected(true);
+                } else {
+                    self.source.put_file("x", b"reappeared", ts(20));
+                }
+            }
+            Ok(())
+        }
+    }
+    for disconnected in [false, true] {
+        // Given a confirmed deletion and a preserved old version, When the
+        // source reappears or disconnects during archiving, Then keep the target.
+        let source = MemoryConnector::new("source").file("keep", b"keep", ts(10));
+        let destination = MemoryConnector::new("destination")
+            .writable()
+            .file("keep", b"keep", ts(10))
+            .file("x", b"old", ts(5));
+        let versions = MemoryConnector::new("versions").writable();
+        let store = VersionStore::new(&versions, p("versions"))?;
+        let plan = mirror_plan(&source, &destination);
+        assert_eq!(plan.summary().delete, 1);
+        let mut journal = Change {
+            source: &source,
+            disconnected,
+            journal: MemoryJournal::new(),
+        };
+        let report = Executor.execute(
+            ExecutionRequest::new(
+                &plan,
+                &source,
+                &destination,
+                ExecutionId::new("absence-after-archive")?,
+                &mut journal,
+                &CancellationToken::new(),
+            )
+            .with_options(confirmed())
+            .with_versions(&store)
+            .at(now()),
+        )?;
+        assert_eq!(destination.content("x"), Some(b"old".to_vec()));
+        assert_eq!(versions.content("versions/x"), Some(b"old".to_vec()));
+        if disconnected {
+            assert_eq!(report.stop(), Some(StopCause::SourceUnavailable));
+        } else {
+            assert_eq!(refusal(&report, "x"), Refusal::SourceReappeared);
+        }
+        no_partial(&destination);
+    }
+    Ok(())
 }
 
 #[test]

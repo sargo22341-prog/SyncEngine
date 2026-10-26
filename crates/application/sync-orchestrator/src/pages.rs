@@ -18,10 +18,21 @@ impl Application {
         execution: &str,
         offset: usize,
     ) -> Result<serde_json::Value, AppError> {
-        if offset > i64::MAX as usize {
-            return Err(error("invalid_input", "offset out of range"));
-        }
-        crate::runs::page(&self.state, &id, execution, offset)
+        self.history_page_filtered(id, execution, offset, crate::HistoryFilter::All, "")
+    }
+    /// Searches paths and stored diagnostics, and filters outcomes before
+    /// selecting a page of at most 100 original plan/outcome pairs.
+    /// # Errors
+    /// Missing execution, query over 512 bytes, invalid offset or persistence failure.
+    pub fn history_page_filtered(
+        &self,
+        id: ProfileId,
+        execution: &str,
+        offset: usize,
+        filter: crate::HistoryFilter,
+        query: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        crate::history::page(&self.state, &id, execution, offset, filter, query)
     }
     /// Builds the exact cached plan but sends at most 100 operations over IPC.
     /// # Errors

@@ -1,5 +1,13 @@
 # Architecture
 
+En unidirectionnel vers un récepteur explicitement insensible à la casse, la
+comparaison peut projeter les variantes de dossiers dans un seul dossier cible.
+Le plan de schéma 3 conserve les chemins physiques source ; l’exécuteur les
+utilise en lecture et vérifie toutes leurs variantes avant une suppression.
+Les conflits réels de fichiers restent bloqués individuellement. Le comparateur
+bas niveau reste conservateur sans cette option, ainsi que le bidirectionnel.
+Voir [le diagnostic et les mesures](CASSE_CHEMINS_SMB.md).
+
 Les inventaires Windows utilisent un lecteur par poignée et lots de 64 Kio
 dans l'adaptateur local de prévisualisation, sans normalisation de chemin ;
 la classe FileFullDirectoryInfo évite de demander les identités des fichiers.
@@ -38,6 +46,29 @@ connecteurs ──► scanner ──► comparaison ──► stratégie ──�
    publie, et journalise chaque étape (`sync-journal`).
 
 La simulation et l'exécution utilisent le **même** plan.
+
+Les copies locales/SMB indépendantes peuvent utiliser un pool borné (quatre
+workers demandés par défaut, huit annoncés par ces connecteurs, plafond moteur
+de seize). Les autres connecteurs restent séquentiels tant qu'ils n'annoncent
+pas explicitement la capacité. Le coordinateur libère les dépendances après
+résultat : un dossier parent précède son contenu. Les suppressions attendent la
+fin de tous les workers ; le bidirectionnel reste ordonné. Les remplacements
+versionnés utilisent aussi le pool, borné par la capacité du magasin. Chaque
+worker utilise les mêmes préconditions, temporaires et
+vérifications de contenu ; le journal durable est sérialisé. Un jeton enfant
+hérite de la pause/annulation et permet d'arrêter les autres workers sur erreur
+fatale sans annuler le jeton de l'appelant. Voir [l'audit copie](AUDIT_COPIE_NAS.md).
+
+La façade active en miroir l’actualisation de l’observation des fichiers déjà
+prévus à la copie, juste avant leur lecture ; un changement pendant lecture
+exige une vérification BLAKE3 supplémentaire du préfixe copié si les métadonnées
+ont changé. Le transfert est borné à la taille fraîche, ce qui accepte un journal
+en ajout continu ; une réécriture ou troncature du préfixe reste refusée. Les
+autres modes, la destination et les suppressions restent
+stricts. L’option moteur est explicite et désactivée par défaut hors façade.
+Les E/S de vérification et d’archivage ont des compteurs informatifs séparés.
+Le magasin et le connecteur revalident toujours les dossiers des versions et
+chaque écriture effective ; aucun cache ne permet une mutation.
 
 ## Crates
 
@@ -84,6 +115,15 @@ La baseline bidirectionnelle n'est publiée qu'après une exécution cohérente.
 Les plans et journaux sont des formats JSON versionnés. Contenu du dossier
 d'état : [Guide](GUIDE.md#données-de-lapplication).
 
+L’historique desktop migre de v1 à v2 avec un index dérivé des seuls problèmes,
+dans la même transaction que les nouveaux rapports, et WAL pour les accès
+concurrents. Un ancien rapport construit cet index une seule fois via TEMP,
+sans réserver le verrou d’écriture pendant le parcours. Si la courte publication
+du cache rencontre un autre écrivain, la projection TEMP reste consultable.
+Les plans et rapports originaux restent la vérité ; la rétention supprime aussi
+leurs index. Le contrôle d’intégrité complet a lieu à l’ouverture applicative,
+pas à chaque filtre. Voir [les mesures et la migration](STABILITE_COPIE_HISTORIQUE.md).
+
 ## Lectures réseau
 
 Les analyses SMB utilisent maintenant le même cache borné de 64 poignées que
@@ -95,6 +135,14 @@ FTP. Une erreur invalide la session ; seule la lecture complète d’un listing
 transitoire peut être recommencée une fois. Les mutations ne sont pas rejouées.
 Les avertissements de cohérence sont séparés dans les statistiques de présentation,
 sans changer les inventaires incomplets ni les garde-fous miroir.
+Les listings natifs SMB suivent désormais le contrat du système de fichiers :
+une énumération achevée sans erreur permet une absence pour le plan, sans
+promesse de snapshot atomique. Une erreur d’énumération, page perdue, omission ou annulation
+reste incomplète et bloque les suppressions. Les connecteurs dont la cohérence
+reste inconnue ou éventuelle gardent la politique conservatrice. L’exécuteur
+revérifie chaque absence, y compris après l’archivage d’une version avant
+suppression. Les collisions de noms demeurent des conflits explicites, jamais
+des disparitions. Voir [les preuves et la comparaison FreeFileSync](ABSENCE_SMB_ET_CONFLITS.md).
 Voir l’[audit réseau](AUDIT_RESEAU.md) pour le périmètre et les limites.
 
 ## Contrôle pause/reprise

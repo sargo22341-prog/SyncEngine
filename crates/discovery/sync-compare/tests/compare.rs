@@ -428,6 +428,48 @@ fn unknown_case_rule_is_treated_as_insensitive() {
 }
 
 #[test]
+fn ambiguous_directory_protects_descendants_even_when_listing_looks_complete() {
+    // Given: the SMB client may have returned B's children while reading b.
+    let left = MemoryConnector::new("l")
+        .with_case_sensitivity(CaseSensitivity::Unknown)
+        .dir("People/B")
+        .dir("People/b")
+        .file("People/B/known.jpg", b"source", ts(1));
+    let right = MemoryConnector::new("r")
+        .with_case_sensitivity(CaseSensitivity::InsensitivePreserving)
+        .file("People/B/bbno$/folder.jpg", b"preserve", ts(1))
+        .file("People/B/known.jpg", b"older", ts(0))
+        .file("People/Beta/obsolete", b"other branch", ts(1));
+    // When: both listings report a normal end, a spelling collision remains.
+    let report = compare(
+        &inventory(&left),
+        &inventory(&right),
+        &CompareOptions::new(),
+    )
+    .unwrap();
+    assert!(report.left_complete() && report.right_complete());
+    // Then: neither a missing child nor an apparent replacement is certain.
+    for at in [
+        "People/B/bbno$",
+        "People/B/bbno$/folder.jpg",
+        "People/B/known.jpg",
+    ] {
+        assert!(
+            matches!(
+                outcome_of(&report, at),
+                ComparisonOutcome::Uncertain(ref causes)
+                    if matches!(causes.as_slice(), [Uncertainty::CaseCollision { .. }])
+            ),
+            "{at}"
+        );
+    }
+    assert_eq!(
+        outcome_of(&report, "People/Beta/obsolete"),
+        ComparisonOutcome::RightOnly
+    );
+}
+
+#[test]
 fn excluded_directory_colliding_with_included_file_is_uncertain() {
     let filter = Filter::new(FilterRules::new().exclude_directory("cache")).unwrap();
     let left = MemoryConnector::new("l").file("cache", b"un fichier", ts(1));

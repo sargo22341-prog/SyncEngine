@@ -294,6 +294,51 @@ pub fn verify_content(
     buffer_size: usize,
     cancel: &CancellationToken,
 ) -> Result<(), VerifyError> {
+    verify_read(
+        connector,
+        path,
+        expected,
+        expected_bytes,
+        buffer_size,
+        cancel,
+        false,
+    )
+}
+
+/// Verify exactly the first `expected_bytes` bytes, ignoring a later tail.
+/// EOF before the boundary and changed prefix bytes are integrity failures.
+/// This does not claim an application-consistent database snapshot.
+///
+/// # Errors
+/// The same storage, cancellation and integrity errors as [`verify_content`].
+pub fn verify_prefix(
+    connector: &dyn StorageConnector,
+    path: &ResourcePath,
+    expected: &ContentHash,
+    expected_bytes: u64,
+    buffer_size: usize,
+    cancel: &CancellationToken,
+) -> Result<(), VerifyError> {
+    verify_read(
+        connector,
+        path,
+        expected,
+        expected_bytes,
+        buffer_size,
+        cancel,
+        true,
+    )
+}
+
+fn verify_read(
+    connector: &dyn StorageConnector,
+    path: &ResourcePath,
+    expected: &ContentHash,
+    expected_bytes: u64,
+    buffer_size: usize,
+    cancel: &CancellationToken,
+    bounded: bool,
+) -> Result<(), VerifyError> {
     if expected.algorithm() != HashAlgorithm::Blake3 {
         return Err(VerifyError::Storage(
             StorageError::new(StorageErrorKind::NotSupported, StorageOperation::Read)
@@ -314,7 +359,19 @@ pub fn verify_content(
                     .with_path(path.clone()),
             ));
         }
-        let read = reader.read(&mut buffer).map_err(VerifyError::Storage)?;
+        let available = if bounded {
+            expected_bytes
+                .saturating_sub(bytes)
+                .min(buffer.len() as u64) as usize
+        } else {
+            buffer.len()
+        };
+        if available == 0 {
+            break;
+        }
+        let read = reader
+            .read(&mut buffer[..available])
+            .map_err(VerifyError::Storage)?;
         if read == 0 {
             break;
         }

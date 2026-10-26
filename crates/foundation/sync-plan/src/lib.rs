@@ -44,7 +44,8 @@ pub use operation::{
     UncertainCause,
 };
 pub use plan::{
-    EndpointSnapshot, ExecutionPlan, PLAN_SCHEMA_VERSION, PlanHeader, PlanSummary, SyncMode,
+    CASE_MERGE_PLAN_SCHEMA_VERSION, EndpointSnapshot, ExecutionPlan, PLAN_SCHEMA_VERSION,
+    PlanHeader, PlanSummary, SyncMode,
 };
 pub use policy::{
     DEFAULT_MAX_DELETE_PERCENT, DeletionCensus, DeletionGuard, DeletionPolicy, DeletionRefusal,

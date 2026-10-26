@@ -98,6 +98,8 @@ impl ClassifiedError for ExecutionError {
 /// Défaut constaté par l'exécuteur lui-même (sans erreur de stockage).
 #[derive(Debug, Error)]
 pub(crate) enum Fault {
+    #[error("un worker de copie s'est arrêté de manière inattendue")]
+    WorkerFailed,
     /// Le dépôt relu ne correspond pas au contenu lu à la source : rien
     /// n'est validé.
     #[error("contenu déposé non conforme, rien n'est validé : {0}")]
@@ -118,7 +120,7 @@ impl ClassifiedError for Fault {
         match self {
             Self::StagedContent(_) | Self::PublishedEntry(_) => ErrorClass::Integrity,
             Self::UnsupportedKind(_) => ErrorClass::NotSupported,
-            Self::MissingObservation => ErrorClass::Internal,
+            Self::MissingObservation | Self::WorkerFailed => ErrorClass::Internal,
         }
     }
 }

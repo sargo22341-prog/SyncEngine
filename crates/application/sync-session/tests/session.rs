@@ -465,7 +465,7 @@ fn local_sqlite_cycle_and_verified_versions_are_real_files() {
         RetentionPolicy::default(),
     )
     .unwrap();
-    assert!(result.baseline_updated);
+    assert!(result.baseline_updated, "{result:?}");
     assert_eq!(std::fs::read(left.join("r")).unwrap(), b"RIGHT");
     assert_eq!(std::fs::read(right.join("l")).unwrap(), b"LEFT");
     assert_eq!(std::fs::read(state.join("versions/l")).unwrap(), b"left");

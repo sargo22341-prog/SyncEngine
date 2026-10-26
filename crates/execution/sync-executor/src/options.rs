@@ -16,6 +16,16 @@ pub const DEFAULT_MAX_CLOCK_SKEW: Duration = Duration::from_secs(300);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ExecutionOptions {
+    /// For planned mirror file copies/replacements, refresh the source metadata
+    /// immediately before reading. A growing file is copied up to that initial
+    /// size; changed metadata requires a second hash of the copied prefix.
+    /// Rewritten prefixes and truncations are still refused.
+    /// Other modes and all destination/deletion preconditions stay strict.
+    pub refresh_mirror_source: bool,
+    /// Requested workers (default 4), capped at 16 and by both endpoints.
+    /// Independent copies/replacements respect parent dependencies; the version
+    /// store further bounds concurrency. Deletions and bidirectional runs are ordered.
+    pub copy_workers: std::num::NonZeroUsize,
     /// Niveau de vérification des fichiers transférés (défaut :
     /// [`VerifyMode::Content`]).
     pub verify: VerifyMode,
@@ -37,6 +47,8 @@ pub struct ExecutionOptions {
 impl Default for ExecutionOptions {
     fn default() -> Self {
         Self {
+            refresh_mirror_source: false,
+            copy_workers: std::num::NonZeroUsize::new(4).unwrap_or(std::num::NonZeroUsize::MIN),
             verify: VerifyMode::default(),
             confirm_deletions: false,
             max_plan_age: DEFAULT_MAX_PLAN_AGE,
@@ -48,6 +60,12 @@ impl Default for ExecutionOptions {
 }
 
 impl ExecutionOptions {
+    /// Bounds independent file transfers. One forces sequential execution.
+    #[must_use]
+    pub fn with_copy_workers(mut self, workers: std::num::NonZeroUsize) -> Self {
+        self.copy_workers = workers;
+        self
+    }
     /// Options par défaut.
     #[must_use]
     pub fn new() -> Self {

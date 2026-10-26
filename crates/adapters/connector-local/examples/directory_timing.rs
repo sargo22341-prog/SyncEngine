@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             (m.is_dir() && !m.file_type().is_symlink()).then(|| e.file_name())
         })
         .ok_or("root must contain an ordinary directory")?;
-    let mut totals = [Duration::ZERO; 5];
+    let mut totals = [Duration::ZERO; 6];
     let mut direct = 0;
     let mut count = 0;
     for _ in 0..rounds {
@@ -51,6 +51,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         let _identity =
             cap_primitives::windows_listing::root_identity(&root, cap_std::ambient_authority())?;
         totals[4] += start.elapsed();
+        let parent = pinned.try_clone()?.into_std_file();
+        let start = Instant::now();
+        let _directory = cap_primitives::windows_listing::open_directory_nofollow(&parent, &child)?;
+        totals[5] += start.elapsed();
     }
     let mut out = std::io::stdout().lock();
     for (name, total) in [
@@ -59,6 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "child nofollow open",
         "child listing",
         "root single-query identity",
+        "child nofollow minimal metadata",
     ]
     .into_iter()
     .zip(totals)

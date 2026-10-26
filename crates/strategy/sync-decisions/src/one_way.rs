@@ -57,7 +57,9 @@ pub fn plan_one_way(
         .rows()
         .iter()
         .map(|row| {
-            let source = row.left().map(EntrySnapshot::from);
+            let source = row.left().map(|entry| {
+                EntrySnapshot::from(entry).with_origin_paths(row.source_origins().to_vec())
+            });
             let destination = row.right().map(EntrySnapshot::from);
             let decision = match (decide(row, policy), &destination) {
                 (RowDecision::Decided(decision), _) => decision,

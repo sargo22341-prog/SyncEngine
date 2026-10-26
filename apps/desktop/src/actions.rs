@@ -578,11 +578,20 @@ impl App {
     }
 
     pub(crate) fn load_history(&mut self, execution: String, offset: usize) -> Task<Message> {
+        self.history_generation = self.history_generation.wrapping_add(1);
         let (Some(app), Some(id)) = (&self.backend, self.selected.clone()) else {
             return Task::none();
         };
         Task::perform(
-            backend::history_page(app, id, execution, offset),
+            backend::history_page(
+                app,
+                id,
+                execution,
+                offset,
+                self.history_filter,
+                self.history_query.clone(),
+                self.history_generation,
+            ),
             Message::HistoryPage,
         )
     }

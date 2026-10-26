@@ -61,6 +61,8 @@ impl Default for PreviewArgs {
 /// Options propres à la commande `execute`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ExecuteArgs {
+    /// Requested independent file workers, bounded to 1..=16.
+    pub(crate) workers: Option<std::num::NonZeroUsize>,
     /// `--confirm` : exécution réelle demandée explicitement.
     pub(crate) confirm: bool,
     /// `--confirm-delete` : suppressions du plan confirmées explicitement.
@@ -309,6 +311,16 @@ fn execute_option(
         "--confirm" => execute.confirm = true,
         "--confirm-delete" => execute.confirm_delete = true,
         "--progress" => execute.progress = true,
+        "--workers" => {
+            let text = value()?;
+            let workers = text
+                .parse::<usize>()
+                .ok()
+                .filter(|n| *n <= 16)
+                .and_then(std::num::NonZeroUsize::new)
+                .ok_or_else(|| invalid(option, text))?;
+            execute.workers = Some(workers);
+        }
         "--journal" => execute.journal = Some(PathBuf::from(value()?)),
         "--versions-dir" => execute.versions = Some(PathBuf::from(value()?)),
         "--plan" => execute.plan = Some(PathBuf::from(value()?)),
@@ -577,6 +589,7 @@ pub(crate) fn help_text() -> String {
          \x20   --plan <FICHIER>           Exécute un plan enregistré par « preview --json »\n\
          \x20                              (âge maximal 1 h ; sans options de filtre ni de plan)\n\
          \x20   --progress                 Progression agrégée sur la sortie d'erreur\n\
+         \x20   --workers <1..16>          Copies indépendantes (défaut 4, borné par les connecteurs)\n\
          \n\
          Motifs : glob sur le chemin relatif avec « / » ; sans « / », sur le nom seul\n\
          (« *.tmp », « build/**/*.o », « **/node_modules »).\n\
@@ -794,6 +807,7 @@ mod tests {
                     ..PreviewArgs::default()
                 },
                 execute: ExecuteArgs {
+                    workers: None,
                     confirm: true,
                     confirm_delete: true,
                     journal: Some(PathBuf::from("j.jsonl")),
@@ -820,6 +834,45 @@ mod tests {
                 value: "rien".to_owned()
             })
         );
+    }
+
+    #[test]
+    fn execution_workers_are_explicit_and_bounded() {
+        for value in ["1", "4", "16"] {
+            let command = parse(args(&[
+                "execute",
+                "a",
+                "b",
+                "--confirm",
+                "--journal",
+                "j",
+                "--workers",
+                value,
+            ]))
+            .unwrap();
+            let Command::Execute { execute, .. } = command else {
+                panic!("execution required")
+            };
+            assert_eq!(
+                execute.workers.map(|n| n.get().to_string()),
+                Some(value.to_owned())
+            );
+        }
+        for value in ["0", "17", "-1", "abc"] {
+            assert!(
+                parse(args(&[
+                    "execute",
+                    "a",
+                    "b",
+                    "--confirm",
+                    "--journal",
+                    "j",
+                    "--workers",
+                    value
+                ]))
+                .is_err()
+            );
+        }
     }
 
     #[test]

@@ -13,6 +13,9 @@ pub(crate) mod large_read_dir;
 // SYNCENGINE-PATCH: aligned, bounded direct handle query; see safety review.
 #[allow(unsafe_code)]
 pub(crate) mod handle_read_dir;
+// SYNCENGINE-PATCH: one fixed-size tag query; see safety review.
+#[allow(unsafe_code)]
+pub(crate) mod open_directory;
 mod hard_link_unchecked;
 mod is_file_read_write_impl;
 mod is_same_file;

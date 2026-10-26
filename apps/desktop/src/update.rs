@@ -787,6 +787,37 @@ impl App {
                 self.go(Nav::History);
                 Task::none()
             }
+            Message::ShowRunProblems(id, execution) => {
+                self.selected = Some(id);
+                self.expanded_run = Some(execution.clone());
+                self.history_filter = sync_orchestrator::HistoryFilter::Problems;
+                self.history_query.clear();
+                self.history = None;
+                self.go(Nav::History);
+                self.load_history(execution, 0)
+            }
+            Message::HistoryFilter(filter) => {
+                self.history_filter = filter;
+                self.history = None;
+                match self.expanded_run.clone() {
+                    Some(execution) => self.load_history(execution, 0),
+                    None => Task::none(),
+                }
+            }
+            Message::HistoryQuery(query) => {
+                if query.len() > 512 {
+                    return Task::none();
+                }
+                self.history_query = query;
+                Task::none()
+            }
+            Message::HistorySearch => {
+                self.history = None;
+                match self.expanded_run.clone() {
+                    Some(execution) => self.load_history(execution, 0),
+                    None => Task::none(),
+                }
+            }
             Message::ExpandRun(execution) => {
                 if self.expanded_run.as_deref() == Some(execution.as_str()) {
                     self.expanded_run = None;
@@ -803,7 +834,10 @@ impl App {
             },
             Message::HistoryPage(result) => {
                 match result {
-                    Ok(page) if self.expanded_run.as_deref() == Some(page.execution.as_str()) => {
+                    Ok(page)
+                        if self.expanded_run.as_deref() == Some(page.execution.as_str())
+                            && page.generation == self.history_generation =>
+                    {
                         self.history = Some(page);
                     }
                     Ok(_) => {}

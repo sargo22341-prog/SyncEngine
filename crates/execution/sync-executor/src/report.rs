@@ -89,6 +89,8 @@ impl fmt::Display for Refusal {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum StopCause {
+    /// A transfer worker failed unexpectedly; all workers have been drained.
+    WorkerFailure,
     /// Annulation demandée.
     Cancelled,
     /// Espace disque ou quota insuffisant à la destination.

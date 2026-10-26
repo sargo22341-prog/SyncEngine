@@ -127,6 +127,11 @@ impl fmt::Debug for VersionStore<'_> {
 }
 
 impl<'a> VersionStore<'a> {
+    /// Maximum independent preserves supported by this store's connector.
+    #[must_use]
+    pub fn transfer_concurrency(&self) -> std::num::NonZeroUsize {
+        self.connector.transfer_concurrency()
+    }
     /// Magasin sur `connector`, versions rangées sous `folder` (en général
     /// l'identifiant d'exécution).
     ///
@@ -189,6 +194,20 @@ impl<'a> VersionStore<'a> {
         observed: &FileMetadata,
         cancel: &CancellationToken,
     ) -> Result<PreservedVersion, VersioningError> {
+        self.preserve_observed(from, path, observed, cancel, &mut |_| {})
+    }
+
+    /// Preserve with an auxiliary byte observer; identical integrity guarantees.
+    /// # Errors
+    /// Same errors as [`Self::preserve`].
+    pub fn preserve_observed(
+        &self,
+        from: &dyn StorageConnector,
+        path: &ResourcePath,
+        observed: &FileMetadata,
+        cancel: &CancellationToken,
+        observer: &mut dyn FnMut(u64),
+    ) -> Result<PreservedVersion, VersioningError> {
         let location = self.location_of(path)?;
         if let Some(parent) = location.parent() {
             self.ensure_directory(&parent, cancel)?;
@@ -197,7 +216,7 @@ impl<'a> VersionStore<'a> {
             .with_modified(observed.modified())
             .with_size_hint(observed.size());
         let request = CopyRequest::new(from, path, self.connector, &location).with_options(options);
-        let staged = stage_copy(&request, &mut |_| {}, cancel).map_err(VersioningError::Copy)?;
+        let staged = stage_copy(&request, observer, cancel).map_err(VersioningError::Copy)?;
         if let Err(mismatch) = check_transfer(observed, staged.bytes(), staged.hash()) {
             staged.abort().map_err(VersioningError::Store)?;
             return Err(VersioningError::Changed(mismatch));
@@ -240,9 +259,20 @@ impl<'a> VersionStore<'a> {
                     ));
                 }
                 Err(error) if error.kind() == StorageErrorKind::NotFound => {
-                    self.connector
-                        .create_directory(&current, cancel)
-                        .map_err(VersioningError::Store)?;
+                    if let Err(error) = self.connector.create_directory(&current, cancel) {
+                        // Another worker may have created the same ancestor.
+                        // Accept only a fresh directory observation, never a file/link.
+                        if error.kind() != StorageErrorKind::Conflict
+                            || self
+                                .connector
+                                .stat(&current, cancel)
+                                .map_err(VersioningError::Store)?
+                                .kind()
+                                != EntryKind::Directory
+                        {
+                            return Err(VersioningError::Store(error));
+                        }
+                    }
                 }
                 Err(error) => return Err(VersioningError::Store(error)),
             }

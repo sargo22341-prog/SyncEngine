@@ -9,6 +9,7 @@ use sync_errors::{ClassifiedError, ErrorClass};
 use sync_filter::FilterRules;
 use sync_scanner::{Inventory, Presence};
 use thiserror::Error;
+mod merge;
 
 use crate::outcome::{
     ComparisonOutcome, Difference, EquivalenceBasis, OutcomeCategory, PathComparison, Side,
@@ -19,9 +20,17 @@ use crate::outcome::{
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CompareOptions {
     modified_tolerance: Duration,
+    merge_directories: bool,
 }
 
 impl CompareOptions {
+    /// Project directory case variants onto an explicitly insensitive receiver.
+    /// Files with multiple physical senders remain conflicts; no data is chosen.
+    #[must_use]
+    pub fn with_directory_merge(mut self, enabled: bool) -> Self {
+        self.merge_directories = enabled;
+        self
+    }
     /// Options par défaut : aucune tolérance au-delà de la précision déclarée.
     #[must_use]
     pub fn new() -> Self {
@@ -313,6 +322,11 @@ pub fn compare(
     if left.filter_rules() != right.filter_rules() {
         return Err(CompareError::FilterMismatch);
     }
+    if options.merge_directories
+        && right.capabilities().case_sensitivity == CaseSensitivity::InsensitivePreserving
+    {
+        return Ok(merge::compare(left, right, options));
+    }
     let paths: BTreeSet<&ResourcePath> = left
         .entries()
         .chain(right.entries())
@@ -324,6 +338,19 @@ pub fn compare(
     } else {
         case_collisions(&paths)
     };
+    // A directory collision makes every descendant lookup ambiguous too.
+    // In particular, a completed SMB listing can contain the other spelling's
+    // cached children: it must never justify a mirror deletion below it.
+    let directory_collisions: BTreeMap<_, _> = collisions
+        .iter()
+        .filter(|(path, _)| {
+            left.get(path)
+                .into_iter()
+                .chain(right.get(path))
+                .any(|entry| entry.kind() == EntryKind::Directory)
+        })
+        .map(|(path, with)| (path.clone(), with.clone()))
+        .collect();
 
     let mut rows = Vec::with_capacity(paths.len());
     let mut summary = ComparisonSummary::default();
@@ -336,7 +363,9 @@ pub fn compare(
             (None, Some(_)) => one_sided(Side::Right, left.presence(path)),
             (None, None) => continue,
         };
-        let outcome = match collisions.get(path) {
+        let inherited = std::iter::successors(path.parent(), |parent| parent.parent())
+            .find_map(|parent| directory_collisions.get(&parent));
+        let outcome = match collisions.get(path).or(inherited) {
             Some(with) => ComparisonOutcome::Uncertain(vec![Uncertainty::CaseCollision {
                 with: with.clone(),
             }]),
@@ -355,6 +384,7 @@ pub fn compare(
             ComparisonOutcome::Uncertain(_) => summary.uncertain += 1,
         }
         rows.push(PathComparison {
+            source_origins: Vec::new(),
             path: path.clone(),
             left: left_entry.cloned(),
             right: right_entry.cloned(),
@@ -404,6 +434,34 @@ pub fn content_candidates(left: &Inventory, right: &Inventory) -> Vec<ResourcePa
 
 fn case_sensitive(inventory: &Inventory) -> bool {
     inventory.capabilities().case_sensitivity == CaseSensitivity::Sensitive
+}
+
+/// Physical hash candidates using the same matching rules as [`compare`].
+/// Each side hashes only paths present in its own inventory.
+/// # Errors
+/// [`CompareError::FilterMismatch`] if the filter contracts differ.
+pub fn content_candidates_with_options(
+    left: &Inventory,
+    right: &Inventory,
+    options: &CompareOptions,
+) -> Result<Vec<ResourcePath>, CompareError> {
+    let report = compare(left, right, options)?;
+    let mut paths = BTreeSet::new();
+    for row in report.rows() {
+        if let (Some(l), Some(r)) = (row.left(), row.right())
+            && l.kind() == EntryKind::File
+            && r.kind() == EntryKind::File
+            && l.metadata()
+                .size()
+                .zip(r.metadata().size())
+                .is_none_or(|(a, b)| a == b)
+            && !matches!((l.metadata().hash(), r.metadata().hash()), (Some(a),Some(b)) if a.algorithm()==b.algorithm())
+        {
+            paths.insert(l.path().clone());
+            paths.insert(r.path().clone());
+        }
+    }
+    Ok(paths.into_iter().collect())
 }
 
 /// Chemins distincts dont la forme repliée (minuscules Unicode simples)

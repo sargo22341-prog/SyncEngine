@@ -514,6 +514,12 @@ impl App {
         ]
         .spacing(10)
         .width(Length::Fill);
+        if job.kind == JobKind::Execute {
+            body=body.push(ui::caption(p,format!(
+                "En cours : {} transférés · {} relus pour vérification · {} conservés en versions. Le volume validé avance après publication complète de chaque fichier.",
+                model::bytes(s.bytes_transferred),model::bytes(s.bytes_verified),model::bytes(s.bytes_versioned)
+            )));
+        }
         if s.scan_consistency_warnings > 0 {
             body = body.push(ui::caption(p,
                 "Le partage ne garantit pas la cohérence de ses listes : ce compteur ne signifie pas que la lecture a échoué. Les absences restent incertaines et ne permettent pas de suppression miroir."
@@ -587,7 +593,7 @@ impl App {
                 format!("{value} {}", model::total_label(&k)),
             )
         });
-        container(
+        let mut content = column![
             row![
                 ui::glyph_box(glyph, color, 56.0),
                 column![
@@ -617,12 +623,57 @@ impl App {
                 .align_x(Alignment::End),
             ]
             .spacing(18)
-            .align_y(Alignment::Center),
-        )
-        .padding(22)
-        .width(Length::Fill)
-        .style(theme::outline(*p, color, 0.7))
-        .into()
+            .align_y(Alignment::Center)
+        ]
+        .spacing(16);
+        if let Ok(done) = &last.result {
+            if let Some(message) = &done.diagnostics_error {
+                content = content.push(ui::callout(
+                    p,
+                    p.warning,
+                    Glyph::Alert,
+                    "Diagnostics non chargés",
+                    message.clone(),
+                ));
+            }
+            if done.problems_total > 0 {
+                let mut problems = column![ui::strong(p.warning, format!("{} opérations à examiner", model::count(done.problems_total as u64)), 14.0),
+                    ui::caption(p, "Les refus de sécurité, échecs et opérations ignorées sont détaillés ci-dessous. Un refus n’est pas une copie réussie.")].spacing(8);
+                for problem in &done.problems {
+                    let path = problem
+                        .op
+                        .as_ref()
+                        .map_or("Chemin inconnu", |op| op.path.as_str());
+                    problems = problems.push(
+                        column![
+                            ui::mono(p.text, model::ellipsize(path, 90), 12.0),
+                            ui::caption(p, problem.detail.clone())
+                        ]
+                        .spacing(2),
+                    );
+                }
+                problems = problems.push(ui::action(
+                    p,
+                    Tone::Secondary,
+                    Some(Glyph::History),
+                    "Voir tous les problèmes dans l’historique",
+                    Some(Message::ShowRunProblems(
+                        last.profile.clone(),
+                        done.execution.clone(),
+                    )),
+                ));
+                content = content.push(
+                    container(problems)
+                        .padding(14)
+                        .style(theme::outline(*p, p.warning, 0.5)),
+                );
+            }
+        }
+        container(content)
+            .padding(22)
+            .width(Length::Fill)
+            .style(theme::outline(*p, color, 0.7))
+            .into()
     }
 
     fn plan_view<'a>(
@@ -710,6 +761,9 @@ impl App {
         ]
         .spacing(14);
 
+        if profile.mode == sync_plan::SyncMode::Mirror {
+            col=col.push(ui::caption(p,"Miroir : les fichiers déjà prévus à la copie sont relus dans leur état actuel au démarrage de leur transfert. Un fichier modifié pendant sa lecture reste refusé ; les suppressions et la destination gardent leurs contrôles."));
+        }
         if !preview.view.source_complete || !preview.view.destination_complete {
             col = col.push(ui::callout(
                 p,
@@ -1041,7 +1095,7 @@ fn op_row<'a>(p: &Palette, op: &'a OpView, compact: bool) -> El<'a, Message> {
             .width(Length::Fixed(110.0)),
             column![
                 ui::mono(p.text, model::ellipsize(&path, 90), 13.0),
-                ui::caption(p, model::reason_label(&op.reason).to_owned())
+                ui::caption(p, op.reason_detail.clone())
             ]
             .spacing(2)
             .width(Length::Fill),

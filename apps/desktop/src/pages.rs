@@ -8,7 +8,9 @@ use crate::shell::{mode_color, mode_glyph, outcome_color};
 use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
 use crate::ui_prefs::{CloseAction, ThemeChoice};
-use iced::widget::{Space, button, column, container, grid, mouse_area, row, scrollable, toggler};
+use iced::widget::{
+    Space, button, column, container, grid, mouse_area, row, scrollable, text_input, toggler,
+};
 use iced::{Alignment, Color, Length, Padding};
 use sync_profiles::Profile;
 
@@ -506,10 +508,43 @@ impl App {
     }
 
     fn history_rows<'a>(&'a self, p: &Palette) -> El<'a, Message> {
+        use sync_orchestrator::HistoryFilter;
+        let filters = row([
+            (HistoryFilter::All, "Toutes"),
+            (HistoryFilter::Problems, "Problèmes"),
+            (HistoryFilter::Failed, "Échecs"),
+            (HistoryFilter::Refused, "Refusés"),
+            (HistoryFilter::Unfinished, "Annulées / non commencées"),
+            (HistoryFilter::Skipped, "Ignorées / conflits"),
+        ]
+        .into_iter()
+        .map(|(filter, label)| {
+            button(ui::caption(p, label))
+                .padding([6, 10])
+                .style(theme::row_btn(*p, self.history_filter == filter))
+                .on_press(Message::HistoryFilter(filter))
+                .into()
+        }))
+        .spacing(6)
+        .wrap();
+        let controls = column![
+            filters,
+            text_input(
+                "Rechercher un chemin ou un diagnostic… (Entrée pour appliquer)",
+                &self.history_query
+            )
+            .on_input(Message::HistoryQuery)
+            .on_submit(Message::HistorySearch)
+            .padding(10)
+            .style(theme::input(*p, false))
+        ]
+        .spacing(8);
         let Some(page) = &self.history else {
-            return container(ui::muted(p, "Chargement des opérations…"))
-                .padding(12)
-                .into();
+            return container(
+                column![controls, ui::muted(p, "Chargement des opérations…")].spacing(10),
+            )
+            .padding(12)
+            .into();
         };
         let mut col = column![].spacing(2);
         for r in &page.rows {
@@ -548,7 +583,10 @@ impl App {
             );
         }
         if page.rows.is_empty() {
-            col = col.push(ui::muted(p, "Aucune opération dans ce plan."));
+            col = col.push(ui::muted(
+                p,
+                "Aucune opération ne correspond à ces filtres.",
+            ));
         }
         let end = (page.offset + page.rows.len()).min(page.total);
         let pager = row![
@@ -579,7 +617,7 @@ impl App {
         ]
         .spacing(6)
         .align_y(Alignment::Center);
-        column![col, pager]
+        column![controls, col, pager]
             .spacing(8)
             .padding(Padding::from([0, 8]))
             .into()

@@ -54,6 +54,7 @@ pub struct CopyRequest<'a> {
     destination_path: &'a ResourcePath,
     options: WriteOptions,
     buffer_size: usize,
+    read_limit: Option<u64>,
 }
 
 impl fmt::Debug for CopyRequest<'_> {
@@ -86,6 +87,7 @@ impl<'a> CopyRequest<'a> {
             destination_path,
             options: WriteOptions::new(),
             buffer_size: DEFAULT_BUFFER_SIZE,
+            read_limit: None,
         }
     }
 
@@ -102,6 +104,14 @@ impl<'a> CopyRequest<'a> {
     #[must_use]
     pub fn with_buffer_size(mut self, size: usize) -> Self {
         self.buffer_size = size.max(1);
+        self
+    }
+
+    /// Stop after at most this many source bytes, even if a live file grows.
+    /// The caller must verify the expected length and stability of that prefix.
+    #[must_use]
+    pub fn with_read_limit(mut self, bytes: u64) -> Self {
+        self.read_limit = Some(bytes);
         self
     }
 }
@@ -246,12 +256,24 @@ impl StagedCopy {
         &mut self,
         buffer_size: usize,
     ) -> Result<Option<(u64, ContentHash)>, StorageError> {
+        self.reread_observed(buffer_size, &mut |_| {})
+    }
+
+    /// Same verification read, reporting bounded chunks as auxiliary I/O.
+    /// # Errors
+    /// Same storage and cancellation errors as [`Self::reread`].
+    pub fn reread_observed(
+        &mut self,
+        buffer_size: usize,
+        observer: &mut dyn FnMut(u64),
+    ) -> Result<Option<(u64, ContentHash)>, StorageError> {
         let mut buffer = vec![0u8; buffer_size.max(1)];
         let mut hasher = blake3::Hasher::new();
         let mut bytes: u64 = 0;
         let supported = self.writer.read_back(&mut buffer, &mut |chunk| {
             hasher.update(chunk);
             bytes = bytes.saturating_add(chunk.len() as u64);
+            observer(chunk.len() as u64);
         })?;
         if !supported {
             return Ok(None);
@@ -365,7 +387,13 @@ pub fn stage_copy_observed(
                 cancelled(StorageOperation::Read, request.source_path),
             );
         }
-        let read = match reader.read(&mut buffer) {
+        let available = request.read_limit.map_or(buffer.len(), |limit| {
+            limit.saturating_sub(bytes).min(buffer.len() as u64) as usize
+        });
+        if available == 0 {
+            return finish(writer, bytes, &hasher, request);
+        }
+        let read = match reader.read(&mut buffer[..available]) {
             Ok(0) => {
                 return finish(writer, bytes, &hasher, request);
             }

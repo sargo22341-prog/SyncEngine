@@ -2,7 +2,9 @@
 
 use cap_fs_ext::OpenOptionsFollowExt;
 use cap_std::fs::{Dir, OpenOptions};
-use std::fs::{self, File};
+#[cfg(any(not(windows), test))]
+use std::fs;
+use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -243,61 +245,52 @@ impl LocalConnector {
     /// Vérifie la racine : son absence est une indisponibilité de
     /// l'extrémité (montage absent), jamais un répertoire vide.
     fn check_root(&self, operation: StorageOperation) -> Result<(), StorageError> {
-        use cap_fs_ext::MetadataExt;
         let root = ResourcePath::root();
         #[cfg(windows)]
-        if self.handles.is_some() {
-            let (dev, ino) = cap_primitives::windows_listing::root_identity(
-                &self.root,
-                cap_std::ambient_authority(),
-            )
-            .map_err(|error| {
-                if error.kind() == io::ErrorKind::NotFound {
-                    local_error(
-                        StorageErrorKind::Disconnected,
-                        operation,
-                        &root,
-                        "racine introuvable (support ou montage absent ?)",
-                    )
-                    .with_source(error)
-                } else {
-                    io_error(error, operation, &root)
-                }
-            })?;
-            return self.check_identity(operation, dev, ino);
-        }
-        // Windows : l'identité (volume, index) n'est lisible que par une
-        // poignée. Une seule ouverture suffit quand la racine est un
-        // répertoire ; tout échec est reclassé par le chemin général.
-        #[cfg(windows)]
-        if let Ok(metadata) = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
-            .and_then(|dir| dir.dir_metadata())
-            && metadata.is_dir()
         {
-            return self.check_identity(operation, metadata.dev(), metadata.ino());
+            let query_identity = if self.handles.is_some() {
+                cap_primitives::windows_listing::root_identity
+            } else {
+                cap_primitives::windows_listing::readable_root_identity
+            };
+            let (dev, ino) =
+                query_identity(&self.root, cap_std::ambient_authority()).map_err(|error| {
+                    if error.kind() == io::ErrorKind::NotFound {
+                        local_error(
+                            StorageErrorKind::Disconnected,
+                            operation,
+                            &root,
+                            "racine introuvable (support ou montage absent ?)",
+                        )
+                        .with_source(error)
+                    } else {
+                        io_error(error, operation, &root)
+                    }
+                })?;
+            self.check_identity(operation, dev, ino)
         }
-        match fs::metadata(&self.root) {
-            Ok(metadata) if metadata.is_dir() => {
-                #[cfg(windows)]
-                let metadata = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
-                    .and_then(|dir| dir.dir_metadata())
-                    .map_err(|e| io_error(e, operation, &root))?;
-                self.check_identity(operation, metadata.dev(), metadata.ino())
+        #[cfg(not(windows))]
+        {
+            use cap_fs_ext::MetadataExt;
+            match fs::metadata(&self.root) {
+                Ok(metadata) if metadata.is_dir() => {
+                    self.check_identity(operation, metadata.dev(), metadata.ino())
+                }
+                Ok(_) => Err(local_error(
+                    StorageErrorKind::Permanent,
+                    operation,
+                    &root,
+                    "la racine n'est pas un répertoire",
+                )),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Err(local_error(
+                    StorageErrorKind::Disconnected,
+                    operation,
+                    &root,
+                    "racine introuvable (support ou montage absent ?)",
+                )
+                .with_source(error)),
+                Err(error) => Err(io_error(error, operation, &root)),
             }
-            Ok(_) => Err(local_error(
-                StorageErrorKind::Permanent,
-                operation,
-                &root,
-                "la racine n'est pas un répertoire",
-            )),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(local_error(
-                StorageErrorKind::Disconnected,
-                operation,
-                &root,
-                "racine introuvable (support ou montage absent ?)",
-            )
-            .with_source(error)),
-            Err(error) => Err(io_error(error, operation, &root)),
         }
     }
 
@@ -353,6 +346,9 @@ pub(crate) fn cancelled(operation: StorageOperation, path: &ResourcePath) -> Sto
 }
 
 impl StorageConnector for LocalConnector {
+    fn transfer_concurrency(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(8).unwrap_or(std::num::NonZeroUsize::MIN)
+    }
     fn listing_concurrency(&self) -> std::num::NonZeroUsize {
         // Only opt-in preview connectors have independent native cursors.
         // Four workers hide SMB round-trip latency without unbounded requests.
@@ -449,9 +445,11 @@ impl StorageConnector for LocalConnector {
             operation,
         )?;
         let name = path.segments().last().unwrap_or("");
+        #[cfg(not(windows))]
         let meta = parent
             .symlink_metadata(name)
             .map_err(|e| io_error(e, operation, path))?;
+        #[cfg(not(windows))]
         if !meta.is_file() || meta.file_type().is_symlink() {
             return Err(local_error(
                 StorageErrorKind::Permanent,
@@ -466,11 +464,8 @@ impl StorageConnector for LocalConnector {
             .open_with(name, &options)
             .map_err(|e| io_error(e, operation, path))?
             .into_std();
-        if !file
-            .metadata()
-            .map_err(|e| io_error(e, operation, path))?
-            .is_file()
-        {
+        let opened_meta = file.metadata().map_err(|e| io_error(e, operation, path))?;
+        if !opened_meta.is_file() || opened_meta.file_type().is_symlink() {
             return Err(local_error(
                 StorageErrorKind::Permanent,
                 operation,

@@ -7,8 +7,8 @@
 //! 1. **contrôles préalables**, sans aucune mutation ([`ExecutionError`]) :
 //!    âge du plan, connecteurs attendus, confirmation explicite des
 //!    suppressions, capacités nécessaires, racines disponibles ;
-//! 2. **copies, créations et remplacements**, dans l'ordre des chemins
-//!    (un dossier avant son contenu) ;
+//! 2. **copies, créations et remplacements**, selon les dépendances
+//!    (un dossier avant son contenu, travaux indépendants concurrents) ;
 //! 3. **suppressions**, en dernier et du plus profond au moins profond,
 //!    seulement si l'exécution n'a pas été arrêtée et si la source est
 //!    toujours lisible.
@@ -33,8 +33,14 @@
 //! ([`sync_journal`]).
 //!
 //! # Modèle d'exécution
-//! Synchrone et séquentiel (une opération à la fois), comme les connecteurs ;
-//! un appelant async l'exécute sur un fil dédié. L'annulation
+//! Synchrone avec jusqu'à quatre copies indépendantes par défaut, bornées par
+//! les deux connecteurs et [`ExecutionOptions::copy_workers`]. Le coordinateur
+//! respecte les dépendances des dossiers et la capacité du magasin de versions ;
+//! les suppressions attendent la jonction de tous les workers.
+//! Le bidirectionnel conserve son parcours séquentiel. Le journal est sérialisé
+//! sans retirer ses barrières de durabilité. Un appelant async utilise un fil dédié.
+//! Un jeton enfant permet d'arrêter les workers sans annuler le jeton appelant ;
+//! une erreur fatale prime sur l'annulation de ses workers frères. L'annulation
 //! est coopérative ([`sync_core::CancellationToken`]) : consultée avant
 //! chaque opération et à chaque bloc transféré.
 //!
@@ -177,7 +183,7 @@ pub trait PlanExecutor: Send + Sync {
     fn execute(&self, request: ExecutionRequest<'_>) -> Result<ExecutionReport, ExecutionError>;
 }
 
-/// Exécuteur séquentiel (voir la documentation du crate).
+/// Exécuteur à parallélisme borné (voir la documentation du crate).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Executor;
 
@@ -192,6 +198,6 @@ impl Executor {
 impl PlanExecutor for Executor {
     fn execute(&self, request: ExecutionRequest<'_>) -> Result<ExecutionReport, ExecutionError> {
         preflight::check(&request)?;
-        run::Run::start(request)
+        run::start(request)
     }
 }

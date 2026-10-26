@@ -1,6 +1,37 @@
 //! Déroulement d'une exécution.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+mod parallel;
+
+pub(crate) fn start(req: ExecutionRequest<'_>) -> Result<ExecutionReport, ExecutionError> {
+    let workers = if req.plan.mode() == sync_plan::SyncMode::Bidirectional {
+        1
+    } else {
+        req.options
+            .copy_workers
+            .get()
+            .min(req.source.transfer_concurrency().get())
+            .min(req.destination.transfer_concurrency().get())
+            .min(
+                req.versions
+                    .map_or(16, |store| store.transfer_concurrency().get()),
+            )
+            .min(16)
+    };
+    if workers == 1 {
+        return Run::start(req, None, 1);
+    }
+    let cancel = req.cancel.child_token();
+    let journal = Mutex::new(req.journal);
+    let mut proxy = parallel::JournalProxy(&journal);
+    let req = ExecutionRequest {
+        journal: &mut proxy,
+        cancel: &cancel,
+        ..req
+    };
+    Run::start(req, Some(&journal), workers)
+}
 
 use connector_api::{CommitMode, StorageError, StorageErrorKind, WriteOptions};
 use sync_copy::{CopyError, CopyRequest, CopyStage, StagedCopy, stage_copy_observed};
@@ -11,7 +42,7 @@ use sync_journal::{JournalError, JournalRecord, JournalTotals};
 use sync_plan::{Action, EntrySnapshot, Operation, PlanSide};
 use sync_verify::{
     Mismatch, VerifyError, VerifyMode, check_reread, check_transfer, check_written,
-    compare_observation, verify_content,
+    compare_observation, verify_content, verify_prefix,
 };
 use sync_versioning::VersioningError;
 
@@ -42,6 +73,24 @@ struct Progress {
     bytes_at_last_event: u64,
 }
 
+#[derive(Debug, Clone, Default)]
+struct SharedProgress(Arc<Mutex<Progress>>);
+impl SharedProgress {
+    fn publish(&self, events: Option<&EventEmitter>) {
+        let progress = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        emit(events, EventKind::Progress(progress.snapshot()));
+    }
+    fn completed(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entries_done += 1;
+    }
+}
+
 impl Progress {
     fn snapshot(&self) -> ProgressSnapshot {
         ProgressSnapshot {
@@ -63,9 +112,49 @@ fn emit(events: Option<&EventEmitter>, kind: EventKind) {
     }
 }
 
+struct IoObserver<'a> {
+    events: Option<&'a EventEmitter>,
+    pending: u64,
+    versions: bool,
+}
+impl IoObserver<'_> {
+    fn advance(&mut self, bytes: u64) {
+        self.pending = self.pending.saturating_add(bytes);
+        if self.pending >= 1024 * 1024 {
+            self.flush();
+        }
+    }
+    fn flush(&mut self) {
+        let bytes = std::mem::take(&mut self.pending);
+        if bytes > 0 {
+            emit(
+                self.events,
+                EventKind::IoActivity {
+                    verification_bytes: if self.versions { 0 } else { bytes },
+                    version_bytes: if self.versions { bytes } else { 0 },
+                },
+            );
+        }
+    }
+}
+impl Drop for IoObserver<'_> {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
 /// Avance la progression d'un bloc transféré ; émet au plus un événement
 /// par intervalle d'octets.
-fn advance(progress: &mut Progress, events: Option<&EventEmitter>, interval: u64, bytes: u64) {
+fn advance(
+    progress: &mut SharedProgress,
+    events: Option<&EventEmitter>,
+    interval: u64,
+    bytes: u64,
+) {
+    let mut progress = progress
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     progress.bytes_done = progress.bytes_done.saturating_add(bytes);
     if progress.bytes_done - progress.bytes_at_last_event >= interval {
         progress.bytes_at_last_event = progress.bytes_done;
@@ -92,12 +181,17 @@ pub(crate) struct Run<'a> {
     index: HashMap<&'a OperationId, usize>,
     stop: Option<StopCause>,
     deletions_blocked: bool,
-    progress: Progress,
+    progress: SharedProgress,
     leftovers: Vec<ResourcePath>,
+    independent: bool,
 }
 
 impl<'a> Run<'a> {
-    pub(crate) fn start(req: ExecutionRequest<'a>) -> Result<ExecutionReport, ExecutionError> {
+    fn start(
+        req: ExecutionRequest<'a>,
+        journal: Option<&Mutex<&mut dyn sync_journal::JournalSink>>,
+        workers: usize,
+    ) -> Result<ExecutionReport, ExecutionError> {
         let plan = req.plan;
         let summary = plan.summary();
         req.journal
@@ -127,12 +221,13 @@ impl<'a> Run<'a> {
                 .collect(),
             stop: None,
             deletions_blocked: false,
-            progress: Progress {
+            progress: SharedProgress(Arc::new(Mutex::new(Progress {
                 entries_total: summary.mutations(),
                 bytes_total: (summary.unknown_sizes == 0).then_some(summary.bytes_to_transfer),
                 ..Progress::default()
-            },
+            }))),
             leftovers: Vec::new(),
+            independent: false,
             req,
         };
         emit(
@@ -141,12 +236,16 @@ impl<'a> Run<'a> {
                 status: ExecutionStatus::Running,
             },
         );
-        emit(run.req.events, EventKind::Progress(run.progress.snapshot()));
+        run.progress.publish(run.req.events);
 
         // Copies, créations, remplacements : dans l'ordre des chemins.
-        for (index, op) in operations.iter().enumerate() {
-            if op.action() != Action::Delete {
-                run.visit(index, op);
+        if let Some(journal) = journal {
+            parallel::execute(&mut run, journal, workers);
+        } else {
+            for (index, op) in operations.iter().enumerate() {
+                if op.action() != Action::Delete {
+                    run.visit(index, op);
+                }
             }
         }
         // Suppressions : en dernier, du plus profond au moins profond.
@@ -202,7 +301,7 @@ impl<'a> Run<'a> {
         }
         let mutation = op.action().is_mutation();
         if mutation && !matches!(status, OutcomeStatus::NotStarted) {
-            self.progress.entries_done += 1;
+            self.progress.completed();
             self.report_outcome(op, &status);
         }
         if let Some(slot) = self.outcomes.get_mut(index) {
@@ -221,10 +320,11 @@ impl<'a> Run<'a> {
             self.stop = Some(StopCause::Cancelled);
             return OutcomeStatus::NotStarted;
         }
-        if let Some(dependency) = op
-            .depends_on()
-            .iter()
-            .find(|dependency| !self.is_done(dependency))
+        if !self.independent
+            && let Some(dependency) = op
+                .depends_on()
+                .iter()
+                .find(|dependency| !self.is_done(dependency))
         {
             return OutcomeStatus::Refused {
                 refusal: Refusal::DependencyNotDone {
@@ -311,10 +411,7 @@ impl<'a> Run<'a> {
             }
             self.diagnostic(&error, Severity::Fatal, op);
         }
-        emit(
-            self.req.events,
-            EventKind::Progress(self.progress.snapshot()),
-        );
+        self.progress.publish(self.req.events);
     }
 
     fn diagnostic(&self, error: &dyn ClassifiedError, severity: Severity, op: &Operation) {
@@ -337,7 +434,15 @@ impl<'a> Run<'a> {
     /// `source_unchanged` : la source correspond encore à l'observation.
     fn verify_source(&self, op: &Operation) -> Result<(), Interrupt> {
         let snapshot = self.snapshot(op, op.source())?;
-        match self.req.source.stat(op.path(), self.req.cancel) {
+        self.verify_source_snapshot(op, snapshot)
+    }
+
+    fn verify_source_snapshot(
+        &self,
+        op: &Operation,
+        snapshot: &EntrySnapshot,
+    ) -> Result<(), Interrupt> {
+        match self.req.source.stat(op.source_path(), self.req.cancel) {
             Ok(entry) => {
                 compare_observation(snapshot.kind(), snapshot.metadata(), &entry)
                     .map_err(|mismatch| Interrupt::Refused(Refusal::SourceChanged { mismatch }))?;
@@ -348,6 +453,37 @@ impl<'a> Run<'a> {
             }
             Err(error) => Err(self.storage(op, &error, PlanSide::Source)),
         }
+    }
+
+    fn transfer_source(&self, op: &Operation) -> Result<EntrySnapshot, Interrupt> {
+        let snapshot = self.snapshot(op, op.source())?;
+        if self.req.options.refresh_mirror_source
+            && self.req.plan.mode() == sync_plan::SyncMode::Mirror
+            && snapshot.kind() == EntryKind::File
+        {
+            let entry = self
+                .req
+                .source
+                .stat(op.source_path(), self.req.cancel)
+                .map_err(|error| {
+                    if error.kind() == StorageErrorKind::NotFound {
+                        Interrupt::Refused(Refusal::SourceVanished)
+                    } else {
+                        self.storage(op, &error, PlanSide::Source)
+                    }
+                })?;
+            if entry.kind() != EntryKind::File
+                || entry.metadata().size().is_none()
+                || entry.metadata().modified().is_none()
+            {
+                return Err(Interrupt::Refused(Refusal::SourceChanged {
+                    mismatch: Mismatch::Unverifiable,
+                }));
+            }
+            return Ok(EntrySnapshot::new(entry.kind(), entry.metadata().clone()));
+        }
+        self.verify_source_snapshot(op, snapshot)?;
+        Ok(snapshot.clone())
     }
 
     /// `destination_absent` : rien n'est apparu à la destination.
@@ -480,9 +616,19 @@ impl<'a> Run<'a> {
         let options = WriteOptions::new()
             .with_modified(source.metadata().modified())
             .with_size_hint(source.metadata().size());
-        let request = CopyRequest::new(self.req.source, op.path(), self.req.destination, op.path())
-            .with_options(options)
-            .with_buffer_size(self.req.options.buffer_size);
+        let live_mirror = self.req.options.refresh_mirror_source
+            && self.req.plan.mode() == sync_plan::SyncMode::Mirror;
+        let mut request = CopyRequest::new(
+            self.req.source,
+            op.source_path(),
+            self.req.destination,
+            op.path(),
+        )
+        .with_options(options)
+        .with_buffer_size(self.req.options.buffer_size);
+        if live_mirror && let Some(bytes) = source.metadata().size() {
+            request = request.with_read_limit(bytes);
+        }
         let events = self.req.events;
         let interval = self.req.options.progress_interval_bytes;
         let progress = &mut self.progress;
@@ -526,18 +672,33 @@ impl<'a> Run<'a> {
             }));
         }
         // La source a-t-elle changé pendant la lecture ?
-        if let Err(interrupt) = self.verify_source(op) {
-            self.abort(staged, op);
-            return Err(match interrupt {
-                Interrupt::Refused(Refusal::SourceChanged { mismatch }) => {
-                    Interrupt::Refused(Refusal::SourceChangedDuringTransfer { mismatch })
+        if let Err(interrupt) = self.verify_source_snapshot(op, source) {
+            let failure = match interrupt {
+                Interrupt::Refused(Refusal::SourceChanged { .. }) if live_mirror => {
+                    self.verify_live_prefix(op, &staged).err()
                 }
-                other => other,
-            });
+                Interrupt::Refused(Refusal::SourceChanged { mismatch }) => {
+                    Some(Interrupt::Refused(Refusal::SourceChangedDuringTransfer {
+                        mismatch,
+                    }))
+                }
+                other => Some(other),
+            };
+            if let Some(failure) = failure {
+                self.abort(staged, op);
+                return Err(failure);
+            }
         }
         let mut staged = staged;
         let reread = if self.req.options.verify == VerifyMode::Content {
-            match staged.reread(self.req.options.buffer_size) {
+            let mut observer = IoObserver {
+                events: self.req.events,
+                pending: 0,
+                versions: false,
+            };
+            match staged.reread_observed(self.req.options.buffer_size, &mut |bytes| {
+                observer.advance(bytes)
+            }) {
                 Ok(reread) => reread,
                 Err(error) => {
                     self.abort(staged, op);
@@ -575,6 +736,41 @@ impl<'a> Run<'a> {
         Ok(staged)
     }
 
+    fn verify_live_prefix(&self, op: &Operation, staged: &StagedCopy) -> Result<(), Interrupt> {
+        let entry = self
+            .req
+            .source
+            .stat(op.source_path(), self.req.cancel)
+            .map_err(|error| self.storage(op, &error, PlanSide::Source))?;
+        if entry.kind() != EntryKind::File
+            || entry
+                .metadata()
+                .size()
+                .is_none_or(|size| size < staged.bytes())
+        {
+            return Err(Interrupt::Refused(Refusal::SourceChangedDuringTransfer {
+                mismatch: Mismatch::Unverifiable,
+            }));
+        }
+        match verify_prefix(
+            self.req.source,
+            op.source_path(),
+            staged.hash(),
+            staged.bytes(),
+            self.req.options.buffer_size,
+            self.req.cancel,
+        ) {
+            Ok(()) => Ok(()),
+            Err(VerifyError::Mismatch(mismatch)) => {
+                Err(Interrupt::Refused(Refusal::SourceChangedDuringTransfer {
+                    mismatch,
+                }))
+            }
+            Err(VerifyError::Storage(error)) => Err(self.storage(op, &error, PlanSide::Source)),
+            Err(other) => Err(self.fail(op, &other, None)),
+        }
+    }
+
     /// Valide un dépôt et contrôle l'entrée publiée.
     fn publish(
         &mut self,
@@ -582,6 +778,10 @@ impl<'a> Run<'a> {
         staged: StagedCopy,
         mode: CommitMode,
     ) -> Result<u64, Interrupt> {
+        if self.req.cancel.checkpoint() {
+            self.abort(staged, op);
+            return Err(Interrupt::Cancelled);
+        }
         let bytes = staged.bytes();
         let hash = staged.hash().clone();
         let had_staging = staged.staging_path().is_some();
@@ -637,10 +837,9 @@ impl<'a> Run<'a> {
                 }
             }
             EntryKind::File => {
-                let source = self.snapshot(op, op.source())?;
-                self.verify_source(op)?;
+                let source = self.transfer_source(op)?;
                 self.verify_destination_absent(op)?;
-                let staged = self.transfer(op, source)?;
+                let staged = self.transfer(op, &source)?;
                 // Juste avant la publication.
                 if let Err(interrupt) = self.verify_destination_absent(op) {
                     self.abort(staged, op);
@@ -657,11 +856,10 @@ impl<'a> Run<'a> {
         if op.kind() != EntryKind::File {
             return Err(self.fail(op, &Fault::UnsupportedKind(op.kind()), None));
         }
-        let source = self.snapshot(op, op.source())?;
+        let source = self.transfer_source(op)?;
         let destination = self.snapshot(op, op.destination())?;
-        self.verify_source(op)?;
         self.verify_destination_unchanged(op)?;
-        let staged = self.transfer(op, source)?;
+        let staged = self.transfer(op, &source)?;
         let version = match self.preserve(op, destination) {
             Ok(version) => version,
             Err(interrupt) => {
@@ -678,13 +876,45 @@ impl<'a> Run<'a> {
         Ok((bytes, version))
     }
 
-    fn delete(&mut self, op: &Operation) -> Result<Done, Interrupt> {
-        if self.deletions_blocked {
-            return Err(Interrupt::Refused(Refusal::DeletionsBlocked));
+    fn verify_source_absent(&mut self, op: &Operation) -> Result<(), Interrupt> {
+        let mut candidates = vec![op.path().clone()];
+        let operations = self.req.plan.operations();
+        for parent in std::iter::successors(op.path().parent(), |p| p.parent()) {
+            let Some(source) = operations
+                .binary_search_by(|entry| entry.path().cmp(&parent))
+                .ok()
+                .and_then(|index| operations[index].source())
+            else {
+                continue;
+            };
+            if source.origin_paths().is_empty() {
+                continue;
+            }
+            candidates.clear();
+            for origin in source.origin_paths() {
+                let candidate = ResourcePath::from_segments(
+                    origin
+                        .segments()
+                        .chain(op.path().segments().skip(parent.depth())),
+                )
+                .map_err(|_| self.fail(op, &Fault::MissingObservation, None))?;
+                candidates.push(candidate);
+            }
+            break;
         }
-        let destination = self.snapshot(op, op.destination())?;
-        // `source_absent` : jamais déduit d'une erreur.
-        match self.req.source.stat(op.path(), self.req.cancel) {
+        for candidate in candidates {
+            self.verify_source_path_absent(op, &candidate)?;
+        }
+        Ok(())
+    }
+
+    fn verify_source_path_absent(
+        &mut self,
+        op: &Operation,
+        path: &ResourcePath,
+    ) -> Result<(), Interrupt> {
+        // `source_absent` : never inferred from a permission/network failure.
+        match self.req.source.stat(path, self.req.cancel) {
             Err(error) if error.kind() == StorageErrorKind::NotFound => {}
             Ok(_) => return Err(Interrupt::Refused(Refusal::SourceReappeared)),
             Err(error) => {
@@ -700,10 +930,22 @@ impl<'a> Run<'a> {
                 }));
             }
         }
+        Ok(())
+    }
+
+    fn delete(&mut self, op: &Operation) -> Result<Done, Interrupt> {
+        if self.deletions_blocked {
+            return Err(Interrupt::Refused(Refusal::DeletionsBlocked));
+        }
+        let destination = self.snapshot(op, op.destination())?;
+        self.verify_source_absent(op)?;
         self.verify_destination_unchanged(op)?;
         let version = if op.kind() == EntryKind::File {
             let version = self.preserve(op, destination)?;
             if version.is_some() {
+                // Archiving a large old file can take seconds: the source may
+                // have reappeared while the version was being preserved.
+                self.verify_source_absent(op)?;
                 self.verify_destination_unchanged(op)?;
             }
             version
@@ -741,11 +983,17 @@ impl<'a> Run<'a> {
         let Some(store) = self.req.versions else {
             return Ok(None);
         };
-        match store.preserve(
+        let mut observer = IoObserver {
+            events: self.req.events,
+            pending: 0,
+            versions: true,
+        };
+        match store.preserve_observed(
             self.req.destination,
             op.path(),
             destination.metadata(),
             self.req.cancel,
+            &mut |bytes| observer.advance(bytes),
         ) {
             Ok(version) => {
                 let location = version.location().clone();
@@ -833,10 +1081,7 @@ impl<'a> Run<'a> {
                 status = ExecutionStatus::Failed;
             }
         }
-        emit(
-            self.req.events,
-            EventKind::Progress(self.progress.snapshot()),
-        );
+        self.progress.publish(self.req.events);
         emit(self.req.events, EventKind::StatusChanged { status });
         ExecutionReport {
             execution: self.req.execution_id.clone(),

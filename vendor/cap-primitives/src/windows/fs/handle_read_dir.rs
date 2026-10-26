@@ -24,14 +24,35 @@ pub fn root_identity(
     root: &std::path::Path,
     authority: crate::AmbientAuthority,
 ) -> io::Result<(u64, u64)> {
+    query_root_identity(root, authority, false)
+}
+
+/// Same identity check with the original execution GENERIC_READ requirement.
+pub fn readable_root_identity(
+    root: &std::path::Path,
+    authority: crate::AmbientAuthority,
+) -> io::Result<(u64, u64)> {
+    query_root_identity(root, authority, true)
+}
+
+fn query_root_identity(
+    root: &std::path::Path,
+    authority: crate::AmbientAuthority,
+    readable: bool,
+) -> io::Result<(u64, u64)> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
     let _ = authority;
-    let file = fs::OpenOptions::new()
-        .access_mode(FILE_READ_ATTRIBUTES)
+    let mut options = fs::OpenOptions::new();
+    if readable {
+        options.read(true);
+    } else {
+        options.access_mode(FILE_READ_ATTRIBUTES);
+    }
+    let file = options
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .open(root)?;

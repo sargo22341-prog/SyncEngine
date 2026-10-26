@@ -27,7 +27,7 @@ mod outcome;
 
 pub use compare::{
     CompareError, CompareOptions, ComparisonReport, ComparisonSummary, compare, compare_entries,
-    content_candidates,
+    content_candidates, content_candidates_with_options,
 };
 pub use outcome::{
     ComparisonOutcome, Difference, EquivalenceBasis, OutcomeCategory, PathComparison, Side,

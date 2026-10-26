@@ -19,6 +19,23 @@ fn blake3_of(content: &[u8]) -> ContentHash {
 }
 
 #[test]
+fn bounded_verification_ignores_only_a_tail_and_rejects_changed_or_short_prefixes() {
+    let source = MemoryConnector::new("m")
+        .file("growing", b"prefix plus a growing tail", ts(1))
+        .file("changed", b"PREFIX plus a tail", ts(1))
+        .file("short", b"pre", ts(1));
+    let hash = blake3_of(b"prefix");
+    let cancel = CancellationToken::new();
+    sync_verify::verify_prefix(&source, &path("growing"), &hash, 6, 2, &cancel).unwrap();
+    for name in ["changed", "short"] {
+        assert!(matches!(
+            sync_verify::verify_prefix(&source, &path(name), &hash, 6, 2, &cancel),
+            Err(VerifyError::Mismatch(_))
+        ));
+    }
+}
+
+#[test]
 fn identical_content_passes_and_differences_are_reported() {
     let content: Vec<u8> = (0..5000u32).map(|i| (i % 7) as u8).collect();
     let store = MemoryConnector::new("m").file("bon", &content, ts(1)).file(

@@ -329,13 +329,36 @@ impl Shape {
 pub struct EntrySnapshot {
     kind: EntryKind,
     metadata: FileMetadata,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    origin_paths: Vec<ResourcePath>,
 }
 
 impl EntrySnapshot {
     /// Construit une observation.
     #[must_use]
     pub fn new(kind: EntryKind, metadata: FileMetadata) -> Self {
-        Self { kind, metadata }
+        Self {
+            kind,
+            metadata,
+            origin_paths: Vec::new(),
+        }
+    }
+
+    /// Physical source spellings represented by this logical destination path.
+    /// Empty means the operation path; multiple origins are directory unions.
+    #[must_use]
+    pub fn origin_paths(&self) -> &[ResourcePath] {
+        &self.origin_paths
+    }
+
+    /// Records source spellings for an explicit case-insensitive projection.
+    /// Plans validate that these differ only in case from their logical path.
+    #[must_use]
+    pub fn with_origin_paths(mut self, mut paths: Vec<ResourcePath>) -> Self {
+        paths.sort();
+        paths.dedup();
+        self.origin_paths = paths;
+        self
     }
 
     /// Nature observée.
@@ -425,6 +448,15 @@ impl Operation {
     #[must_use]
     pub fn path(&self) -> &ResourcePath {
         &self.path
+    }
+
+    /// Actual sender path; directory union origins are retained for absence checks.
+    #[must_use]
+    pub fn source_path(&self) -> &ResourcePath {
+        self.source
+            .as_ref()
+            .and_then(|s| s.origin_paths().first())
+            .unwrap_or(&self.path)
     }
 
     /// Nature de l'entrée concernée (celle de la source pour une copie ou

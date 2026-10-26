@@ -141,3 +141,34 @@ Références Microsoft :
 - https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew
 - https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex
 - https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_extd_dir_info
+
+## Ouverture minimale des ancêtres pendant la copie
+
+`readable_root_identity` garde la même requête d'identité que `root_identity`,
+mais exige GENERIC_READ comme le chemin historique d'exécution. Le preview
+conserve les droits de métadonnées et son cache sans changer le contrat d'écriture.
+
+`open_directory_nofollow` ouvre un seul composant depuis une capacité parent,
+avec OPEN_REPARSE_POINT et sans suivi. Il refuse composants ambigus, séparateurs,
+flux alternatifs, NUL, point final et espace final. Une requête
+FileAttributeTagInfo valide le type répertoire et rejette les tags substitutifs
+avant de renvoyer la poignée. Le chemin complet est encore reparcouru à chaque
+précondition et mutation ; aucun cache de preview n'autorise les écritures.
+Le repli cap-primitives historique est limité aux trois erreurs explicites de
+classe non supportée ; accès refusé et déconnexion restent des erreurs.
+
+Revue interne du nouveau bloc unsafe : FILE_ATTRIBUTE_TAG_INFO est un objet
+initialisé, aligné, de taille fixe, emprunté pendant un appel synchrone. La
+poignée possédée reste ouverte, aucun pointeur ne sort de l'appel et aucun
+buffer distant de taille variable n'est interprété. Le code ne renvoie la
+poignée qu'après validation. Cette revue n'est pas une revue indépendante.
+Tests : identité du dossier, fichiers ordinaires, jonctions sortantes, noms
+ambigus et absence ; les tests de confinement et ACL existants sont conservés.
+
+Mesure en lecture seule sur le NAS (300 ouvertures) : 657 µs par ouverture
+historique contre 423 µs avec la requête minimale. Les droits de lecture et
+partages lecture/écriture sont conservés, sans partage de suppression.
+
+Références :
+- https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_attribute_tag_info
+- https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points-and-file-operations

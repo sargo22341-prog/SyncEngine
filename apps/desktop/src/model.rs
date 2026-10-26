@@ -59,7 +59,7 @@ pub(crate) struct Observation {
 pub(crate) struct OpView {
     pub(crate) path: String,
     pub(crate) action: Action,
-    pub(crate) reason: String,
+    pub(crate) reason_detail: String,
     pub(crate) bytes: Option<u64>,
     pub(crate) to_source: bool,
     pub(crate) kind: String,
@@ -84,7 +84,7 @@ impl OpView {
         Some(Self {
             path: value["path"].as_str()?.to_owned(),
             action,
-            reason: value["reason"]["code"].as_str().unwrap_or("").to_owned(),
+            reason_detail: reason_description(&value["reason"]),
             bytes: value["bytes"].as_u64(),
             to_source: value["target"].as_str() == Some("source"),
             kind: value["kind"].as_str().unwrap_or("").to_owned(),
@@ -154,13 +154,13 @@ pub(crate) fn history_rows(value: &Value) -> Vec<HistoryRow> {
                     let detail = status["error"]["message"]
                         .as_str()
                         .map(str::to_owned)
-                        .or_else(|| status["refusal"]["cause"].as_str().map(str::to_owned))
+                        .or_else(|| refusal_diagnostic(&status["refusal"]))
                         .or_else(|| {
                             status["bytes"]
                                 .as_u64()
                                 .map(|b| format!("{} vérifiés", bytes(b)))
                         })
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| reason_description(&row["operation"]["reason"]));
                     HistoryRow {
                         op: OpView::parse(&row["operation"]),
                         status: status["status"].as_str().unwrap_or("").to_owned(),
@@ -171,6 +171,82 @@ pub(crate) fn history_rows(value: &Value) -> Vec<HistoryRow> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn refusal_detail(cause: &str) -> String {
+    match cause {
+        "source_changed" => {
+            "La source a changé depuis la simulation ; le fichier n’a pas été copié."
+        }
+        "source_changed_during_transfer" => {
+            "La source a changé pendant la copie ; le fichier temporaire n’a pas été publié."
+        }
+        "source_vanished" => "Le fichier source a disparu depuis la simulation.",
+        "source_reappeared" => "Le fichier est réapparu à la source ; la suppression est refusée.",
+        "source_unverifiable" => {
+            "Impossible de vérifier la source ; aucune suppression n’est autorisée."
+        }
+        "destination_appeared" => {
+            "Un fichier est apparu à la destination ; aucun écrasement n’a été forcé."
+        }
+        "destination_changed" => {
+            "La destination a changé depuis la simulation ; elle a été préservée."
+        }
+        "destination_vanished" => "Le fichier de destination a disparu depuis la simulation.",
+        "directory_not_empty" => {
+            "Le dossier contient encore des fichiers ; il n’a pas été supprimé."
+        }
+        "dependency_not_done" => {
+            "Une opération préalable, par exemple la création du dossier parent, n’a pas abouti."
+        }
+        "deletions_blocked" => {
+            "Les suppressions ont été bloquées car la source n’était plus vérifiable."
+        }
+        other => return format!("Refus de sécurité : {other}"),
+    }
+    .to_owned()
+}
+
+fn refusal_diagnostic(refusal: &Value) -> Option<String> {
+    let mut detail = refusal_detail(refusal["cause"].as_str()?);
+    let mismatch = &refusal["mismatch"];
+    let change = match mismatch["field"].as_str() {
+        Some("size") => format!(
+            "Taille prévue : {} ; observée : {}.",
+            mismatch["expected"]
+                .as_u64()
+                .map(bytes)
+                .unwrap_or_else(|| "inconnue".into()),
+            mismatch["found"]
+                .as_u64()
+                .map(bytes)
+                .unwrap_or_else(|| "inconnue".into())
+        ),
+        Some("modified") => format!(
+            "Date prévue : {} ; observée : {}.",
+            observation_time(&mismatch["expected"]),
+            observation_time(&mismatch["found"])
+        ),
+        Some("kind") => "Le type du fichier a changé.".into(),
+        Some("content") => "L’empreinte du contenu est différente.".into(),
+        Some("unverifiable") => "Les métadonnées ne permettent pas une vérification fiable.".into(),
+        _ => return Some(detail),
+    };
+    detail.push(' ');
+    detail.push_str(&change);
+    Some(detail)
+}
+
+fn observation_time(value: &Value) -> String {
+    let Some(secs) = value["secs"].as_i64() else {
+        return "inconnue".into();
+    };
+    let (year, month, day, hour, minute) = utc(secs);
+    format!(
+        "{day:02}/{month:02}/{year} {hour:02}:{minute:02}:{:02}.{:09} UTC",
+        secs.rem_euclid(60),
+        value["nanos"].as_u64().unwrap_or(0)
+    )
 }
 
 /// Classification of a persisted attempt, used for colors and icons.
@@ -353,7 +429,7 @@ pub(crate) fn reason_label(code: &str) -> &str {
         "overwrite_disabled" => "Remplacement interdit par le profil",
         "deletion_disabled" => "Suppression interdite par le profil",
         "absent_from_source" => "Absent de la source : suppression prévue",
-        "uncertain" => "Observation incertaine : aucune mutation",
+        "uncertain" => "Comparaison impossible : élément conservé",
         "unsupported_entry_kind" => "Lien ou type non pris en charge",
         "parent_unavailable" => "Dossier parent indisponible",
         "directory_not_emptied" => "Dossier conservé : contenu non supprimable",
@@ -361,6 +437,58 @@ pub(crate) fn reason_label(code: &str) -> &str {
         "concurrent_change" => "Modifications concurrentes : conflit",
         other => other,
     }
+}
+
+fn reason_description(reason: &Value) -> String {
+    let Some(code) = reason["code"].as_str() else {
+        return "Résultat non enregistré".into();
+    };
+    if code != "uncertain" {
+        return reason_label(code).to_owned();
+    }
+    let mut explanations = Vec::new();
+    for cause in reason["causes"].as_array().into_iter().flatten() {
+        let message = match cause["cause"].as_str() {
+            Some("presence_unknown") if cause["side"] == "source" => {
+                "Présence non confirmée à la source : l’élément à destination est conservé"
+            }
+            Some("presence_unknown") if cause["side"] == "destination" => {
+                "Présence non confirmée à destination : aucune écriture n’est forcée"
+            }
+            Some("presence_unknown") => "Présence non confirmée : côté non précisé dans ce rapport",
+            Some("excluded") if cause["side"] == "source" => {
+                "Chemin exclu par le filtre source : aucune suppression n’en est déduite"
+            }
+            Some("excluded") if cause["side"] == "destination" => {
+                "Chemin exclu par le filtre destination : aucune écriture n’est forcée"
+            }
+            Some("excluded") => "Chemin exclu : côté non précisé dans ce rapport",
+            Some("size_unknown") => "Taille du fichier indisponible : comparaison impossible",
+            Some("modified_unknown") => {
+                "Date de modification indisponible : comparaison impossible"
+            }
+            Some("precision_unknown") => {
+                "Précision des dates inconnue : impossible de conclure à partir des dates"
+            }
+            Some("not_comparable") => {
+                "Lien symbolique ou type spécial non comparable : aucune cible n’est suivie"
+            }
+            Some("inconsistent_observations") => {
+                "Métadonnées contradictoires : une nouvelle simulation est nécessaire"
+            }
+            Some("case_collision") => {
+                "Conflit de noms : ce chemin ou un dossier parent possède plusieurs variantes majuscules/minuscules ; sa lecture et sa synchronisation sont ambiguës"
+            }
+            _ => "Motif d’incertitude non détaillé dans ce rapport",
+        };
+        if !explanations.contains(&message) {
+            explanations.push(message);
+        }
+    }
+    if explanations.is_empty() {
+        return "Opération ignorée : motif d’incertitude non détaillé dans ce rapport.".into();
+    }
+    format!("{}.", explanations.join(" ; "))
 }
 
 /// Exact cause of a refused set of deletions, as decided by the planner.
@@ -727,5 +855,55 @@ mod tests {
         assert_eq!(pretty_path(r"\\?\C:\data"), r"C:\data");
         assert_eq!(pretty_path(r"\\?\UNC\nas\share"), r"\\nas\share");
         assert_eq!(pretty_path("/home/a"), "/home/a");
+    }
+
+    #[test]
+    fn historical_failures_and_refusals_keep_their_real_causes() {
+        let rows = history_rows(&json!({"operations":[
+            {"outcome":{"status":{"status":"refused","refusal":{"cause":"source_changed"}}}},
+            {"outcome":{"status":{"status":"refused","refusal":{"cause":"source_vanished"}}}},
+            {"outcome":{"status":{"status":"failed","error":{"message":"Access denied: file locked"}}}},
+            {"outcome":null}
+        ]}));
+        assert!(rows[0].detail.contains("simulation"));
+        assert!(rows[1].detail.contains("disparu"));
+        assert_eq!(rows[2].detail, "Access denied: file locked");
+        assert_eq!(rows[3].detail, "Résultat non enregistré");
+        assert_eq!(rows[0].status, "refused");
+        let detail = refusal_diagnostic(
+            &json!({"cause":"source_changed","mismatch":{"field":"size","expected":3,"found":8}}),
+        )
+        .unwrap();
+        assert!(detail.contains("3 o") && detail.contains("8 o"));
+        assert_ne!(
+            observation_time(&json!({"secs":60,"nanos":1})),
+            observation_time(&json!({"secs":60,"nanos":2}))
+        );
+    }
+
+    #[test]
+    fn uncertainty_messages_explain_the_recorded_cause_in_history_and_preview() {
+        for (cause, expected) in [
+            (
+                json!({"cause":"presence_unknown","side":"source"}),
+                "source",
+            ),
+            (
+                json!({"cause":"presence_unknown","side":"destination"}),
+                "destination",
+            ),
+            (json!({"cause":"case_collision"}), "majuscules/minuscules"),
+            (json!({"cause":"not_comparable"}), "Lien symbolique"),
+            (json!({"cause":"precision_unknown"}), "Précision"),
+        ] {
+            let operation = json!({"path":"example","action":"skip","reason":{"code":"uncertain","causes":[cause]}});
+            let preview = OpView::parse(&operation).unwrap();
+            let history = history_rows(
+                &json!({"operations":[{"operation":operation,"outcome":{"status":{"status":"no_action"}}}]}),
+            );
+            assert!(history[0].detail.contains(expected));
+            assert_eq!(preview.reason_detail, history[0].detail);
+            assert!(!history[0].detail.contains("Observation incertaine"));
+        }
     }
 }

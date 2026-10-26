@@ -177,9 +177,15 @@ pub struct PathComparison {
     pub(crate) left: Option<FileEntry>,
     pub(crate) right: Option<FileEntry>,
     pub(crate) outcome: ComparisonOutcome,
+    pub(crate) source_origins: Vec<ResourcePath>,
 }
 
 impl PathComparison {
+    /// Physical left-side spellings represented by a merged logical path.
+    #[must_use]
+    pub fn source_origins(&self) -> &[ResourcePath] {
+        &self.source_origins
+    }
     /// Chemin logique comparé.
     #[must_use]
     pub fn path(&self) -> &ResourcePath {

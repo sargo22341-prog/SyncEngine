@@ -7,7 +7,7 @@ use sync_errors::{ClassifiedError, ErrorClass};
 use thiserror::Error;
 
 use crate::operation::{Action, EntrySnapshot, Operation, OperationSpec, PlanSide, Reason};
-use crate::plan::{ExecutionPlan, PLAN_SCHEMA_VERSION, SyncMode};
+use crate::plan::{CASE_MERGE_PLAN_SCHEMA_VERSION, ExecutionPlan, PLAN_SCHEMA_VERSION, SyncMode};
 use crate::policy::{DeletionCensus, DeletionPolicy, DeletionRefusal, OverwritePolicy};
 
 /// Raison pour laquelle une suppression est inadmissible dans un plan.
@@ -276,7 +276,13 @@ pub(crate) fn derive_operations(
 /// Vérifie tous les invariants d'un plan.
 pub(crate) fn validate(plan: &ExecutionPlan) -> Result<(), PlanError> {
     if plan.schema_version
-        != if plan.mode == SyncMode::Bidirectional {
+        != if plan
+            .operations
+            .iter()
+            .any(|op| op.source().is_some_and(|s| !s.origin_paths().is_empty()))
+        {
+            CASE_MERGE_PLAN_SCHEMA_VERSION
+        } else if plan.mode == SyncMode::Bidirectional {
             2
         } else {
             PLAN_SCHEMA_VERSION
@@ -300,6 +306,29 @@ pub(crate) fn validate(plan: &ExecutionPlan) -> Result<(), PlanError> {
         }
     }
     let operations = &plan.operations;
+    for op in operations {
+        if op
+            .destination()
+            .is_some_and(|entry| !entry.origin_paths().is_empty())
+            || op.source().is_some_and(|entry| {
+                !entry.origin_paths().is_empty()
+                    && (plan.mode == SyncMode::Bidirectional
+                        || (entry.kind() != EntryKind::Directory
+                            && entry.origin_paths().len() != 1)
+                        || entry.origin_paths().iter().any(|path| {
+                            path.as_str().to_lowercase() != op.path().as_str().to_lowercase()
+                        })
+                        || entry
+                            .origin_paths()
+                            .windows(2)
+                            .any(|pair| pair[0] >= pair[1]))
+            })
+        {
+            return Err(PlanError::InvalidShape {
+                id: op.id().clone(),
+            });
+        }
+    }
     let filter =
         sync_filter::Filter::new(plan.filter.clone()).map_err(|_| PlanError::InvalidFilter)?;
     for pair in operations.windows(2) {

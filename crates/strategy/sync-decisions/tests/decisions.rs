@@ -461,6 +461,37 @@ fn unknown_dates_never_overwrite() {
 }
 
 #[test]
+fn mirror_never_deletes_below_a_case_ambiguous_source_directory() {
+    // Given: two source directories collapse onto the Windows destination.
+    let source = MemoryConnector::new("src")
+        .with_case_sensitivity(CaseSensitivity::Unknown)
+        .dir("People/B")
+        .dir("People/b");
+    let destination = MemoryConnector::new("dst")
+        .with_case_sensitivity(CaseSensitivity::InsensitivePreserving)
+        .file("People/B/bbno$/folder.jpg", b"must survive", ts(1))
+        .file("unrelated-obsolete", b"delete allowed", ts(1));
+    // When: the mirror allows deletion and the scans are complete.
+    let plan = plan(&report(&source, &destination), &unguarded());
+    // Then: all ambiguous descendants are skipped, never deleted.
+    for at in ["People/B/bbno$", "People/B/bbno$/folder.jpg"] {
+        assert_eq!(
+            decision(&plan, at),
+            (
+                Action::Skip,
+                Reason::Uncertain {
+                    causes: vec![UncertainCause::CaseCollision],
+                }
+            )
+        );
+    }
+    assert_eq!(
+        decision(&plan, "unrelated-obsolete"),
+        (Action::Delete, Reason::AbsentFromSource)
+    );
+}
+
+#[test]
 fn planning_is_deterministic() {
     let source = MemoryConnector::new("src")
         .file("a/b", b"1", ts(2))

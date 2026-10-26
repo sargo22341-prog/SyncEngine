@@ -9,11 +9,15 @@ use crate::operation::{Action, Operation, OperationSpec, PlanSide, Reason};
 use crate::policy::PlanPolicy;
 use crate::validate::{PlanError, derive_operations, validate};
 
-/// Version du schéma de plan produite par cette version du code.
+/// Schéma de base des plans unidirectionnels sans projection des chemins.
 ///
 /// À incrémenter pour toute évolution non rétrocompatible du format ; un
 /// plan d'une autre version est refusé au chargement, jamais interprété.
 pub const PLAN_SCHEMA_VERSION: u32 = 1;
+
+/// Schema retaining physical source origins for case-insensitive directory unions.
+/// Old readers reject it rather than read or delete through a wrong spelling.
+pub const CASE_MERGE_PLAN_SCHEMA_VERSION: u32 = 3;
 
 /// Mode de synchronisation ayant produit le plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -285,7 +289,12 @@ impl ExecutionPlan {
         });
         let plan = Self {
             baseline,
-            schema_version: if header.mode == SyncMode::Bidirectional {
+            schema_version: if operations
+                .iter()
+                .any(|op| op.source().is_some_and(|s| !s.origin_paths().is_empty()))
+            {
+                CASE_MERGE_PLAN_SCHEMA_VERSION
+            } else if header.mode == SyncMode::Bidirectional {
                 2
             } else {
                 PLAN_SCHEMA_VERSION

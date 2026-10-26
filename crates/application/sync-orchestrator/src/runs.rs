@@ -25,11 +25,17 @@ pub(super) fn open(root: &Path) -> Result<Connection, AppError> {
     let mut db = Connection::open(root.join("desktop-runs.sqlite")).map_err(io)?;
     db.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(io)?;
-    let check: String = db
-        .query_row("PRAGMA quick_check", [], |r| r.get(0))
+    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")
         .map_err(io)?;
-    if check != "ok" {
-        return Err(error("integrity", "historique corrompu"));
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .map_err(io)?;
+    let app: u32 = db
+        .query_row("PRAGMA application_id", [], |r| r.get(0))
+        .map_err(io)?;
+    // Ordinary reads must never acquire a writer reservation or scan the whole DB.
+    if version == 2 && app == 1_398_361_681 {
+        return Ok(db);
     }
     let tx = db
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -53,12 +59,32 @@ pub(super) fn open(root: &Path) -> Result<Connection, AppError> {
         }
         tx.execute_batch(include_str!("../migrations/001_desktop_runs.sql"))
             .map_err(io)?;
-    } else if version != 1 || app != 1_398_361_681 {
+    } else if !matches!(version, 1 | 2) || app != 1_398_361_681 {
         return Err(error("integrity", "version historique inconnue"));
     }
+    if version < 2 {
+        tx.execute_batch(include_str!("../migrations/002_problem_index.sql"))
+            .map_err(io)?;
+    }
     tx.commit().map_err(io)?;
-    db.execute_batch("PRAGMA synchronous=FULL;").map_err(io)?;
+    let mode: String = db
+        .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
+        .map_err(io)?;
+    if mode != "wal" {
+        return Err(error("unavailable", "WAL indisponible pour l’historique"));
+    }
     Ok(db)
+}
+
+pub(super) fn initialize(root: &Path) -> Result<(), AppError> {
+    let db = open(root)?;
+    let check: String = db
+        .query_row("PRAGMA quick_check", [], |r| r.get(0))
+        .map_err(io)?;
+    if check != "ok" {
+        return Err(error("integrity", "historique corrompu"));
+    }
+    Ok(())
 }
 pub(super) fn begin(
     root: &Path,
@@ -83,6 +109,7 @@ pub(super) fn finish(
     root: &Path,
     id: &ExecutionId,
     result: &Result<serde_json::Value, AppError>,
+    plan: Option<&ExecutionPlan>,
 ) -> Result<(), AppError> {
     let mut db = open(root)?;
     let tx = db.transaction().map_err(io)?;
@@ -99,6 +126,7 @@ pub(super) fn finish(
         ],
     )
     .map_err(io)?;
+    crate::history::index_finished(&tx, id.as_str(), plan, &report)?;
     // Keep interrupted/running records; bound completed history per profile.
     // Match journal retention to the existing 100 completed attempts. Select
     // only persisted completed identities; never scan/delete arbitrary files.
@@ -175,28 +203,6 @@ pub(super) fn acknowledge(root: &Path, id: &ProfileId) -> Result<(), AppError> {
     Ok(())
 }
 
-pub(super) fn page(
-    root: &Path,
-    id: &ProfileId,
-    execution: &str,
-    offset: usize,
-) -> Result<serde_json::Value, AppError> {
-    let db = open(root)?;
-    let total: i64 = db.query_row("SELECT json_array_length(plan,'$.operations') FROM runs WHERE profile=?1 AND execution=?2",params![id.as_str(),execution],|r|r.get(0)).map_err(io)?;
-    let mut stmt = db.prepare("SELECT op.value,COALESCE(json_extract(r.report,'$.outcomes['||op.key||']'),json_extract(r.report,'$.execution.outcomes['||op.key||']')) FROM runs r,json_each(r.plan,'$.operations') op WHERE r.profile=?1 AND r.execution=?2 LIMIT 100 OFFSET ?3").map_err(io)?;
-    let rows = stmt
-        .query_map(params![id.as_str(), execution, offset as i64], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
-        })
-        .map_err(io)?;
-    let mut values = Vec::new();
-    for row in rows {
-        let (operation, outcome) = row.map_err(io)?;
-        values.push(serde_json::json!({"operation":serde_json::from_str::<serde_json::Value>(&operation).map_err(io)?,"outcome":outcome.map(|s|serde_json::from_str::<serde_json::Value>(&s)).transpose().map_err(io)?}));
-    }
-    Ok(serde_json::json!({"operations":values,"total":total}))
-}
-
 pub(super) fn unfinished(root: &Path, id: &ProfileId) -> Result<bool, AppError> {
     open(root)?
         .query_row(
@@ -245,6 +251,7 @@ mod retention_tests {
             root.path(),
             &ExecutionId::new("run-current")?,
             &Ok(serde_json::json!({})),
+            None,
         )?;
         for n in 0..4 {
             assert!(!root.path().join(format!("run-{n}.jsonl")).exists());
@@ -266,7 +273,7 @@ mod retention_tests {
         )?;
         let id = ExecutionId::new("run-current")?;
         assert_eq!(
-            finish(root.path(), &id, &Ok(serde_json::json!({})))
+            finish(root.path(), &id, &Ok(serde_json::json!({})), None)
                 .err()
                 .ok_or("error")?
                 .code,
@@ -279,7 +286,7 @@ mod retention_tests {
         std::fs::remove_file(root.path().join("run-0.jsonl"))?;
         std::fs::create_dir(root.path().join("run-0.jsonl"))?;
         assert_eq!(
-            finish(root.path(), &id, &Ok(serde_json::json!({})))
+            finish(root.path(), &id, &Ok(serde_json::json!({})), None)
                 .err()
                 .ok_or("error")?
                 .code,

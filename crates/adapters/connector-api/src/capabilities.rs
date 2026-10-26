@@ -78,6 +78,9 @@ pub enum ClockSource {
 #[non_exhaustive]
 pub enum ListingConsistency {
     /// Une écriture terminée est immédiatement visible dans le listing.
+    /// Ne promet pas un snapshot pendant des modifications concurrentes.
+    /// Une absence exige toutes les pages sans erreur ; l'exécuteur revalide
+    /// encore les préconditions juste avant une mutation.
     Strong,
     /// Visibilité différée possible : une absence n'est pas une preuve.
     Eventual,

@@ -51,8 +51,12 @@ pub(crate) fn build_plan(
     let options = scan_options(args);
     let source = run_scan(source_root, &filter, &options)?;
     let destination = run_scan(destination_root, &filter, &options)?;
-    let report =
-        compare(&source, &destination, &CompareOptions::new()).map_err(DiscoveryError::Compare)?;
+    let report = compare(
+        &source,
+        &destination,
+        &CompareOptions::new().with_directory_merge(true),
+    )
+    .map_err(DiscoveryError::Compare)?;
 
     let context = plan_context(source_root, destination_root)?;
     let plan = strategy

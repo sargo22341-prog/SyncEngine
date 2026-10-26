@@ -49,33 +49,41 @@ fn step(
     path: &ResourcePath,
     op: StorageOperation,
 ) -> Result<Dir, StorageError> {
-    let meta = current
-        .symlink_metadata(segment)
-        .map_err(|e| io_error(e, op, path))?;
-    if meta.file_type().is_symlink() {
-        return Err(crate::errors::local_error(
-            connector_api::StorageErrorKind::Permanent,
-            op,
-            path,
-            "symlink parent refused",
-        ));
-    }
-    if !meta.is_dir() {
-        let kind = if op == StorageOperation::List {
-            connector_api::StorageErrorKind::Permanent
-        } else {
-            connector_api::StorageErrorKind::NotFound
-        };
-        return Err(crate::errors::local_error(
-            kind,
-            op,
-            path,
-            "parent is not a directory",
-        ));
-    }
-    current
-        .open_dir_nofollow(segment)
-        .map_err(|e| io_error(e, op, path))
+    // The no-follow open validates both the object type and the reparse/link
+    // policy itself. Do not repeat a remote stat before every successful hop.
+    #[cfg(windows)]
+    let opened = current.try_clone().and_then(|parent| {
+        cap_primitives::windows_listing::open_directory_nofollow(
+            &parent.into_std_file(),
+            std::ffi::OsStr::new(segment),
+        )
+        .map(Dir::from_std_file)
+    });
+    #[cfg(not(windows))]
+    let opened = current.open_dir_nofollow(segment);
+    opened.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotADirectory {
+            // Some kernels use ENOTDIR for a symlink with O_NOFOLLOW.
+            // Never turn that into NotFound (which could permit deletion).
+            match current.symlink_metadata(segment) {
+                Ok(meta) if !meta.file_type().is_symlink() && !meta.is_dir() => {
+                    return crate::errors::local_error(
+                        if op == StorageOperation::List {
+                            connector_api::StorageErrorKind::Permanent
+                        } else {
+                            connector_api::StorageErrorKind::NotFound
+                        },
+                        op,
+                        path,
+                        "parent is not a directory",
+                    );
+                }
+                Err(metadata_error) => return io_error(metadata_error, op, path),
+                _ => {}
+            }
+        }
+        io_error(error, op, path)
+    })
 }
 
 pub(crate) fn directory(
@@ -131,7 +139,7 @@ pub(crate) fn directory_via(
         let segment = ancestor.segments().last().unwrap_or("");
         // The no-follow open itself rejects links and non-directories. A
         // separate symlink_metadata was repeating that same remote lookup.
-        // Execution keeps `step` and its original precondition handling.
+        // Execution keeps the full root-to-parent walk through `step`.
         current = Arc::new(
             current
                 .open_dir_nofollow(segment)

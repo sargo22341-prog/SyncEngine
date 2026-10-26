@@ -69,11 +69,7 @@ impl SmbConnector {
         let local = LocalConnector::new(&root, options)
             .map_err(|_| err(Kind::Disconnected, Op::Connect, &path))?;
         let id = ConnectorId::new("smb").map_err(|_| err(Kind::Permanent, Op::Connect, &path))?;
-        let mut caps = local.capabilities().clone();
-        caps.case_sensitivity = connector_api::CaseSensitivity::Unknown;
-        caps.timestamp_precision = sync_core::TimestampPrecision::Unknown;
-        caps.clock = connector_api::ClockSource::Server;
-        caps.listing_consistency = connector_api::ListingConsistency::Unknown;
+        let caps = native_capabilities(&local);
         let result = Self {
             local,
             root,
@@ -117,6 +113,19 @@ impl SmbConnector {
             self.guard(op, path)
         }
     }
+}
+
+fn native_capabilities(local: &LocalConnector) -> StorageCapabilities {
+    let mut caps = local.capabilities().clone();
+    caps.case_sensitivity = connector_api::CaseSensitivity::Unknown;
+    caps.timestamp_precision = sync_core::TimestampPrecision::Unknown;
+    caps.clock = connector_api::ClockSource::Server;
+    // Native UNC/CIFS enumeration has an explicit successful end, unlike an
+    // eventually consistent object listing. The scanner must consume every
+    // page and retain all read/omission errors before proving any absence.
+    // This is not a snapshot: the executor still checks source absence again.
+    caps.listing_consistency = connector_api::ListingConsistency::Strong;
+    caps
 }
 
 fn local_options(mutations: bool, reuse_handles: bool) -> LocalOptions {
@@ -172,6 +181,9 @@ fn mount_identity(root: &Path) -> Result<String, StorageError> {
         .ok_or_else(|| err(Kind::Disconnected, Op::Connect, &path))
 }
 impl StorageConnector for SmbConnector {
+    fn transfer_concurrency(&self) -> std::num::NonZeroUsize {
+        self.local.transfer_concurrency()
+    }
     fn listing_concurrency(&self) -> std::num::NonZeroUsize {
         self.local.listing_concurrency()
     }
@@ -316,5 +328,53 @@ mod scan_tests {
             local_options(true, false),
             LocalOptions::new().with_mutations()
         );
+    }
+
+    #[test]
+    fn native_enumeration_can_prove_absence_only_after_its_last_page()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Private native-FS substitution: the real UNC roundtrip is audited
+        // separately. Exercise the same capability constructor and page reader.
+        let temp = tempfile::tempdir()?;
+        for n in 0..600 {
+            std::fs::write(temp.path().join(format!("f{n}")), b"data")?;
+        }
+        let local = LocalConnector::new(temp.path(), local_options(false, true))?;
+        let connector = SmbConnector {
+            caps: native_capabilities(&local),
+            local,
+            root: temp.path().to_owned(),
+            id: ConnectorId::new("smb")?,
+            preview_scan: true,
+            #[cfg(target_os = "linux")]
+            mount: String::new(),
+        };
+        assert_eq!(
+            connector.capabilities().listing_consistency,
+            connector_api::ListingConsistency::Strong
+        );
+        #[cfg(windows)]
+        {
+            let cancel = CancellationToken::new();
+            let root = ResourcePath::root();
+            let mut page = connector.list(&root, None, &cancel)?;
+            assert!(page.next_page().is_some());
+            let mut count = page.entries().len();
+            while let Some(token) = page.next_page().cloned() {
+                page = connector.list(&root, Some(&token), &cancel)?;
+                assert!(page.issues().is_empty());
+                count += page.entries().len();
+            }
+            assert_eq!(count, 600);
+            assert_eq!(
+                connector
+                    .stat(&ResourcePath::parse("missing")?, &cancel)
+                    .err()
+                    .ok_or("missing reported present")?
+                    .kind(),
+                Kind::NotFound
+            );
+        }
+        Ok(())
     }
 }
