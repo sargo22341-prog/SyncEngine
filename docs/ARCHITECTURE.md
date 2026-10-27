@@ -124,6 +124,18 @@ Les plans et rapports originaux restent la vérité ; la rétention supprime aus
 leurs index. Le contrôle d’intégrité complet a lieu à l’ouverture applicative,
 pas à chaque filtre. Voir [les mesures et la migration](STABILITE_COPIE_HISTORIQUE.md).
 
+La v3 ajoute `run_overview` : un résumé borné et la taille stockée de chaque
+tentative, écrits par `begin`/`finish`. La liste affichée au démarrage ne lit
+plus que cette table (une ligne sans résumé retombe sur le JSON original). Les
+plans sont stockés en JSON compact. La rétention garde au plus 100 tentatives
+terminées par profil et, au-delà des 3 plus récentes, retire les plus anciennes
+dès que plans et rapports dépassent 512 Mio pour ce profil. À l’ouverture, les
+tentatives terminées des profils supprimés sont retirées avec leurs journaux
+(les interruptions restent), puis la base est compactée (`VACUUM`) si plus de
+la moitié du fichier et au moins 256 Mio sont libres. Une base v3 est refusée
+par une version antérieure. Mesure : `cargo run --release -p sync-orchestrator
+--all-features --example overview_timing -- <COPIE_DU_DOSSIER_ETAT>`.
+
 ## Lectures réseau
 
 Les analyses SMB utilisent maintenant le même cache borné de 64 poignées que

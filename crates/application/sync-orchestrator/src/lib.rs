@@ -270,8 +270,14 @@ impl Application {
             .open(state.join("desktop.lock"))
             .map_err(io)?;
         owner.try_lock().map_err(state_lock_error)?;
-        Profiles::open(state.join("profiles.sqlite")).map_err(io)?;
-        runs::initialize(&state)?;
+        let profiles = Profiles::open(state.join("profiles.sqlite")).map_err(io)?;
+        // An unreadable profile leaves the saved set unknown: history is then
+        // kept whole, and the error surfaces where profiles are listed.
+        let known = profiles
+            .list()
+            .ok()
+            .map(|list| list.into_iter().map(|p| p.id).collect::<Vec<_>>());
+        runs::initialize(&state, known.as_deref())?;
         History::open(state.join("state.sqlite")).map_err(io)?;
         Ok(Self {
             state,
@@ -360,6 +366,12 @@ impl Application {
     }
     fn roots(&self, profile: &Profile) -> Result<(String, String), AppError> {
         profile.validate().map_err(|e| error("invalid_input", e))?;
+        if profile.remote_source.is_some() && profile.remote_destination.is_some() {
+            return Err(error(
+                "not_supported",
+                "deux emplacements distants : la source ou la destination doit être un dossier local",
+            ));
+        }
         let mut locals = Vec::new();
         let mut locations = Vec::new();
         for (path, remote) in [
@@ -394,13 +406,10 @@ impl Application {
                 if root.starts_with(other) || other.starts_with(root) {
                     return Err(error(
                         "invalid_input",
-                        "source, destination, ?tat et verrous doivent ?tre disjoints",
+                        "source, destination, état et verrous doivent être disjoints",
                     ));
                 }
             }
-        }
-        if profile.remote_source.is_some() && profile.remote_destination.is_some() {
-            return Err(error("not_supported", "une extr?mit? locale est requise"));
         }
         Ok((locations.remove(0), locations.remove(0)))
     }

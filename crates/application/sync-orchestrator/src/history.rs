@@ -159,7 +159,7 @@ mod tests {
         writer.execute("INSERT INTO runs SELECT 'uncached',profile,started,state,plan,report FROM runs WHERE execution='e'",[])?;
         assert_eq!(
             writer.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
-            2
+            3
         );
         assert_eq!(
             writer.query_row("PRAGMA journal_mode", [], |r| r.get::<_, String>(0))?,

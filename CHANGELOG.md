@@ -5,6 +5,19 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Historique borné et démarrage rapide
+- Historique desktop v3 : un résumé par tentative (`run_overview`) évite de
+  relire tous les plans au démarrage et à chaque rafraîchissement. Mesure sur
+  une copie réelle (2,4 Go) : ouverture 1,66 s → 7,7 ms après une migration
+  unique de 12,3 s ; fichier ramené à 1,3 Mo.
+- Plans enregistrés en JSON compact ; rétention bornée à 512 Mio par profil
+  (3 dernières tentatives toujours gardées) en plus des 100 tentatives.
+- Les tentatives terminées des profils supprimés sont retirées à l’ouverture,
+  les exécutions interrompues restent ; compaction si la base est surtout vide.
+- Assistant : un partage réseau Windows exige un chemin UNC, et deux
+  extrémités distantes sont refusées dès l’étape Destination. Message du moteur
+  corrigé (accents perdus).
+
 ### Fusion de casse NAS vers Windows et journaux actifs
 - La prévisualisation unidirectionnelle projette les variantes de dossiers sur
   une destination explicitement insensible à la casse. Les fichiers distincts

@@ -350,9 +350,15 @@ impl EndpointDraft {
         let local = PathBuf::from(self.path.trim());
         let remote = match provider {
             Provider::Local => return Ok((absolute(&self.path, "Dossier")?, None)),
-            Provider::Smb => RemoteEndpoint::Smb {
-                root: absolute(&self.smb_root, "Partage")?,
-            },
+            Provider::Smb => {
+                let root = absolute(&self.smb_root, "Partage")?;
+                // The engine opens Windows shares by UNC only; a drive letter
+                // (even a mapped one) would be refused at simulation time.
+                if cfg!(windows) && !is_unc(&root) {
+                    return Err("Partage : chemin réseau \\\\serveur\\partage requis ; pour un disque de ce PC, choisissez « Dossier local »".into());
+                }
+                RemoteEndpoint::Smb { root }
+            }
             Provider::Sftp => RemoteEndpoint::Sftp {
                 address: self.address()?,
                 host: required(&self.host_name, "Nom d’hôte vérifié")?,
@@ -429,6 +435,12 @@ impl EndpointDraft {
             .unwrap_or(raw)
             .to_owned()
     }
+}
+
+fn is_unc(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    matches!(path.components().next(), Some(Component::Prefix(p))
+        if matches!(p.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)))
 }
 
 /// Quick filter presets offered in the assistant.
@@ -864,6 +876,14 @@ impl ProfileDraft {
         }
     }
 
+    /// The engine needs a local folder on at least one side.
+    pub(crate) fn remote_pair_error(&self) -> Option<String> {
+        let remote = |e: &EndpointDraft| e.provider.is_some_and(|p| p != Provider::Local);
+        (remote(&self.source) && remote(&self.destination)).then(|| {
+            "Source et destination sont toutes deux distantes : choisissez « Dossier local » pour l’une d’elles".to_owned()
+        })
+    }
+
     pub(crate) fn deletions_possible(&self) -> bool {
         matches!(self.mode, Some(SyncMode::Mirror | SyncMode::Bidirectional))
     }
@@ -878,6 +898,9 @@ impl ProfileDraft {
             .destination
             .build()
             .map_err(|e| format!("Destination — {e}"))?;
+        if let Some(e) = self.remote_pair_error() {
+            return Err(e);
+        }
         let name = self.name.trim();
         if name.is_empty() {
             return Err("Donnez un nom au profil".into());
@@ -1011,6 +1034,45 @@ mod tests {
         d.destination.drive_id = "b!abc".into();
         d.destination.credential_ref = "ONEDRIVE".into();
         assert!(d.build().unwrap_err().contains("OneDrive"));
+    }
+
+    #[test]
+    fn two_remote_sides_are_refused_before_saving() {
+        let mut d = ProfileDraft::new("");
+        d.name = "Musique".into();
+        d.mode = Some(SyncMode::Mirror);
+        d.source.select(Provider::Smb);
+        d.source.smb_root = if cfg!(windows) {
+            "\\\\nas\\musique".into()
+        } else {
+            "/mnt/nas/musique".into()
+        };
+        d.destination.select(Provider::Smb);
+        d.destination.smb_root = if cfg!(windows) {
+            "\\\\nas\\copie".into()
+        } else {
+            "/mnt/nas/copie".into()
+        };
+        assert!(d.remote_pair_error().is_some());
+        assert!(d.build().unwrap_err().contains("Dossier local"));
+        d.destination = local(&abs("Musique"));
+        assert!(d.remote_pair_error().is_none());
+        let p = d.build().unwrap();
+        assert!(p.remote_source.is_some() && p.remote_destination.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_share_requires_a_unc_path() {
+        let mut e = EndpointDraft::default();
+        e.select(Provider::Smb);
+        e.set(Field::Path, "F:\\Musique".into());
+        assert!(e.build().unwrap_err().contains("Dossier local"));
+        e.set(Field::Path, "\\\\Nas\\Musique".into());
+        assert!(matches!(
+            e.build(),
+            Ok((_, Some(RemoteEndpoint::Smb { .. })))
+        ));
     }
 
     #[test]

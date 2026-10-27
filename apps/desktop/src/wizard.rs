@@ -208,7 +208,7 @@ impl Wizard {
                 if d.destination.provider == Some(Provider::Onedrive) {
                     return Some("OneDrive ne peut être qu’une source".into());
                 }
-                d.destination.build().err()
+                d.destination.build().err().or_else(|| d.remote_pair_error())
             }
             Step::Filters | Step::Safety => None,
             Step::Schedule => match d.schedule.trigger() {

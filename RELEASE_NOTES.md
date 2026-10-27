@@ -14,4 +14,5 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
-
+- Démarrage nettement plus rapide : l’historique ne relit plus tous les plans enregistrés, reste borné en taille et oublie les profils supprimés.
+- Assistant : un « Partage réseau » Windows exige un chemin \\serveur\partage (un disque de ce PC se choisit en « Dossier local ») ; message d’erreur sans accents perdus.
