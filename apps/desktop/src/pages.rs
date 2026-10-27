@@ -536,7 +536,11 @@ impl App {
             .on_input(Message::HistoryQuery)
             .on_submit(Message::HistorySearch)
             .padding(10)
-            .style(theme::input(*p, false))
+            .style(theme::input(*p, false)),
+            ui::caption(
+                p,
+                "Seuls les changements, erreurs et avertissements sont conservés : les éléments identiques ne sont pas enregistrés."
+            )
         ]
         .spacing(8);
         let Some(page) = &self.history else {
@@ -585,7 +589,13 @@ impl App {
         if page.rows.is_empty() {
             col = col.push(ui::muted(
                 p,
-                "Aucune opération ne correspond à ces filtres.",
+                if self.history_filter == sync_orchestrator::HistoryFilter::All
+                    && self.history_query.is_empty()
+                {
+                    "Aucun changement enregistré pour cette exécution."
+                } else {
+                    "Aucune opération ne correspond à ces filtres."
+                },
             ));
         }
         let end = (page.offset + page.rows.len()).min(page.total);
@@ -895,9 +905,9 @@ impl App {
                         ui::caption(p, format!("État local : {}", model::ellipsize(&state, 70))),
                         ui::icon_button(
                             p,
-                            Glyph::Copy,
-                            "Copier le chemin",
-                            Some(Message::CopyText(state.clone()))
+                            Glyph::Folder,
+                            "Ouvrir le dossier des données",
+                            Some(Message::OpenStateFolder)
                         ),
                     ]
                     .spacing(6)

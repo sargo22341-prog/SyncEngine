@@ -63,6 +63,46 @@ fn powershell(script: &str) -> Result<std::process::Output, Failure> {
         })
 }
 
+/// Task definitions the agent may export (older versions exported all three).
+const EXPORTED: [&str; 3] = [
+    "syncengine-resident.xml",
+    "syncengine-clock.xml",
+    "syncengine-logon.xml",
+];
+
+/// Removes a temporary export folder holding only known generated files;
+/// any other content keeps the folder, without recursive deletion.
+fn remove_export(export: &Path) -> std::io::Result<()> {
+    for name in EXPORTED {
+        match std::fs::remove_file(export.join(name)) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e),
+        }
+    }
+    std::fs::remove_dir(export)
+}
+
+/// Retires export folders left by interrupted or older registrations.
+fn sweep_exports(state: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(state)? {
+        let entry = entry?;
+        let stale = entry.file_name().to_str().is_some_and(|n| {
+            n.strip_prefix("native-tasks-").is_some_and(|rest| {
+                !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+            })
+        });
+        // file_type does not follow links: a linked folder is never entered.
+        if stale && entry.file_type()?.is_dir() {
+            // Best effort: a folder with foreign content is left for the user.
+            if remove_export(&entry.path()).is_err() {
+                continue;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn reconcile(state: &Path, needed: bool) -> Result<(), Failure> {
     let fail = |e: std::io::Error| Failure::new("scheduler_install", e.to_string());
     let exe = std::env::current_exe().map_err(fail)?;
@@ -108,6 +148,7 @@ pub(crate) fn reconcile(state: &Path, needed: bool) -> Result<(), Failure> {
         // Export canonicalizes the command too (including Windows' verbatim
         // prefix). Compare the same representation when checking a running task.
         let agent = agent.canonicalize().map_err(fail)?;
+        sweep_exports(state).map_err(fail)?;
         // A unique temporary export avoids collisions between rapid retries.
         let export = state.join(format!(
             "native-tasks-{}-{}",
@@ -153,14 +194,7 @@ pub(crate) fn reconcile(state: &Path, needed: bool) -> Result<(), Failure> {
             Ok(())
         })();
         // Only known generated files, no recursive deletion.
-        {
-            let event = "resident";
-            let path = export.join(format!("syncengine-{event}.xml"));
-            if path.exists() {
-                std::fs::remove_file(path).map_err(fail)?;
-            }
-        }
-        std::fs::remove_dir(&export).map_err(fail)?;
+        remove_export(&export).map_err(fail)?;
         rendered?;
     } else {
         std::fs::File::create(state.join("agent-retire.request"))
@@ -265,6 +299,27 @@ fn migration_operations(
 mod tests {
     use super::*;
     use platform_api::{AgentInvocation, ScheduleAdapter};
+
+    #[test]
+    fn stale_exports_are_swept_but_foreign_content_stays() -> Result<(), Failure> {
+        let io = |e: std::io::Error| Failure::new("test", e.to_string());
+        let state = tempfile::tempdir().map_err(io)?;
+        let old = state.path().join("native-tasks-1792852404");
+        let foreign = state.path().join("native-tasks-1-2");
+        let unrelated = state.path().join("native-tasks-notes");
+        for dir in [&old, &foreign, &unrelated] {
+            std::fs::create_dir(dir).map_err(io)?;
+            for name in ["syncengine-clock.xml", "syncengine-logon.xml"] {
+                std::fs::write(dir.join(name), b"<Task/>").map_err(io)?;
+            }
+        }
+        std::fs::write(foreign.join("mine.txt"), b"user").map_err(io)?;
+        sweep_exports(state.path()).map_err(io)?;
+        assert!(!old.exists());
+        assert!(foreign.join("mine.txt").exists());
+        assert!(unrelated.join("syncengine-clock.xml").exists());
+        Ok(())
+    }
 
     #[test]
     fn only_access_denied_requests_elevation_and_preserves_diagnostics() -> Result<(), Failure> {

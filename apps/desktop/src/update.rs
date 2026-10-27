@@ -906,6 +906,17 @@ impl App {
                 self.toast(ToastKind::Info, "Copié", model::ellipsize(&value, 60));
                 iced::clipboard::write(value)
             }
+            Message::OpenStateFolder => {
+                let opened = self
+                    .backend
+                    .as_ref()
+                    .ok_or_else(|| Failure::new("unavailable", "état local indisponible"))
+                    .and_then(|a| crate::native::open_folder(a.state_directory()));
+                if let Err(e) = opened {
+                    self.toast(ToastKind::Error, e.title(), e.message);
+                }
+                Task::none()
+            }
             Message::Noop => Task::none(),
         }
     }

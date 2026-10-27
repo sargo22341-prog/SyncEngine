@@ -191,8 +191,8 @@ chemin absolu avant de lancer l'interface.
 | `profiles.sqlite` | profils et préférences |
 | `state.sqlite` | baselines, tombstones et historique |
 | `scheduler.sqlite` | planifications autorisées |
-| `desktop-runs.sqlite` | suivi des exécutions lancées depuis l'interface |
-| `run-….jsonl` | journal de chaque exécution |
+| `desktop-runs.sqlite` | 30 dernières exécutions par profil : seulement leurs changements, erreurs et avertissements |
+| `run-….jsonl` | journal de chaque exécution conservée (les journaux orphelins sont supprimés à l'ouverture) |
 | `versions/` | copies des fichiers remplacés ou supprimés |
 | `desktop-ui.json` | thème, groupes repliés, comportement du bouton × |
 | `agent-live.json` | progression publiée par l'agent pour l'affichage (pas une source de vérité) |
@@ -205,7 +205,8 @@ chemin absolu avant de lancer l'interface.
 
 Aucun mot de passe ni jeton n'y est stocké. Le dossier d'état doit être sur un
 disque local, hors des dossiers synchronisés. Supprimer le programme ne
-supprime pas ces données.
+supprime pas ces données. Réglages → icône dossier ouvre ce dossier dans
+l'explorateur de fichiers.
 
 Sauvegarde, restauration et purge de l'historique (applications fermées,
 Python 3.12+) :

@@ -15,4 +15,6 @@ liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
 - Démarrage nettement plus rapide : l’historique ne relit plus tous les plans enregistrés, reste borné en taille et oublie les profils supprimés.
+- Historique allégé : 30 exécutions par profil, et seuls les changements, erreurs et avertissements sont enregistrés (les fichiers identiques ne le sont plus).
+- Nettoyage automatique du dossier des données (journaux orphelins, dossiers temporaires de planification) ; Réglages ouvre directement ce dossier.
 - Assistant : un « Partage réseau » Windows exige un chemin \\serveur\partage (un disque de ce PC se choisit en « Dossier local ») ; message d’erreur sans accents perdus.

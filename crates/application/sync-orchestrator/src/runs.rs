@@ -3,8 +3,80 @@ use crate::{AppError, error, io};
 use rusqlite::{Connection, params};
 use serde::Serialize;
 use std::path::Path;
-use sync_core::{ExecutionId, ProfileId, Timestamp};
-use sync_plan::ExecutionPlan;
+use sync_core::{ExecutionId, PlanId, ProfileId, Timestamp};
+use sync_filter::FilterRules;
+use sync_plan::{Action, EndpointSnapshot, ExecutionPlan, Operation, PlanPolicy, Reason, SyncMode};
+
+/// Whether the history keeps an operation: everything but entries left
+/// identical (or kept only at a backup destination), which carry no change,
+/// error or warning.
+fn recorded(operation: &Operation) -> bool {
+    !(operation.action() == Action::Keep
+        && matches!(
+            operation.reason(),
+            Reason::Equivalent { .. } | Reason::DestinationOnly
+        ))
+}
+
+/// History form of a plan: unchanged entries are counted, not stored, and the
+/// bidirectional baseline stays in its own state database. The full plan is
+/// still the one executed; this record is for display and diagnosis only.
+#[derive(Serialize)]
+struct RecordedPlan<'a> {
+    schema_version: u32,
+    id: &'a PlanId,
+    profile: Option<&'a ProfileId>,
+    mode: SyncMode,
+    created_at: Timestamp,
+    source: &'a EndpointSnapshot,
+    destination: &'a EndpointSnapshot,
+    filter: &'a FilterRules,
+    policy: &'a PlanPolicy,
+    operations: Vec<&'a Operation>,
+    unchanged_omitted: usize,
+}
+
+impl<'a> RecordedPlan<'a> {
+    fn new(plan: &'a ExecutionPlan) -> Self {
+        let operations: Vec<_> = plan.operations().iter().filter(|op| recorded(op)).collect();
+        Self {
+            schema_version: plan.schema_version(),
+            id: plan.id(),
+            profile: plan.profile(),
+            mode: plan.mode(),
+            created_at: plan.created_at(),
+            source: plan.source(),
+            destination: plan.destination(),
+            filter: plan.filter_rules(),
+            policy: plan.policy(),
+            unchanged_omitted: plan.operations().len() - operations.len(),
+            operations,
+        }
+    }
+}
+
+/// Drops the outcomes of unrecorded operations, keeping report and stored
+/// plan aligned by position. A report not aligned with `plan` is kept whole.
+fn record_outcomes(report: &mut serde_json::Value, plan: &ExecutionPlan) {
+    let direct = report
+        .get("outcomes")
+        .is_some_and(serde_json::Value::is_array);
+    let outcomes = if direct {
+        report.get_mut("outcomes")
+    } else {
+        report
+            .get_mut("execution")
+            .and_then(|execution| execution.get_mut("outcomes"))
+    };
+    let Some(outcomes) = outcomes.and_then(serde_json::Value::as_array_mut) else {
+        return;
+    };
+    if outcomes.len() != plan.operations().len() {
+        return;
+    }
+    let mut kept = plan.operations().iter().map(recorded);
+    outcomes.retain(|_| kept.next().unwrap_or(true));
+}
 
 /// Persisted attempt. `running` after restart means diagnosis is required;
 /// it must never be presented as a completed successful run.
@@ -16,18 +88,19 @@ pub struct Run {
     pub started: String,
     /// Running, finished or error (report carries the actual execution status).
     pub state: String,
-    /// Exact preview plan used for this attempt.
+    /// Preview plan used for this attempt, without its unchanged entries
+    /// (`unchanged_omitted` counts them) nor its bidirectional baseline.
     pub plan: serde_json::Value,
-    /// Structured report/error when completion was persisted.
+    /// Structured report/error when completion was persisted; outcomes stay
+    /// aligned by position with the recorded operations.
     pub report: Option<serde_json::Value>,
 }
-/// Completed attempts kept per profile, whatever their size.
-const KEPT_RUNS: i64 = 100;
+/// Completed attempts kept per profile (about a month of daily runs).
+const KEPT_RUNS: i64 = 30;
 /// Most recent completed attempts kept per profile, whatever the byte budget.
 const MIN_KEPT_RUNS: i64 = 3;
 /// Stored plan and report bytes per profile beyond which older completed
-/// attempts are retired. A plan holds every inventoried entry, so a large
-/// mirror otherwise grows the database by hundreds of MiB per run.
+/// attempts are retired, for runs with very many real changes.
 const PROFILE_BUDGET: i64 = 512 * 1024 * 1024;
 
 /// Bounded presentation summary of a report. `report` is a SQL expression for
@@ -121,6 +194,41 @@ pub(super) fn open(root: &Path) -> Result<Connection, AppError> {
     Ok(db)
 }
 
+/// Removes execution journals (`run-….jsonl`) that no attempt references any
+/// more: left by retention in older versions, or created just before a failed
+/// `begin` (no mutation runs before it). Called while the state is owned, so
+/// no execution can be writing one. Other files are never touched.
+fn retire_unlisted_journals(db: &Connection, root: &Path) -> Result<(), AppError> {
+    let mut known = db
+        .prepare("SELECT EXISTS(SELECT 1 FROM runs WHERE execution=?1)")
+        .map_err(io)?;
+    for entry in std::fs::read_dir(root).map_err(io)? {
+        let entry = entry.map_err(io)?;
+        let name = entry.file_name();
+        let Some(execution) = name
+            .to_str()
+            .and_then(|n| n.strip_suffix(".jsonl"))
+            .filter(|n| n.starts_with("run-"))
+        else {
+            continue;
+        };
+        // A valid identity has no separator: the file is directly in `root`.
+        if ExecutionId::new(execution).is_err() || !entry.file_type().map_err(io)?.is_file() {
+            continue;
+        }
+        // A stale journal that cannot be removed (held by another program)
+        // must not prevent opening: it is retried at the next opening.
+        if !known
+            .query_row([execution], |r| r.get::<_, bool>(0))
+            .map_err(io)?
+            && std::fs::remove_file(entry.path()).is_err()
+        {
+            continue;
+        }
+    }
+    Ok(())
+}
+
 /// Free space worth giving back to the file system (and not re-reading).
 const COMPACT_FREE_BYTES: i64 = 256 * 1024 * 1024;
 
@@ -178,6 +286,7 @@ pub(super) fn initialize(root: &Path, profiles: Option<&[ProfileId]>) -> Result<
         retire(&tx, root, &orphans)?;
         tx.commit().map_err(io)?;
     }
+    retire_unlisted_journals(&db, root)?;
     compact(&db)?;
     let check: String = db
         .query_row("PRAGMA quick_check", [], |r| r.get(0))
@@ -193,9 +302,9 @@ pub(super) fn begin(
     profile: &ProfileId,
     plan: &ExecutionPlan,
 ) -> Result<(), AppError> {
-    // Compact JSON: same model as `ExecutionPlan::to_json`, without the
-    // indentation that nearly doubles a large plan.
-    let plan = serde_json::to_string(plan).map_err(io)?;
+    // Compact JSON of the recorded operations only: a run without change
+    // stores an empty operation list and the count of unchanged entries.
+    let plan = serde_json::to_string(&RecordedPlan::new(plan)).map_err(io)?;
     let mut db = open(root)?;
     let tx = db.transaction().map_err(io)?;
     tx.execute(
@@ -223,10 +332,16 @@ pub(super) fn finish(
 ) -> Result<(), AppError> {
     let mut db = open(root)?;
     let tx = db.transaction().map_err(io)?;
-    let (state, report) = match result {
+    let (state, mut report) = match result {
         Ok(value) => ("finished", value.clone()),
         Err(e) => ("error", serde_json::to_value(e).map_err(io)?),
     };
+    // The problem index is built from the complete report, before the
+    // outcomes of unchanged entries are dropped like their operations.
+    crate::history::index_finished(&tx, id.as_str(), plan, &report)?;
+    if let Some(plan) = plan {
+        record_outcomes(&mut report, plan);
+    }
     let text = serde_json::to_string(&report).map_err(io)?;
     tx.execute(
         "UPDATE runs SET state=?2,report=?3 WHERE execution=?1",
@@ -246,7 +361,6 @@ pub(super) fn finish(
         params![id.as_str(), text, i64::try_from(text.len()).map_err(io)?],
     )
     .map_err(io)?;
-    crate::history::index_finished(&tx, id.as_str(), plan, &report)?;
     // Keep interrupted/running records; bound completed history per profile,
     // by count and by stored bytes (the newest attempts always stay).
     // Journals follow the same retention. Select only persisted completed
@@ -404,10 +518,11 @@ mod retention_tests {
             &Ok(serde_json::json!({})),
             None,
         )?;
-        for n in 0..4 {
+        // 104 completed attempts: the 30 newest (run-74…run-102, current) stay.
+        for n in 0..74 {
             assert!(!root.path().join(format!("run-{n}.jsonl")).exists());
         }
-        assert!(root.path().join("run-4.jsonl").exists());
+        assert!(root.path().join("run-74.jsonl").exists());
         assert_eq!(
             std::fs::read(root.path().join("run-interrupted.jsonl"))?,
             b"diagnose"
@@ -570,8 +685,12 @@ mod overview_tests {
             )?;
             std::fs::write(root.path().join(format!("{execution}.jsonl")), b"journal")?;
         }
-        // Unknown saved set: nothing is retired.
+        std::fs::write(root.path().join("run-stray.jsonl"), b"unlisted")?;
+        std::fs::write(root.path().join("notes.jsonl"), b"foreign")?;
+        // Unknown saved set: no attempt is retired, only the unlisted journal.
         initialize(root.path(), None)?;
+        assert!(!root.path().join("run-stray.jsonl").exists());
+        assert!(root.path().join("notes.jsonl").exists());
         assert_eq!(
             db.query_row("SELECT count(*) FROM runs", [], |r| r.get::<_, i64>(0))?,
             3

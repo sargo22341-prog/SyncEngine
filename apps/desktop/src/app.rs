@@ -312,6 +312,8 @@ pub(crate) enum Message {
     ShowShortcuts,
     DismissToast(u64),
     CopyText(String),
+    /// Opens the state folder in the system file manager.
+    OpenStateFolder,
     Noop,
 }
 

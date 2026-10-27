@@ -101,7 +101,7 @@ persistante ni ne modifie le démarrage du compte personnel.
 - Étant donné un ancien job encore actif, une migration interrompue ou un
   refus d'accès simulé, la préparation signale l'échec, ne tue pas le job et
   peut être répétée. Les tâches étrangères sont conservées.
-- Étant donné plus de 100 tentatives terminées, seuls leurs journaux expirés
+- Étant donné plus de 30 tentatives terminées, seuls leurs journaux expirés
   référencés sont retirés. Une prise non terminée et les fichiers étrangers
   restent conservés. Un identifiant avec traversée de chemin est refusé ; une
   erreur de nettoyage est signalée et ne valide pas silencieusement la fin.

@@ -72,7 +72,10 @@ fn preview_is_read_only_exact_plan_consumed_once_and_history_survives()
     assert!(app.execute(p.id.clone(), id, true, false).is_err());
     let rows = app.history(p.id.clone())?;
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].plan, preview["plan"]);
+    // History keeps the preview's identity and its real changes only.
+    assert_eq!(rows[0].plan["id"], preview["plan"]["id"]);
+    assert_eq!(rows[0].plan["operations"], preview["plan"]["operations"]);
+    assert_eq!(rows[0].plan["unchanged_omitted"], 0);
     assert!(app.snapshot()?.bytes_done >= 4);
     drop(app);
     let app =
@@ -674,6 +677,48 @@ fn mirror_replicates_removal_after_initial_two_file_sync() -> Result<(), Box<dyn
     assert!(!p.destination.join("remove.txt").exists());
     assert_eq!(fs::read(p.destination.join("keep.txt"))?, b"keep");
     assert_eq!(app.preview(p.id)?["summary"]["delete"], 0);
+    Ok(())
+}
+#[test]
+fn history_records_only_real_changes_and_counts_unchanged_entries()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_temp, app, p) = fixture(SyncMode::Mirror)?;
+    for name in ["same-1", "same-2"] {
+        fs::write(p.source.join(name), b"same")?;
+        fs::write(p.destination.join(name), b"same")?;
+    }
+    fs::write(p.source.join("new"), b"new")?;
+    // Given two identical files and one new file, When the mirror runs,
+    // Then history stores only the copy, its outcome and the unchanged count.
+    let preview = app.preview(p.id.clone())?;
+    app.execute(
+        p.id.clone(),
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    let run = &app.history(p.id.clone())?[0];
+    let operations = run.plan["operations"].as_array().ok_or("operations")?;
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0]["path"], "new");
+    assert_eq!(run.plan["unchanged_omitted"], 2);
+    let outcomes = &run.report.as_ref().ok_or("report")?["outcomes"];
+    assert_eq!(outcomes.as_array().ok_or("outcomes")?.len(), 1);
+    assert_eq!(outcomes[0]["path"], "new");
+    let page = app.history_page(p.id.clone(), &run.execution, 0)?;
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["operations"][0]["outcome"]["status"]["status"], "done");
+    // Given nothing left to change, Then the run is recorded without operations.
+    let preview = app.preview(p.id.clone())?;
+    app.execute(
+        p.id.clone(),
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    let run = &app.history(p.id)?[0];
+    assert_eq!(run.plan["operations"], serde_json::json!([]));
+    assert_eq!(run.plan["unchanged_omitted"], 3);
     Ok(())
 }
 #[test]

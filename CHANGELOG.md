@@ -10,8 +10,16 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
   relire tous les plans au démarrage et à chaque rafraîchissement. Mesure sur
   une copie réelle (2,4 Go) : ouverture 1,66 s → 7,7 ms après une migration
   unique de 12,3 s ; fichier ramené à 1,3 Mo.
-- Plans enregistrés en JSON compact ; rétention bornée à 512 Mio par profil
-  (3 dernières tentatives toujours gardées) en plus des 100 tentatives.
+- Plans enregistrés en JSON compact ; rétention bornée à 30 tentatives et
+  512 Mio par profil (3 dernières tentatives toujours gardées).
+- L’historique ne stocke plus que les changements, erreurs et avertissements :
+  les entrées identiques sont comptées (`unchanged_omitted`), une exécution
+  sans changement enregistre une liste d’opérations vide. La baseline
+  bidirectionnelle n’est plus recopiée dans l’historique.
+- À l’ouverture, les journaux `run-….jsonl` sans tentative associée sont
+  supprimés ; à l’enregistrement d’une planification Windows, les dossiers
+  temporaires `native-tasks-…` laissés par d’anciennes versions le sont aussi.
+- Réglages : l’icône ouvre le dossier des données au lieu de copier son chemin.
 - Les tentatives terminées des profils supprimés sont retirées à l’ouverture,
   les exécutions interrompues restent ; compaction si la base est surtout vide.
 - Assistant : un partage réseau Windows exige un chemin UNC, et deux

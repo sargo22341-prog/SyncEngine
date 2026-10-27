@@ -126,12 +126,22 @@ pas à chaque filtre. Voir [les mesures et la migration](STABILITE_COPIE_HISTORI
 
 La v3 ajoute `run_overview` : un résumé borné et la taille stockée de chaque
 tentative, écrits par `begin`/`finish`. La liste affichée au démarrage ne lit
-plus que cette table (une ligne sans résumé retombe sur le JSON original). Les
-plans sont stockés en JSON compact. La rétention garde au plus 100 tentatives
-terminées par profil et, au-delà des 3 plus récentes, retire les plus anciennes
-dès que plans et rapports dépassent 512 Mio pour ce profil. À l’ouverture, les
-tentatives terminées des profils supprimés sont retirées avec leurs journaux
-(les interruptions restent), puis la base est compactée (`VACUUM`) si plus de
+plus que cette table (une ligne sans résumé retombe sur le JSON original).
+
+L’historique n’enregistre que les opérations porteuses d’un changement, d’une
+erreur ou d’un avertissement : les entrées identiques (`keep`/`equivalent`) et
+celles conservées en destination d’une sauvegarde (`keep`/`destination_only`)
+sont seulement comptées dans `unchanged_omitted`. Une exécution sans changement
+stocke `"operations": []`. Les résultats du rapport sont filtrés de la même
+façon et restent alignés par position ; l’index des problèmes est construit
+depuis le rapport complet. La baseline bidirectionnelle n’est pas recopiée
+(elle vit dans `state.sqlite`). Le plan exécuté, lui, reste complet. JSON
+compact. La rétention garde au plus 30 tentatives terminées par profil et,
+au-delà des 3 plus récentes, retire les plus anciennes dès que plans et
+rapports dépassent 512 Mio pour ce profil. À l’ouverture, les tentatives
+terminées des profils supprimés sont retirées avec leurs journaux (les
+interruptions restent), les journaux `run-….jsonl` qu’aucune tentative ne
+référence sont supprimés, puis la base est compactée (`VACUUM`) si plus de
 la moitié du fichier et au moins 256 Mio sont libres. Une base v3 est refusée
 par une version antérieure. Mesure : `cargo run --release -p sync-orchestrator
 --all-features --example overview_timing -- <COPIE_DU_DOSSIER_ETAT>`.

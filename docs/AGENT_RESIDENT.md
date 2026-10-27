@@ -213,10 +213,10 @@ une version debug ni enregistrer des logs continus.
 Le résident n'écrit aucun journal à chaque passage : présence, session et
 dernier reçu sont de taille bornée. `agent-live.json` conserve seulement la
 dernière observation. Les sorties de commande sont JSON ; les erreurs métier
-restent dans l'historique applicatif (100 exécutions terminées par profil,
+restent dans l'historique applicatif (30 exécutions terminées par profil,
 moins si leurs plans dépassent 512 Mio, les 3 dernières étant toujours gardées).
 Les journaux durables `.jsonl` associés aux exécutions terminées suivent
-maintenant cette même rétention de 100 exécutions par profil. Seules les
+maintenant cette même rétention de 30 exécutions par profil. Seules les
 identités terminées encore présentes en base autorisent leur retrait ; les
 exécutions interrompues non diagnostiquées et les fichiers étrangers sont conservés. Une erreur de
 nettoyage est signalée et bloque la validation de fin, sans succès silencieux.

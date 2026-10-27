@@ -19,6 +19,27 @@ pub(crate) fn pick_file(title: &str) -> Option<PathBuf> {
     rfd::FileDialog::new().set_title(title).pick_file()
 }
 
+/// Shows a folder in the system file manager (Explorer, or `xdg-open`).
+/// The viewer is detached: its own exit status is not awaited.
+pub(crate) fn open_folder(path: &Path) -> Result<(), Failure> {
+    if !path.is_dir() {
+        return Err(Failure::new(
+            "unavailable",
+            format!("dossier introuvable : {}", path.display()),
+        ));
+    }
+    let viewer = if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(viewer)
+        .arg(path)
+        .spawn()
+        .map(drop)
+        .map_err(|e| Failure::new("unavailable", format!("ouverture du dossier : {e}")))
+}
+
 #[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(windows)]
