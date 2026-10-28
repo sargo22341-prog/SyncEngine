@@ -312,6 +312,16 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Prévoir fallback documenté pour planification non disponible.
 - Ne pas promettre compatibilité universelle des AppImage.
 
+## TRACES SUR LE SYSTÈME
+
+- Le logiciel est portable : l’inventaire de tout ce qu’il écrit hors du
+  dossier du programme est `docs/TRACES_SYSTEME.md`.
+- Toute nouvelle trace (fichier, dossier, tâche, clé de registre, unité)
+  est ajoutée à cet inventaire et au nettoyage « Supprimer toutes les données
+  de SyncEngine » (`apps/desktop/src/purge.rs`), dans le même changement.
+- Le nettoyage ne touche que nos noms exacts et ne suit jamais un lien ou une
+  jonction.
+
 ## PACKAGING ET LIVRAISON
 
 - Distinguer binaire GUI, CLI et agent dans les paquets.

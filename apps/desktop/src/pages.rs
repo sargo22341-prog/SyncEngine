@@ -886,6 +886,31 @@ impl App {
             ),
             section("Garanties d’exécution", guarantees.into()),
             section(
+                "Données",
+                row![
+                    column![
+                        ui::strong(p.text, "Supprimer toutes les données de SyncEngine", 14.0),
+                        ui::caption(
+                            p,
+                            "Profils, historique, corbeilles, planifications et démarrage automatique : tout ce que SyncEngine a laissé sur ce système. Vos fichiers synchronisés ne sont pas touchés."
+                        )
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
+                    ui::action(
+                        p,
+                        Tone::Danger,
+                        Some(Glyph::Trash),
+                        "Supprimer…",
+                        (!self.busy() && self.agent_job.is_none())
+                            .then_some(Message::Purge(crate::purge_view::PurgeMsg::Ask))
+                    ),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .into()
+            ),
+            section(
                 "Cette version",
                 column![
                     row![ui::caption(p, "Connecteurs inclus :")]

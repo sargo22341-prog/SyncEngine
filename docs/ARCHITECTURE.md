@@ -164,6 +164,38 @@ au-delà de 30 ou de la limite, sans jamais suivre un lien ni une jonction.
 La liste « Voir la corbeille » lit `status.version` des résultats de
 l’historique, avec repli sur le contenu du dossier.
 
+## Interruptions et suivi des fichiers en cours
+
+Une tentative encore « running » alors que la façade possède l'état (aucune
+exécution ne tourne sans cette possession) est une interruption.
+`Application::interruptions` la décrit depuis son journal, lu ligne à ligne
+(`sync_journal::visit_journal`, analyse incrémentale `Recovery`) sans le
+charger entièrement ; `interruption_detail` ajoute les fichiers commencés sans
+issue, les refus et les 100 dernières opérations. `acknowledge_interrupted`
+acquitte puis supprime les journaux (échecs rendus comme avertissements) ;
+`resume_interrupted` acquitte, retire par le connecteur du profil les seuls
+dépôts consignés portant le nom local `.syncengine-….partial` (sans suivre de
+lien), puis supprime les journaux. Le journal n'est jamais rejoué : l'interface
+lance ensuite une nouvelle simulation complète.
+
+Les fichiers en cours ne lisent pas le journal : avec
+`ExecutionOptions::transfer_events` (activé par la façade seulement),
+l'exécuteur émet `TransferProgress` au début de chaque fichier puis au plus
+une fois par intervalle de progression (1 Mio), et `TransferEnded` à la fin.
+Le puits en mémoire garde au plus 16 fichiers ; `JobSnapshot::transfers` et
+`quick_transfers` (copies de moins de 0,5 s) sont publiés par l'agent dans
+`agent-live.json` format 2 (le format 1 reste lu, sans fichiers en cours).
+
+## Traces système et suppression complète
+
+Le logiciel est portable. `docs/TRACES_SYSTEME.md` inventorie tout ce qu’il
+écrit hors du dossier du programme ; `apps/desktop/src/purge.rs` (couche
+présentation, plateforme isolée dans `windows_tasks.rs`/`native.rs`) le
+supprime : arrêt coopératif des agents, contrôle des verrous de commande et
+d’exécution (`sync_orchestrator::hold_execution_lock`), retrait des tâches
+vérifiées, de la valeur `Run` et des unités, puis des dossiers sans suivre de
+lien ni de jonction. Les moteurs ne sont pas concernés.
+
 ## Lectures réseau
 
 Les analyses SMB utilisent maintenant le même cache borné de 64 poignées que

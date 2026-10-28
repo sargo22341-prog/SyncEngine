@@ -39,6 +39,7 @@ impl App {
                         .ok()
                         .flatten();
                 }
+                let lookup = crate::interrupted::lookup(&app);
                 self.backend = Some(app);
                 self.apply_workspace(ws);
                 self.page_t.replay(0.0, 1.0, self.now);
@@ -50,13 +51,19 @@ impl App {
                 if self.boot_cancel_requested {
                     self.boot_cancel_requested = false;
                     if let Some(app) = &self.backend {
-                        return Task::perform(
-                            backend::call(app, sync_orchestrator::Application::agent_cancel_clear),
-                            Message::AgentResumed,
-                        );
+                        return Task::batch([
+                            Task::perform(
+                                backend::call(
+                                    app,
+                                    sync_orchestrator::Application::agent_cancel_clear,
+                                ),
+                                Message::AgentResumed,
+                            ),
+                            lookup,
+                        ]);
                     }
                 }
-                Task::none()
+                lookup
             }
             Message::Booted(Ok(Opening::Waiting(observation))) => {
                 self.boot_polling = false;
@@ -547,14 +554,23 @@ impl App {
             }
             Message::Diagnosed(result) => {
                 match result {
-                    Ok(()) => {
+                    Ok(warnings) => {
                         self.preview = None;
                         self.toast(ToastKind::Info, "Interruption diagnostiquée", "L’exécution reste signalée en échec. Vous pouvez recalculer une simulation, modifier la planification ou retirer le profil.");
+                        if !warnings.is_empty() {
+                            self.toast(
+                                ToastKind::Warning,
+                                "Nettoyage reporté",
+                                warnings.join(" ; "),
+                            );
+                        }
                     }
                     Err(error) => self.fail(&error),
                 }
                 self.refresh()
             }
+            Message::Interrupted(msg) => self.interrupted(msg),
+            Message::Purge(msg) => self.purge(msg),
             Message::Remove(id) => {
                 self.close_dialog();
                 let Some(app) = &self.backend else {
@@ -909,6 +925,9 @@ impl App {
                 Task::none()
             }
             Message::CloseDialog => {
+                if self.purged {
+                    return self.quit();
+                }
                 self.close_dialog();
                 Task::none()
             }
@@ -967,7 +986,7 @@ impl App {
 
     /// Leaves the application. A running task is cancelled first and the
     /// window closes only once its state is durable (see `Refreshed`).
-    fn quit(&mut self) -> Task<Message> {
+    pub(crate) fn quit(&mut self) -> Task<Message> {
         let Some(id) = self.window_id else {
             return iced::exit();
         };

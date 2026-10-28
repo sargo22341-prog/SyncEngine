@@ -1,7 +1,7 @@
 //! Modèle d'événement.
 
 use serde::{Deserialize, Serialize};
-use sync_core::{ExecutionId, ExecutionStatus, ProfileId, Timestamp};
+use sync_core::{ExecutionId, ExecutionStatus, OperationId, ProfileId, ResourcePath, Timestamp};
 use sync_errors::ErrorReport;
 
 /// Instantané agrégé de progression.
@@ -40,6 +40,25 @@ pub enum EventKind {
     },
     /// Progression agrégée.
     Progress(ProgressSnapshot),
+    /// Fichier en cours de transfert : émis au début de sa copie, puis au
+    /// plus une fois par intervalle d'octets de ce fichier, jamais par octet.
+    /// Présentation seulement (fichiers en cours d'un suivi en direct).
+    TransferProgress {
+        /// Opération du plan.
+        operation: OperationId,
+        /// Chemin logique copié.
+        path: ResourcePath,
+        /// Octets lus et déposés pour ce fichier jusqu'ici.
+        bytes_done: u64,
+        /// Taille attendue, si connue.
+        bytes_total: Option<u64>,
+    },
+    /// Fin du transfert de ce fichier vers son dépôt temporaire, réussi ou
+    /// non ; l'issue de l'opération reste dans le journal et le rapport.
+    TransferEnded {
+        /// Opération du plan.
+        operation: OperationId,
+    },
     /// Diagnostic (avertissement ou erreur) déjà caviardé.
     Diagnostic(ErrorReport),
     /// Des événements précédents ont été perdus faute de place.

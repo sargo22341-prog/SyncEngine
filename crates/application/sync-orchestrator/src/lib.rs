@@ -11,10 +11,18 @@ pub use resident::{
     publish_resident_failure, publish_resident_status, request_agent_stop, resident_status,
 };
 mod history;
+mod interrupted;
+pub use interrupted::{
+    FinishedOperation, INTERRUPTION_RECENT, InterruptedFile, Interruption, InterruptionDetail,
+    Resumed,
+};
+/// Outcome of an operation recorded in an execution journal.
+pub use sync_journal::OutcomeCode as JournalOutcome;
 mod pages;
 pub use history::HistoryFilter;
 mod runs;
 mod scheduled;
+pub use scheduled::{hold_execution_lock, user_lock_root};
 mod schedules;
 mod trash;
 pub use trash::{
@@ -23,8 +31,8 @@ pub use trash::{
 
 use connector_local::{LocalConnector, LocalOptions};
 pub use live::{
-    LIVE_FORMAT, LiveJob, LiveQueue, agent_cancel_marker, clear_agent_cancel, desktop_present,
-    hold_desktop_presence, request_agent_cancel, request_agent_pause,
+    LIVE_FORMAT, LIVE_FORMAT_MIN, LiveJob, LiveQueue, agent_cancel_marker, clear_agent_cancel,
+    desktop_present, hold_desktop_presence, request_agent_cancel, request_agent_pause,
 };
 pub use runs::Run;
 use serde::{Deserialize, Serialize};
@@ -158,7 +166,36 @@ pub struct JobSnapshot {
     /// Known bytes to transfer of the executed plan; 0 before execution.
     #[serde(default)]
     pub planned_bytes: u64,
+    /// Files being copied right now, oldest first (at most
+    /// [`MAX_LIVE_TRANSFERS`]), from executor events kept in memory: the
+    /// execution journal is never read for this. Presentation only.
+    #[serde(default)]
+    pub transfers: Vec<LiveTransferFile>,
+    /// Files whose copy ended within [`QUICK_TRANSFER_MS`]: too short to be
+    /// shown one by one, presented as a rate.
+    #[serde(default)]
+    pub quick_transfers: u64,
 }
+
+/// One file being copied, in a [`JobSnapshot`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveTransferFile {
+    /// Logical path of the copied file.
+    pub path: String,
+    /// Expected size, when known.
+    pub size: Option<u64>,
+    /// Bytes read and staged so far (updated about every
+    /// [`LIVE_PROGRESS_BYTES`]).
+    pub bytes_done: u64,
+    /// Time since its copy started, in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// Files listed in [`JobSnapshot::transfers`] (the engine cap on parallel
+/// copies), whatever the number of workers.
+pub const MAX_LIVE_TRANSFERS: usize = 16;
+/// A copy shorter than this is counted in [`JobSnapshot::quick_transfers`].
+pub const QUICK_TRANSFER_MS: u64 = 500;
 
 /// Deletion ceilings applied by one preview of a profile that allows deletions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -212,17 +249,104 @@ pub struct Consent {
 /// hundred cheap atomic stores per second at disk speed.
 pub const LIVE_PROGRESS_BYTES: u64 = 1024 * 1024;
 
+/// Files currently copied, keyed by operation; bounded by
+/// [`MAX_LIVE_TRANSFERS`]. Presentation only.
+#[derive(Default)]
+struct LiveFiles {
+    slots: Mutex<Vec<LiveSlot>>,
+    quick: AtomicU64,
+}
+struct LiveSlot {
+    operation: sync_core::OperationId,
+    file: LiveTransferFile,
+    started: std::time::Instant,
+}
+impl LiveFiles {
+    fn slots(&self) -> MutexGuard<'_, Vec<LiveSlot>> {
+        // Presentation-only poison recovery cannot change execution decisions.
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    fn reset(&self) {
+        self.slots().clear();
+        self.quick.store(0, Relaxed);
+    }
+    fn progress(
+        &self,
+        operation: &sync_core::OperationId,
+        path: &sync_core::ResourcePath,
+        bytes_done: u64,
+        size: Option<u64>,
+    ) {
+        let mut slots = self.slots();
+        if let Some(slot) = slots.iter_mut().find(|s| &s.operation == operation) {
+            slot.file.bytes_done = bytes_done;
+        } else if slots.len() < MAX_LIVE_TRANSFERS {
+            slots.push(LiveSlot {
+                operation: operation.clone(),
+                file: LiveTransferFile {
+                    path: path.as_str().to_owned(),
+                    size,
+                    bytes_done,
+                    elapsed_ms: 0,
+                },
+                started: std::time::Instant::now(),
+            });
+        }
+    }
+    fn ended(&self, operation: &sync_core::OperationId) {
+        let mut slots = self.slots();
+        if let Some(index) = slots.iter().position(|s| &s.operation == operation) {
+            let slot = slots.swap_remove(index);
+            if slot.started.elapsed().as_millis() < u128::from(QUICK_TRANSFER_MS) {
+                self.quick.fetch_add(1, Relaxed);
+            }
+        }
+    }
+    fn publish(&self, snapshot: &mut JobSnapshot) {
+        let mut files: Vec<(std::time::Instant, LiveTransferFile)> = self
+            .slots()
+            .iter()
+            .map(|s| (s.started, s.file.clone()))
+            .collect();
+        files.sort_by_key(|(started, _)| *started);
+        snapshot.transfers = files
+            .into_iter()
+            .map(|(started, mut file)| {
+                file.elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                file
+            })
+            .collect();
+        snapshot.quick_transfers = self.quick.load(Relaxed);
+    }
+}
+
 /// Keeps only the latest transferred-byte count from executor progress
-/// events: no queue, nothing grows with the transfer size.
+/// events, and the files in flight: no queue, nothing grows with the
+/// transfer size.
 struct LiveTransfer {
     transferred: Arc<AtomicU64>,
     verified: Arc<AtomicU64>,
     versioned: Arc<AtomicU64>,
+    files: Arc<LiveFiles>,
 }
 impl EventSink for LiveTransfer {
     fn emit(&self, event: Event) -> EmitOutcome {
-        if let EventKind::Progress(progress) = event.kind() {
-            self.transferred.fetch_max(progress.bytes_done, Relaxed);
+        match event.kind() {
+            EventKind::Progress(progress) => {
+                self.transferred.fetch_max(progress.bytes_done, Relaxed);
+            }
+            EventKind::TransferProgress {
+                operation,
+                path,
+                bytes_done,
+                bytes_total,
+            } => self
+                .files
+                .progress(operation, path, *bytes_done, *bytes_total),
+            EventKind::TransferEnded { operation } => self.files.ended(operation),
+            _ => {}
         }
         if let EventKind::IoActivity {
             verification_bytes,
@@ -250,6 +374,8 @@ pub struct Application {
     transferred: Arc<AtomicU64>,
     verified: Arc<AtomicU64>,
     versioned: Arc<AtomicU64>,
+    /// Files being copied by the current execution.
+    files: Arc<LiveFiles>,
 }
 impl Application {
     /// Opens an existing state directory under an initialization lock and
@@ -304,6 +430,7 @@ impl Application {
             transferred: Arc::new(AtomicU64::new(0)),
             verified: Arc::new(AtomicU64::new(0)),
             versioned: Arc::new(AtomicU64::new(0)),
+            files: Arc::new(LiveFiles::default()),
         })
     }
 
@@ -455,6 +582,7 @@ impl Application {
         self.transferred.store(0, Relaxed);
         self.verified.store(0, Relaxed);
         self.versioned.store(0, Relaxed);
+        self.files.reset();
         *lock(&self.snapshot)? = JobSnapshot {
             active: true,
             control_id: Some(unique("control")?),
@@ -465,6 +593,7 @@ impl Application {
         Ok(cancel)
     }
     fn end<T>(&self, result: Result<T, AppError>, id: &ProfileId) -> Result<T, AppError> {
+        self.files.slots().clear();
         let mut snapshot = lock(&self.snapshot)?;
         snapshot.active = false;
         snapshot.phase = if result.is_ok() {
@@ -821,7 +950,8 @@ impl Application {
         runs::begin(&self.state, &execution, &cached.profile.id, &cached.plan)?;
         let mut options = ExecutionOptions::new()
             .with_deletions_confirmed(confirm_delete)
-            .with_progress_interval(LIVE_PROGRESS_BYTES);
+            .with_progress_interval(LIVE_PROGRESS_BYTES)
+            .with_transfer_events(true);
         options.refresh_mirror_source = cached.profile.mode == SyncMode::Mirror;
         let events = EventEmitter::new(
             execution.clone(),
@@ -830,6 +960,7 @@ impl Application {
                 transferred: Arc::clone(&self.transferred),
                 verified: Arc::clone(&self.verified),
                 versioned: Arc::clone(&self.versioned),
+                files: Arc::clone(&self.files),
             }),
         );
         let result = if cached.profile.mode == SyncMode::Bidirectional {
@@ -923,6 +1054,9 @@ impl Application {
         snapshot.bytes_transferred = self.transferred.load(Relaxed).max(snapshot.bytes_done);
         snapshot.bytes_verified = self.verified.load(Relaxed);
         snapshot.bytes_versioned = self.versioned.load(Relaxed);
+        if snapshot.active {
+            self.files.publish(&mut snapshot);
+        }
         Ok(snapshot)
     }
 
@@ -1048,6 +1182,58 @@ mod scan_progress_tests {
         assert_eq!(snapshot.scan_issues, 5);
         assert_eq!(snapshot.scan_consistency_warnings, 10);
         assert_eq!(snapshot.entries_scanned, 25);
+    }
+
+    #[test]
+    fn files_in_flight_are_bounded_and_short_copies_are_only_counted()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let files = LiveFiles::default();
+        let op = |n: usize| sync_core::OperationId::new(format!("op-{n}"));
+        let path = sync_core::ResourcePath::parse("dossier/vidéo.mkv")?;
+        // Given more files started than the engine can copy at once,
+        for n in 0..MAX_LIVE_TRANSFERS + 4 {
+            files.progress(&op(n)?, &path, 0, Some(10));
+        }
+        files.progress(&op(0)?, &path, 7, Some(10));
+        let mut snapshot = JobSnapshot::default();
+        files.publish(&mut snapshot);
+        // Then the list stays bounded, oldest first, with its progress.
+        assert_eq!(snapshot.transfers.len(), MAX_LIVE_TRANSFERS);
+        assert_eq!(snapshot.transfers[0].bytes_done, 7);
+        assert_eq!(snapshot.transfers[0].size, Some(10));
+        assert_eq!(snapshot.transfers[0].path, "dossier/vidéo.mkv");
+        // When a copy ends at once, Then it leaves the list and is counted
+        // as a quick one; an unknown end changes nothing.
+        files.ended(&op(0)?);
+        files.ended(&op(99)?);
+        files.publish(&mut snapshot);
+        assert_eq!(snapshot.transfers.len(), MAX_LIVE_TRANSFERS - 1);
+        assert_eq!(snapshot.quick_transfers, 1);
+        files.reset();
+        files.publish(&mut snapshot);
+        assert!(snapshot.transfers.is_empty());
+        assert_eq!(snapshot.quick_transfers, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn version_1_live_observations_are_still_read() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let mut value = serde_json::to_value(LiveJob {
+            format: 1,
+            updated_at: 5,
+            snapshot: JobSnapshot::default(),
+        })?;
+        let snapshot = value["snapshot"].as_object_mut().ok_or("not an object")?;
+        snapshot.remove("transfers");
+        snapshot.remove("quick_transfers");
+        std::fs::write(temp.path().join("agent-live.json"), value.to_string())?;
+        let live = LiveJob::read(temp.path())?.ok_or("missing")?;
+        assert!(live.snapshot.transfers.is_empty());
+        value["format"] = (LIVE_FORMAT + 1).into();
+        std::fs::write(temp.path().join("agent-live.json"), value.to_string())?;
+        assert!(LiveJob::read(temp.path()).is_err());
+        Ok(())
     }
 
     #[test]

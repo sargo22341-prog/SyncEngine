@@ -36,6 +36,10 @@ impl App {
     }
 
     pub(crate) fn close_dialog(&mut self) {
+        // A deletion in progress keeps its dialog until its report.
+        if matches!(&self.dialog, Some(Dialog::Purge(d)) if d.running) {
+            return;
+        }
         self.dialog_t.go(0.0, self.now);
     }
 
@@ -73,6 +77,7 @@ impl App {
                 scanned: snapshot
                     .entries_scanned
                     .saturating_add(snapshot.entries_hashed),
+                quick: snapshot.quick_transfers,
             });
             // Keep the drawn span plus one averaging window, never less than
             // two samples.
@@ -88,7 +93,7 @@ impl App {
         let Some(app) = &self.backend else {
             return Task::none();
         };
-        if self.agent_polling {
+        if self.agent_polling || self.purging() {
             return Task::none();
         }
         self.agent_polling = true;
@@ -145,6 +150,7 @@ impl App {
             bytes: s.bytes_transferred,
             operations: s.entries_done,
             scanned: s.entries_scanned.saturating_add(s.entries_hashed),
+            quick: s.quick_transfers,
         };
         let name = self
             .agent_queue
@@ -302,6 +308,7 @@ impl App {
                 bytes: 0,
                 operations: 0,
                 scanned: 0,
+                quick: 0,
             }]),
             cancel_requested: false,
             agent: false,
@@ -637,6 +644,9 @@ impl App {
         captured: bool,
     ) -> Task<Message> {
         if let Key::Named(Named::Escape) = key {
+            if self.purged {
+                return self.quit();
+            }
             if self.menu.is_some() {
                 self.menu = None;
             } else if self.dialog.is_some() {

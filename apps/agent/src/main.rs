@@ -80,9 +80,9 @@ fn run(args: Vec<String>) -> Result<(serde_json::Value, i32), Failure> {
         "acknowledge" if args.len() == 4 && args[3] == "--diagnosed" => {
             let id = ProfileId::new(&args[2])?;
             let app = Application::open(&state)?;
-            app.acknowledge_interrupted(&id, true)?;
+            let warnings = app.acknowledge_interrupted(&id, true)?;
             Ok((
-                serde_json::json!({"interruption_acknowledged":true,"next_run_requires_fresh_scan":true}),
+                serde_json::json!({"interruption_acknowledged":true,"next_run_requires_fresh_scan":true,"maintenance_warnings":warnings}),
                 0,
             ))
         }

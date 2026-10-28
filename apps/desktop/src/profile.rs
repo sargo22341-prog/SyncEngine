@@ -27,6 +27,70 @@ pub(crate) fn action_color(p: &Palette, action: Action) -> Color {
     }
 }
 
+/// Files listed under the throughput curve: one per parallel copy.
+const SHOWN_TRANSFERS: usize = 4;
+/// A copy is listed only once it lasts this long (no flicker).
+const SHOWN_AFTER_MS: u64 = 500;
+
+/// Files being copied (from the live snapshot, never from the journal):
+/// up to four lines with path, own progress bar, bytes and average rate;
+/// shorter copies are summarized as a rate.
+fn transfers<'a>(
+    p: &Palette,
+    s: &sync_orchestrator::JobSnapshot,
+    quick_rate: Option<f32>,
+    color: Color,
+) -> El<'a, Message> {
+    let mut col = column![].spacing(6);
+    for file in s
+        .transfers
+        .iter()
+        .filter(|f| f.elapsed_ms >= SHOWN_AFTER_MS)
+        .take(SHOWN_TRANSFERS)
+    {
+        let fraction = file
+            .size
+            .and_then(|size| model::fraction(file.bytes_done, size))
+            .unwrap_or(0.0);
+        let filled = (fraction * 1000.0).round() as u16;
+        let bar = row![
+            container(Space::new())
+                .width(Length::FillPortion(filled.max(1)))
+                .height(Length::Fixed(4.0))
+                .style(theme::bar(color)),
+            container(Space::new())
+                .width(Length::FillPortion((1000 - filled.min(1000)).max(1)))
+                .height(Length::Fixed(4.0))
+                .style(theme::bar(theme::alpha(p.text, 0.08))),
+        ];
+        let rate = file.bytes_done as f64 / (file.elapsed_ms.max(1) as f64 / 1000.0);
+        let amount = match file.size {
+            Some(size) => format!("{} / {}", model::bytes(file.bytes_done), model::bytes(size)),
+            None => model::bytes(file.bytes_done),
+        };
+        col = col.push(
+            row![
+                container(ui::mono(p.text, model::ellipsize(&file.path, 48), 12.0))
+                    .width(Length::FillPortion(5))
+                    .clip(true),
+                container(bar).width(Length::FillPortion(3)),
+                container(ui::caption(p, amount)).width(Length::Fixed(150.0)),
+                container(ui::caption(p, format!("{}/s", model::bytes(rate as u64))))
+                    .width(Length::Fixed(90.0)),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        );
+    }
+    if let Some(rate) = quick_rate.filter(|r| r.round() >= 1.0) {
+        col = col.push(ui::caption(
+            p,
+            format!("+ {} petits fichiers/s", model::count(rate.round() as u64)),
+        ));
+    }
+    col.into()
+}
+
 fn provider_of(remote: Option<&sync_profiles::RemoteEndpoint>) -> Provider {
     use sync_profiles::RemoteEndpoint as R;
     match remote {
@@ -532,6 +596,10 @@ impl App {
                 theme::alpha(p.text, 0.06),
                 70.0,
             ));
+            if job.kind == JobKind::Execute {
+                let quick = series(|s| s.quick).last().copied();
+                body = body.push(transfers(p, s, quick, color));
+            }
         }
         body = body.push(
             row![

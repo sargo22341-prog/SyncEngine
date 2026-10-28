@@ -5,6 +5,39 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Supprimer toutes les données de SyncEngine
+- Réglages › Données : liste exacte des traces (dossier d’état et corbeilles,
+  `%LOCALAPPDATA%\SyncEngine` ou `~/.local/state/SyncEngine`, tâches
+  planifiées du compte, valeur `Run`, unités systemd et autostart sous Linux,
+  fichiers d’envoi temporaires `.syncengine-….partial`, dossier d’état
+  personnalisé référencé par une tâche), confirmation par « SUPPRIMER »,
+  arrêt de l’agent, retrait, bilan et fermeture.
+- Refusé pendant une synchronisation ou si un agent ne s’arrête pas ; un
+  dossier contenant une racine synchronisée est refusé ; aucun lien ni
+  jonction n’est suivi ; un dossier d’état personnalisé ne perd que nos noms.
+- Nouvel inventaire `docs/TRACES_SYSTEME.md` et règle correspondante dans
+  `AGENTS.md`. Façade : `user_lock_root`, `hold_execution_lock`.
+
+### Interruptions et fichiers en cours
+- À l’ouverture, chaque exécution interrompue (plantage, coupure, fin de
+  session, planifiée comprise) est présentée : opérations terminées sur le
+  total, fichiers en cours au moment de l’arrêt, avec « Voir le détail »
+  (lecture du journal ligne à ligne), « Reprendre » et « J’ai vérifié,
+  ignorer ».
+- « Reprendre » acquitte, retire les fichiers temporaires `.syncengine-….partial`
+  consignés par le journal, puis lance une nouvelle simulation complète ; le
+  journal n’est jamais rejoué.
+- `acknowledge_interrupted` supprime désormais le journal après
+  l’acquittement et renvoie les échecs de suppression (`maintenance_warnings`
+  pour `syncengine-agent acknowledge`).
+- Suivi en direct : jusqu’à quatre fichiers en cours sous la courbe de débit
+  (chemin, barre, octets, débit), affichés après 0,5 s, et « + N petits
+  fichiers/s ». Nouveaux événements `TransferProgress`/`TransferEnded`
+  (option d’exécution `transfer_events`, désactivée par défaut) ;
+  `agent-live.json` passe au format 2, le format 1 reste lu.
+- `sync_journal::visit_journal` et `Recovery` : relecture d’un journal sans le
+  charger entièrement en mémoire.
+
 ### Corbeille par profil et journaux éphémères
 - Profils v4 : réglage `trash` (activée, taille maximale). Les nouveaux
   profils de l’assistant n’ont pas de corbeille ; les profils existants

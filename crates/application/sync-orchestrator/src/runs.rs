@@ -514,7 +514,34 @@ pub(super) fn report_of(
         .transpose()
 }
 
-pub(super) fn acknowledge(root: &Path, id: &ProfileId) -> Result<(), AppError> {
+/// Attempt still marked running: an interruption once no command owns the state.
+pub(super) struct Running {
+    pub(super) execution: String,
+    pub(super) profile: String,
+    pub(super) started: Option<i64>,
+}
+
+/// Running attempts of every profile, or of one, oldest first.
+pub(super) fn running(root: &Path, id: Option<&ProfileId>) -> Result<Vec<Running>, AppError> {
+    let db = open(root)?;
+    let mut stmt = db
+        .prepare("SELECT execution,profile,json_extract(started,'$.secs') FROM runs WHERE state='running' AND (?1 IS NULL OR profile=?1) ORDER BY rowid")
+        .map_err(io)?;
+    stmt.query_map([id.map(ProfileId::as_str)], |r| {
+        Ok(Running {
+            execution: r.get(0)?,
+            profile: r.get(1)?,
+            started: r.get(2)?,
+        })
+    })
+    .map_err(io)?
+    .collect::<Result<_, _>>()
+    .map_err(io)
+}
+
+/// Marks the running attempts of a profile as failed by interruption and
+/// returns their identities (their journals can then be discarded).
+pub(super) fn acknowledge(root: &Path, id: &ProfileId) -> Result<Vec<String>, AppError> {
     let report = serde_json::json!({"code":"interruption_acknowledged", "profile":id});
     let mut db = open(root)?;
     let tx = db.transaction().map_err(io)?;
@@ -536,7 +563,8 @@ pub(super) fn acknowledge(root: &Path, id: &ProfileId) -> Result<(), AppError> {
     for execution in &acknowledged {
         refresh_overview(&tx, "execution=?1", [execution])?;
     }
-    tx.commit().map_err(io)
+    tx.commit().map_err(io)?;
+    Ok(acknowledged)
 }
 
 pub(super) fn unfinished(root: &Path, id: &ProfileId) -> Result<bool, AppError> {

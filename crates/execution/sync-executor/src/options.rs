@@ -42,6 +42,11 @@ pub struct ExecutionOptions {
     /// Octets transférés entre deux événements de progression (en plus d'un
     /// événement par opération).
     pub progress_interval_bytes: u64,
+    /// Émet aussi la progression de chaque fichier transféré
+    /// (`TransferProgress` au début puis par intervalle, `TransferEnded`).
+    /// Faux par défaut : réservé aux observateurs en mémoire qui ne gardent
+    /// que le dernier état ; une file bornée perdrait ces événements.
+    pub transfer_events: bool,
 }
 
 impl Default for ExecutionOptions {
@@ -55,6 +60,7 @@ impl Default for ExecutionOptions {
             max_clock_skew: DEFAULT_MAX_CLOCK_SKEW,
             buffer_size: DEFAULT_BUFFER_SIZE,
             progress_interval_bytes: 8 * 1024 * 1024,
+            transfer_events: false,
         }
     }
 }
@@ -104,6 +110,13 @@ impl ExecutionOptions {
     #[must_use]
     pub fn with_progress_interval(mut self, bytes: u64) -> Self {
         self.progress_interval_bytes = bytes.max(1);
+        self
+    }
+
+    /// Active les événements par fichier (voir [`Self::transfer_events`]).
+    #[must_use]
+    pub fn with_transfer_events(mut self, enabled: bool) -> Self {
+        self.transfer_events = enabled;
         self
     }
 }

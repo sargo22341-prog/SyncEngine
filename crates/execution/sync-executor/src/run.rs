@@ -143,6 +143,24 @@ impl Drop for IoObserver<'_> {
     }
 }
 
+/// Signale la fin du transfert d'un fichier, quelle que soit la sortie.
+struct TransferEnded<'a> {
+    events: Option<&'a EventEmitter>,
+    operation: &'a OperationId,
+}
+impl Drop for TransferEnded<'_> {
+    fn drop(&mut self) {
+        if self.events.is_some() {
+            emit(
+                self.events,
+                EventKind::TransferEnded {
+                    operation: self.operation.clone(),
+                },
+            );
+        }
+    }
+}
+
 /// Avance la progression d'un bloc transféré ; émet au plus un événement
 /// par intervalle d'octets.
 fn advance(
@@ -631,12 +649,35 @@ impl<'a> Run<'a> {
         }
         let events = self.req.events;
         let interval = self.req.options.progress_interval_bytes;
+        // Per-file presentation, opt-in: start, every interval, end (guard).
+        let file_events = events.filter(|_| self.req.options.transfer_events);
+        let file_progress = |bytes_done| EventKind::TransferProgress {
+            operation: op.id().clone(),
+            path: op.path().clone(),
+            bytes_done,
+            bytes_total: source.metadata().size(),
+        };
+        if file_events.is_some() {
+            emit(file_events, file_progress(0));
+        }
+        let _ended = TransferEnded {
+            events: file_events,
+            operation: op.id(),
+        };
+        let (mut file_bytes, mut file_reported) = (0_u64, 0_u64);
         let progress = &mut self.progress;
         let mut journal_error = None;
         let journal = &mut self.req.journal;
         let result = stage_copy_observed(
             &request,
-            &mut |bytes| advance(progress, events, interval, bytes),
+            &mut |bytes| {
+                advance(progress, events, interval, bytes);
+                file_bytes = file_bytes.saturating_add(bytes);
+                if file_events.is_some() && file_bytes - file_reported >= interval {
+                    file_reported = file_bytes;
+                    emit(file_events, file_progress(file_bytes));
+                }
+            },
             &mut |staging| {
                 if let Some(staging) = staging
                     && let Err(error) = journal.append(JournalRecord::StagingCreated {

@@ -183,11 +183,17 @@ ses autorisations persistées, avec installation intégrée au parcours graphiqu
 ## Après une interruption
 
 Si l'agent a été tué en pleine exécution (coupure, fin de session forcée), le
-profil reste bloqué pour éviter un rejeu à l'aveugle. Pour le débloquer :
+profil reste bloqué pour éviter un rejeu à l'aveugle. À la prochaine ouverture
+de l'interface, la fenêtre « Synchronisation interrompue » propose **Voir le
+détail**, **Reprendre** (nouvelle simulation complète après retrait des
+fichiers temporaires consignés) ou **J'ai vérifié, ignorer** : voir
+[le guide](GUIDE.md#après-une-interruption). Sans interface :
 
 1. vérifier qu'aucun processus SyncEngine ne tourne encore ;
 2. examiner le journal (`syncengine journal ETAT/run-….jsonl`), les dossiers et
    les fichiers temporaires `.partial` (ne pas les effacer sans les regarder) ;
-3. `syncengine-agent acknowledge ETAT PROFIL --diagnosed`.
+3. `syncengine-agent acknowledge ETAT PROFIL --diagnosed` (le journal est
+   ensuite supprimé ; un échec de suppression est signalé dans
+   `maintenance_warnings` et retenté à l'ouverture suivante).
 
 L'exécution suivante repart d'un nouveau scan, jamais de l'ancien plan.

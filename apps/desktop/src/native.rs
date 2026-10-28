@@ -61,16 +61,22 @@ fn os(error: impl std::fmt::Display) -> Failure {
 /// Whether the window opens at Windows session start.
 #[cfg(windows)]
 pub(crate) fn startup_enabled() -> Result<bool, Failure> {
+    Ok(startup_command()?.is_some_and(|value| !value.is_empty()))
+}
+
+/// Command of the current-user Run value `SyncEngine`, when present.
+#[cfg(windows)]
+pub(crate) fn startup_command() -> Result<Option<String>, Failure> {
     use winreg::RegKey;
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
     let key = match RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(RUN_KEY, KEY_READ) {
         Ok(key) => key,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(os(e)),
     };
     match key.get_value::<String, _>(RUN_VALUE) {
-        Ok(value) => Ok(!value.is_empty()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Ok(value) => Ok(Some(value)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(os(e)),
     }
 }

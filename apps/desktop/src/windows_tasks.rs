@@ -215,9 +215,15 @@ pub(crate) fn reconcile(state: &Path, needed: bool) -> Result<(), Failure> {
             operations.push_str(&format!("$old=$null; try {{ $old=$folder.GetTask({}) }} catch {{ if ((ErrorCode $_.Exception) -ne -2147024894) {{ throw }} }}; if ($null -ne $old) {{ if (!(Owned $old {} {})) {{ throw 'Tâche étrangère : retrait refusé' }}; $folder.DeleteTask({},0) }};\n", literal(&format!("{prefix}-{event}")),literal(&args),literal(&sid),literal(&format!("{prefix}-{event}"))));
         }
     }
-    // No mutable script/XML is read by the elevated helper. The exact same
-    // command is retried. Partial installs are harmless and retries idempotent.
-    let script = registration_script(&operations);
+    run_registration(&operations)
+}
+
+/// Runs Task Scheduler operations, asking for UAC only after an
+/// access-denied failure. No mutable script/XML is read by the elevated
+/// helper. The exact same command is retried. Partial installs are harmless
+/// and retries idempotent.
+fn run_registration(operations: &str) -> Result<(), Failure> {
+    let script = registration_script(operations);
     let output = powershell(&script)?;
     if output.status.success() {
         return Ok(());
@@ -251,6 +257,91 @@ exit $p.ExitCode
             ),
         ))
     }
+}
+
+/// Task names of SyncEngine, current (`SyncEngine-<SID>-<hash>-…`) and
+/// historical global ones (`SyncEngine-resident`, `-clock`, `-logon`).
+const TASK_PREFIX: &str = "SyncEngine-";
+
+/// Condition of a task SyncEngine may remove when everything is deleted:
+/// our name prefix, a single action launching `syncengine-agent.exe`, and
+/// this account as principal. Arguments may name any state directory.
+const PURGEABLE: &str = r"function Purgeable($task,$sid) { return $task.Name.StartsWith('SyncEngine-') -and $task.Definition.Actions.Count -eq 1 -and $task.Definition.Actions.Item(1).Type -eq 0 -and [IO.Path]::GetFileName($task.Definition.Actions.Item(1).Path) -eq 'syncengine-agent.exe' -and (SameUser $task.Definition.Principal.UserId $sid) };";
+
+/// SyncEngine tasks of this account in the root folder, with the arguments
+/// of their action (they name the state directory).
+pub(crate) fn purgeable_tasks() -> Result<Vec<(String, String)>, Failure> {
+    let output = powershell(&format!(
+        r#"$ErrorActionPreference='Stop'; {OWNERSHIP} {PURGEABLE}
+$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+$service=New-Object -ComObject 'Schedule.Service'; $service.Connect(); $folder=$service.GetFolder('\');
+foreach ($task in $folder.GetTasks(1)) {{ if (Purgeable $task $sid) {{ [Console]::Out.Write($task.Name + "`t" + $task.Definition.Actions.Item(1).Arguments + "`n") }} }}"#
+    ))?;
+    if !output.status.success() {
+        return Err(Failure::new(
+            "scheduler_install",
+            format!(
+                "Lecture des tâches planifiées impossible : {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (name, arguments) = line.split_once('\t')?;
+            name.starts_with(TASK_PREFIX)
+                .then(|| (name.to_owned(), arguments.trim_end().to_owned()))
+        })
+        .collect())
+}
+
+/// Removes the named tasks after checking them again (same condition as
+/// [`purgeable_tasks`]); an absent task is already removed. A running
+/// instance is not stopped: the agent is asked to stop beforehand.
+pub(crate) fn remove_tasks(names: &[String]) -> Result<(), Failure> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mut operations = format!(
+        "{PURGEABLE} $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;\n"
+    );
+    for name in names {
+        operations.push_str(&format!(
+            "$old=$null; try {{ $old=$folder.GetTask({}) }} catch {{ if ((ErrorCode $_.Exception) -ne -2147024894) {{ throw }} }}; if ($null -ne $old) {{ if (!(Purgeable $old $sid)) {{ throw 'Tâche étrangère : retrait refusé' }}; $folder.DeleteTask($old.Name,0) }};\n",
+            literal(name)
+        ));
+    }
+    run_registration(&operations)
+}
+
+/// State directory named by the arguments of an agent task
+/// (`resident "C:\…"`, `tick "C:\…" clock`), decoded with the rules of
+/// `platform_windows` quoting.
+pub(crate) fn task_state(arguments: &str) -> Option<std::path::PathBuf> {
+    let quoted = &arguments[arguments.find('"')? + 1..];
+    let mut value = String::new();
+    let mut slashes = 0_usize;
+    for c in quoted.chars() {
+        match c {
+            '\\' => slashes += 1,
+            '"' if slashes % 2 == 1 => {
+                value.extend(std::iter::repeat_n('\\', slashes / 2));
+                value.push('"');
+                slashes = 0;
+            }
+            '"' => {
+                value.extend(std::iter::repeat_n('\\', slashes / 2));
+                return Some(value.into());
+            }
+            other => {
+                value.extend(std::iter::repeat_n('\\', slashes));
+                value.push(other);
+                slashes = 0;
+            }
+        }
+    }
+    None
 }
 
 fn migration_operations(
@@ -399,6 +490,53 @@ $task.Definition.Principal.LogonType=3;
 if (Owned $task 'resident "C:\other"' $sid) {{ throw 'foreign state accepted' }}
 $task.Definition.Actions.Value.Path='C:\foreign.exe';
 if (Owned $task 'resident "C:\etat"' $sid) {{ throw 'foreign action accepted' }}
+"#
+        ))?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn task_arguments_give_back_the_exact_state_directory() -> Result<(), Box<dyn std::error::Error>>
+    {
+        for state in [
+            r"C:\Users\x\AppData\Roaming\org.syncengine.desktop",
+            r"\\nas\partage\état \x\",
+            r#"C:\a "quoted" \\ dir"#,
+        ] {
+            let invocation = AgentInvocation {
+                executable: r"C:\portable\syncengine-agent.exe".into(),
+                state: state.into(),
+            };
+            let resident = platform_windows::resident_arguments(&invocation)?;
+            assert_eq!(task_state(&resident), Some(state.into()), "{resident}");
+            let legacy = platform_windows::legacy_arguments(&invocation, "clock")?;
+            assert_eq!(task_state(&legacy), Some(state.into()), "{legacy}");
+        }
+        assert_eq!(task_state("resident"), None);
+        assert_eq!(task_state("resident \"unterminated"), None);
+        Ok(())
+    }
+
+    #[test]
+    fn purge_condition_accepts_only_our_agent_for_this_account() -> Result<(), Failure> {
+        // Mock tasks only: nothing is read from or written to the real scheduler.
+        let setup = include_str!("windows_tasks_mock.ps1");
+        let output = powershell(&format!(
+            r#"$ErrorActionPreference='Stop'; {setup} {OWNERSHIP} {PURGEABLE}
+$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+$task=NewTask 'SyncEngine-S-1-5-21-1-0123456789abcdef-resident' 'resident "C:\autre"';
+$task.Definition.Principal.UserId=$sid; $task.Definition.Actions.Value | Add-Member -NotePropertyName Type -NotePropertyValue 0;
+if (!(Purgeable $task $sid)) {{ throw 'own task rejected' }}
+if (Purgeable $task 'S-1-0-0') {{ throw 'foreign account accepted' }}
+$task.Definition.Actions.Value.Path='C:\Windows\notepad.exe';
+if (Purgeable $task $sid) {{ throw 'foreign action accepted' }}
+$task.Definition.Actions.Value.Path='C:\portable\syncengine-agent.exe'; $task.Name='Backup-resident';
+if (Purgeable $task $sid) {{ throw 'foreign name accepted' }}
 "#
         ))?;
         assert!(

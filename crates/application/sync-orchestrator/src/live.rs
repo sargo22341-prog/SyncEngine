@@ -14,8 +14,12 @@ use std::io::ErrorKind;
 use std::path::Path;
 use sync_core::Timestamp;
 
-/// Version of the [`LiveJob`] file format.
-pub const LIVE_FORMAT: u32 = 1;
+/// Version of the [`LiveJob`] file format written by this version (2 adds
+/// the files in flight, [`JobSnapshot::transfers`]).
+pub const LIVE_FORMAT: u32 = 2;
+/// Oldest [`LiveJob`] format still read: its missing fields take their
+/// defaults (no file in flight shown).
+pub const LIVE_FORMAT_MIN: u32 = 1;
 const LIVE_FILE: &str = "agent-live.json";
 const PRESENCE_FILE: &str = "window.lock";
 /// Persistent stop marker: cancels the running agent job and blocks the next
@@ -106,7 +110,7 @@ impl LiveJob {
             Err(e) => return Err(io(e)),
         };
         let live: Self = serde_json::from_slice(&bytes).map_err(|e| error("format", e))?;
-        if live.format != LIVE_FORMAT {
+        if !(LIVE_FORMAT_MIN..=LIVE_FORMAT).contains(&live.format) {
             return Err(error("format", "format de progression inconnu"));
         }
         Ok(Some(live))

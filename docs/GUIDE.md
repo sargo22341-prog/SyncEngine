@@ -152,6 +152,38 @@ suppressions, quel que soit le mode.
   restauration en place : un miroir supprimerait de nouveau le fichier.
 - **Retirer un profil** supprime sa corbeille (la confirmation l'indique).
 
+## Après une interruption
+
+Si une synchronisation a été arrêtée brutalement (plantage, coupure de
+courant, fermeture de session, y compris une synchronisation planifiée), une
+fenêtre s'ouvre au démarrage suivant :
+
+```
+⚠ Synchronisation interrompue
+« Photos » — 28/10/2026 21:14 UTC
+1 204 opérations terminées sur 3 018
+2 fichiers en cours au moment de l'arrêt (état inconnu)
+[Voir le détail] [J'ai vérifié, ignorer] [Reprendre]
+```
+
+- **Voir le détail** : vue lisible du journal de l'exécution (jamais le
+  fichier brut) : d'abord les fichiers commencés mais jamais terminés, avec le
+  fichier temporaire qui peut subsister, puis les refus et échecs et les
+  dernières opérations terminées.
+- **Reprendre** : acquitte l'interruption, retire les fichiers temporaires de
+  la copie interrompue (seulement ceux nommés `.syncengine-….partial` et
+  consignés dans le journal ; les autres sont listés pour vérification), puis
+  lance une **nouvelle simulation complète**. Le journal n'est jamais rejoué :
+  les fichiers déjà copiés apparaissent identiques et sont sautés. Il reste à
+  confirmer l'exécution comme d'habitude.
+- **J'ai vérifié, ignorer** : acquitte l'interruption sans rien toucher
+  d'autre ; l'exécution reste signalée en échec.
+
+Dans les deux cas, le journal est supprimé après l'acquittement. Tant que
+l'interruption n'est pas acquittée, le profil reste bloqué et son journal est
+conservé, même après plusieurs redémarrages. Si plusieurs exécutions sont
+interrompues, elles sont présentées l'une après l'autre.
+
 ## L'interface
 
 - **Rail** à gauche : Profils, Activité, Historique, Planification, thème,
@@ -179,6 +211,14 @@ les 128 Mio pendant l'écriture : le débit affiché est celui du disque, pas
 celui du cache de Windows/Linux. Le nombre d'opérations par seconde est
 affiché à côté (création de dossiers, petits fichiers). La relecture de
 vérification d'un fichier n'est pas comptée comme débit.
+
+Sous la courbe, jusqu'à quatre lignes montrent les fichiers en cours de copie
+(une par copie parallèle) : chemin, barre de progression du fichier, octets
+copiés sur sa taille et débit moyen de ce fichier. Un fichier n'apparaît qu'au
+bout d'environ 0,5 s, pour éviter le clignotement ; les copies plus courtes
+sont résumées par « + N petits fichiers/s ». Ces informations viennent du
+suivi en mémoire (et de `agent-live.json` pour une synchronisation planifiée),
+jamais du journal.
 
 Le pourcentage de l'anneau mesure **le volume** : (octets copiés + opérations
 terminées) / (octets prévus + opérations prévues), la formule de FreeFileSync.
@@ -229,11 +269,11 @@ chemin absolu avant de lancer l'interface.
 | `state.sqlite` | baselines, tombstones et historique |
 | `scheduler.sqlite` | planifications autorisées |
 | `desktop-runs.sqlite` | 30 dernières exécutions par profil : seulement leurs changements, erreurs et avertissements |
-| `run-….jsonl` | journal d'une exécution en cours ou interrompue ; supprimé dès que son bilan est enregistré (à l'ouverture, ceux des exécutions terminées le sont aussi) |
+| `run-….jsonl` | journal d'une exécution en cours ou interrompue ; supprimé dès que son bilan est enregistré, ou après l'acquittement d'une interruption (à l'ouverture, ceux des exécutions terminées le sont aussi) |
 | `Corbeille/<profil>/<exécution>/` | corbeille des profils : anciennes versions des fichiers remplacés ou supprimés |
 | `versions/` | copies faites par les versions antérieures de SyncEngine ; plus alimenté |
 | `desktop-ui.json` | thème, groupes repliés, comportement du bouton × |
-| `agent-live.json` | progression publiée par l'agent pour l'affichage (pas une source de vérité) |
+| `agent-live.json` | progression publiée par l'agent pour l'affichage, fichiers en cours compris (format 2 ; le format 1 reste lu) — pas une source de vérité |
 | `agent.lock` | verrou OS de l'agent par dossier d'état, libéré après la mort du processus |
 | `agent-status.json` | dernière phase du résident ; sa présence seule ne prouve pas que le processus tourne |
 | `agent-stop.request` | arrêt explicite persistant du processus résident |
@@ -245,6 +285,15 @@ Aucun mot de passe ni jeton n'y est stocké. Le dossier d'état doit être sur u
 disque local, hors des dossiers synchronisés. Supprimer le programme ne
 supprime pas ces données. Réglages → icône dossier ouvre ce dossier dans
 l'explorateur de fichiers.
+
+**Tout supprimer** : Réglages › Données › « Supprimer toutes les données de
+SyncEngine… » liste exactement ce qui sera supprimé (dossier d'état avec
+corbeilles, verrous, tâches planifiées, démarrage automatique, unités
+systemd), avec les tailles. Il faut taper `SUPPRIMER` pour confirmer ; l'agent
+est arrêté d'abord, un bilan s'affiche, puis SyncEngine se ferme. Il ne reste
+qu'à supprimer le dossier du programme. Refusé pendant une synchronisation ;
+les dossiers synchronisés ne sont jamais touchés. Inventaire et limites :
+[traces laissées sur le système](TRACES_SYSTEME.md).
 
 Sauvegarde, restauration et purge de l'historique (applications fermées,
 Python 3.12+) :

@@ -193,3 +193,33 @@ fn record_format_is_stable() {
         r#"{"type":"operation_finished","operation":"op-000007","path":"d/x","action":"copy","outcome":"refused","bytes":0,"error_class":null,"detail":null}"#
     );
 }
+
+#[test]
+fn streamed_reading_matches_the_full_replay_and_tolerates_a_cut_tail() {
+    // Given an interrupted journal whose last line was cut by a crash,
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("exec.jsonl");
+    let mut journal = FileJournal::create(&path).unwrap();
+    interrupted_run(&mut journal);
+    drop(journal);
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str("{\"format_version\":1,\"seq");
+    std::fs::write(&path, &text).unwrap();
+    // When it is read line by line,
+    let mut recovery = sync_journal::Recovery::new();
+    let truncated =
+        sync_journal::visit_journal(&path, |line| recovery.push(line.record())).unwrap();
+    // Then the diagnosis equals the one of the full replay.
+    assert!(truncated);
+    assert_eq!(
+        recovery.finish(truncated),
+        parse_journal(&text).unwrap().recovery()
+    );
+    // A corrupt line before the end is refused, never interpreted.
+    let lines: Vec<&str> = text.lines().collect();
+    std::fs::write(&path, format!("{}\nnot json\n{}\n", lines[0], lines[1])).unwrap();
+    assert!(matches!(
+        sync_journal::visit_journal(&path, |_| ()),
+        Err(JournalError::Corrupt { line: 2 })
+    ));
+}

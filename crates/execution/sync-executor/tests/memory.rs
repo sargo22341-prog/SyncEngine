@@ -1037,3 +1037,64 @@ fn progress_events_are_aggregated() {
         [ExecutionStatus::Running, ExecutionStatus::Succeeded]
     );
 }
+
+#[test]
+fn per_file_transfer_events_are_opt_in_and_bounded() {
+    // Given a 50 000-byte copy observed with a 16 KiB interval,
+    let source = MemoryConnector::new("source").file("gros.bin", &[1u8; 50_000], ts(10));
+    let run = |transfer_events: bool| {
+        let destination = MemoryConnector::new("destination").writable();
+        let plan = backup_plan(&source, &destination);
+        let recorder = Recorder::new(None);
+        let emitter = recorder.emitter();
+        Executor::new()
+            .execute(
+                ExecutionRequest::new(
+                    &plan,
+                    &source,
+                    &destination,
+                    ExecutionId::new("exec-test").unwrap(),
+                    &mut MemoryJournal::new(),
+                    &CancellationToken::new(),
+                )
+                .with_options(
+                    confirmed()
+                        .with_progress_interval(16_384)
+                        .with_transfer_events(transfer_events),
+                )
+                .with_events(&emitter)
+                .at(now()),
+            )
+            .unwrap();
+        recorder.events()
+    };
+    // When per-file events are not requested, Then none is emitted.
+    assert!(!run(false).iter().any(|e| matches!(
+        e.kind(),
+        sync_events::EventKind::TransferProgress { .. }
+            | sync_events::EventKind::TransferEnded { .. }
+    )));
+    // When they are, Then the file starts at 0, advances per interval (not
+    // per block) with its size, and ends exactly once.
+    let events = run(true);
+    let done: Vec<(u64, Option<u64>)> = events
+        .iter()
+        .filter_map(|e| match e.kind() {
+            sync_events::EventKind::TransferProgress {
+                path,
+                bytes_done,
+                bytes_total,
+                ..
+            } if path.as_str() == "gros.bin" => Some((*bytes_done, *bytes_total)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(done.first(), Some(&(0, Some(50_000))));
+    assert!(done.len() <= 5, "{done:?}");
+    assert!(done.windows(2).all(|w| w[0].0 < w[1].0));
+    let ended = events
+        .iter()
+        .filter(|e| matches!(e.kind(), sync_events::EventKind::TransferEnded { .. }))
+        .count();
+    assert_eq!(ended, 1);
+}

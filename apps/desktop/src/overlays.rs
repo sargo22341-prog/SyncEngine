@@ -273,6 +273,8 @@ impl App {
                 self.execute_dialog(&dp, profile, *confirm_delete, *confirm_permanent),
             ),
             Dialog::Trash(trash) => (720.0, self.trash_dialog(&dp, trash)),
+            Dialog::Interrupted(d) => (680.0, self.interrupted_dialog(&dp, d)),
+            Dialog::Purge(d) => (640.0, self.purge_dialog(&dp, d)),
             Dialog::Remove { profile } => {
                 let name = self
                     .profile(profile)
@@ -312,7 +314,7 @@ impl App {
                 column![
                     dialog_head(&dp, Glyph::Alert, dp.warning, "Confirmer le diagnostic de l’interruption"),
                     ui::muted(&dp, "Vérifiez que le transfert est arrêté, puis examinez les fichiers et l’historique. Des copies partielles ou des versions temporaires peuvent subsister après un arrêt forcé."),
-                    ui::muted(&dp, "Votre confirmation marque l’ancienne exécution en échec et lève son blocage. Les fichiers, journaux et la corbeille sont conservés. L’ancienne échéance n’est pas rejouée ; les prochaines échéances autorisées pourront s’exécuter après une nouvelle analyse."),
+                    ui::muted(&dp, "Votre confirmation marque l’ancienne exécution en échec et lève son blocage. Les fichiers et la corbeille sont conservés ; le journal de l’exécution est supprimé après la confirmation. L’ancienne échéance n’est pas rejouée ; les prochaines échéances autorisées pourront s’exécuter après une nouvelle analyse."),
                     row![
                         ui::fill(),
                         ui::action(&dp, Tone::Ghost, None, "Annuler", Some(Message::CloseDialog)),

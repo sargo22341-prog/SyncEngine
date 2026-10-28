@@ -63,6 +63,8 @@ pub(crate) struct Sample {
     /// Completed operations (folders created, files validated, deletions).
     pub(crate) operations: u64,
     pub(crate) scanned: u64,
+    /// Copies too short to be listed (see `JobSnapshot::quick_transfers`).
+    pub(crate) quick: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +180,10 @@ pub(crate) enum Dialog {
     },
     /// Content of a profile trash (« Voir la corbeille »).
     Trash(Box<crate::trash::TrashDialog>),
+    /// Executions interrupted by a crash, shown at start-up.
+    Interrupted(Box<crate::interrupted::InterruptedDialog>),
+    /// « Supprimer toutes les données de SyncEngine ».
+    Purge(Box<crate::purge_view::PurgeDialog>),
     Remove {
         profile: ProfileId,
     },
@@ -274,7 +280,10 @@ pub(crate) enum Message {
     Removed(Result<(), Failure>),
     AskDiagnose(ProfileId),
     Diagnose(ProfileId),
-    Diagnosed(Result<(), Failure>),
+    /// Journal clean-up warnings once acknowledged.
+    Diagnosed(Result<Vec<String>, Failure>),
+    Interrupted(crate::interrupted::InterruptedMsg),
+    Purge(crate::purge_view::PurgeMsg),
     MoveTo(ProfileId, String),
     Moved(backend::Batch),
     // Groups.
@@ -382,6 +391,9 @@ pub(crate) struct App {
     /// Notification-area icon, or why none could be created.
     pub(crate) tray: Result<Tray, String>,
     pub(crate) busy_refresh: bool,
+    /// Every trace was deleted: nothing may be read or written any more,
+    /// the application only shows the report and closes.
+    pub(crate) purged: bool,
 }
 
 pub(crate) const SEARCH_ID: &str = "profile-search";
@@ -451,6 +463,7 @@ impl App {
             frame: titlebar::Frame::default(),
             tray: Tray::create(charts::icon_rgba(), charts::ICON_SIZE),
             busy_refresh: false,
+            purged: false,
         };
         let light = app.wants_light();
         app.theme_t = Tween::new(if light { 1.0 } else { 0.0 }, 450, Ease::InOutCubic);
@@ -561,6 +574,12 @@ impl App {
         self.job.is_some()
     }
 
+    /// All data is being or has been deleted: no read may recreate a file
+    /// in the state directory (the agent observation creates its lock file).
+    pub(crate) fn purging(&self) -> bool {
+        self.purged || matches!(&self.dialog, Some(Dialog::Purge(d)) if d.running)
+    }
+
     /// Job shown live: the one of this window first, else the agent's.
     pub(crate) fn live_job(&self) -> Option<&Job> {
         self.job.as_ref().or(self.agent_job.as_ref())
@@ -607,7 +626,7 @@ impl App {
     }
 
     pub(crate) fn refresh(&mut self) -> Task<Message> {
-        let Some(app) = &self.backend else {
+        let Some(app) = self.backend.as_ref().filter(|_| !self.purged) else {
             return Task::none();
         };
         self.busy_refresh = true;
@@ -618,7 +637,7 @@ impl App {
     }
 
     pub(crate) fn save_prefs(&mut self) {
-        if let Some(dir) = &self.state_dir
+        if let Some(dir) = self.state_dir.as_ref().filter(|_| !self.purged)
             && let Err(e) = self.prefs.save(dir)
         {
             self.toast(
@@ -730,7 +749,7 @@ impl App {
             // Live spinners and polling at a power-friendly ~25 fps.
             subs.push(time::every(Duration::from_millis(40)).map(Message::Frame));
         }
-        if self.backend.is_some() {
+        if self.backend.is_some() && !self.purging() {
             // Scheduled runs of the agent: about as often as it publishes
             // while one is followed, rarely otherwise (one tiny file read).
             let every = if self.agent_job.is_some() { 500 } else { 1500 };

@@ -460,80 +460,114 @@ impl Replay {
     /// Analyse de reprise.
     #[must_use]
     pub fn recovery(&self) -> RecoveryReport {
-        let mut report = RecoveryReport {
-            truncated_tail: self.truncated_tail,
-            ..RecoveryReport::default()
-        };
-        let mut open: Vec<InFlight> = Vec::new();
-        let mut directions = std::collections::BTreeMap::new();
+        let mut recovery = Recovery::new();
         for entry in &self.lines {
-            match &entry.record {
-                JournalRecord::OperationDirection { operation, target } => {
-                    directions.insert(operation.clone(), *target);
-                }
-                JournalRecord::ExecutionStarted {
-                    execution,
-                    plan,
-                    mutations,
-                    ..
-                } => {
-                    report.execution = Some(execution.clone());
-                    report.plan = Some(plan.clone());
-                    report.mutations_planned = *mutations;
-                }
-                JournalRecord::OperationStarted {
-                    operation,
-                    path,
-                    action,
-                } => open.push(InFlight {
-                    target: directions
-                        .get(operation)
-                        .copied()
-                        .unwrap_or(PlanSide::Destination),
-                    operation: operation.clone(),
-                    path: path.clone(),
-                    action: *action,
-                    staging: None,
-                    version: None,
-                }),
-                JournalRecord::StagingCreated { operation, staging } => {
-                    if let Some(op) = open.iter_mut().find(|op| &op.operation == operation) {
-                        op.staging = Some(staging.clone());
-                    }
-                }
-                JournalRecord::VersionPreserved {
-                    operation,
-                    location,
-                } => {
-                    if let Some(op) = open.iter_mut().find(|op| &op.operation == operation) {
-                        op.version = Some(location.clone());
-                    }
-                }
-                JournalRecord::OperationFinished {
-                    operation,
-                    outcome,
-                    bytes,
-                    ..
-                } => {
-                    open.retain(|op| &op.operation != operation);
-                    let totals = &mut report.totals;
-                    match outcome {
-                        OutcomeCode::Done => totals.done += 1,
-                        OutcomeCode::NoAction => totals.no_action += 1,
-                        OutcomeCode::Refused => totals.refused += 1,
-                        OutcomeCode::Failed => totals.failed += 1,
-                        OutcomeCode::Cancelled => totals.cancelled += 1,
-                        OutcomeCode::NotStarted => totals.not_started += 1,
-                    }
-                    totals.bytes = totals.bytes.saturating_add(*bytes);
-                }
-                JournalRecord::ExecutionFinished { status, .. } => {
-                    report.finished = Some(*status);
+            recovery.push(&entry.record);
+        }
+        recovery.finish(self.truncated_tail)
+    }
+}
+
+/// Analyse de reprise incrémentale : les enregistrements sont fournis un à
+/// un (voir [`visit_journal`]), sans garder le journal en mémoire. Seules les
+/// opérations encore ouvertes sont retenues.
+#[derive(Debug, Default)]
+pub struct Recovery {
+    report: RecoveryReport,
+    open: Vec<InFlight>,
+    directions: std::collections::BTreeMap<OperationId, PlanSide>,
+}
+
+impl Recovery {
+    /// Analyse vide.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Prend en compte l'enregistrement suivant.
+    pub fn push(&mut self, record: &JournalRecord) {
+        let report = &mut self.report;
+        match record {
+            JournalRecord::OperationDirection { operation, target } => {
+                self.directions.insert(operation.clone(), *target);
+            }
+            JournalRecord::ExecutionStarted {
+                execution,
+                plan,
+                mutations,
+                ..
+            } => {
+                report.execution = Some(execution.clone());
+                report.plan = Some(plan.clone());
+                report.mutations_planned = *mutations;
+            }
+            JournalRecord::OperationStarted {
+                operation,
+                path,
+                action,
+            } => self.open.push(InFlight {
+                target: self
+                    .directions
+                    .remove(operation)
+                    .unwrap_or(PlanSide::Destination),
+                operation: operation.clone(),
+                path: path.clone(),
+                action: *action,
+                staging: None,
+                version: None,
+            }),
+            JournalRecord::StagingCreated { operation, staging } => {
+                if let Some(op) = self.open.iter_mut().find(|op| &op.operation == operation) {
+                    op.staging = Some(staging.clone());
                 }
             }
+            JournalRecord::VersionPreserved {
+                operation,
+                location,
+            } => {
+                if let Some(op) = self.open.iter_mut().find(|op| &op.operation == operation) {
+                    op.version = Some(location.clone());
+                }
+            }
+            JournalRecord::OperationFinished {
+                operation,
+                outcome,
+                bytes,
+                ..
+            } => {
+                self.open.retain(|op| &op.operation != operation);
+                let totals = &mut report.totals;
+                match outcome {
+                    OutcomeCode::Done => totals.done += 1,
+                    OutcomeCode::NoAction => totals.no_action += 1,
+                    OutcomeCode::Refused => totals.refused += 1,
+                    OutcomeCode::Failed => totals.failed += 1,
+                    OutcomeCode::Cancelled => totals.cancelled += 1,
+                    OutcomeCode::NotStarted => totals.not_started += 1,
+                }
+                totals.bytes = totals.bytes.saturating_add(*bytes);
+            }
+            JournalRecord::ExecutionFinished { status, .. } => {
+                report.finished = Some(*status);
+            }
         }
-        report.in_flight = open;
-        report
+    }
+
+    /// Opérations commencées sans issue à ce point de la relecture.
+    #[must_use]
+    pub fn in_flight(&self) -> &[InFlight] {
+        &self.open
+    }
+
+    /// Diagnostic final ; `truncated_tail` : dernière ligne incomplète ignorée.
+    #[must_use]
+    pub fn finish(self, truncated_tail: bool) -> RecoveryReport {
+        RecoveryReport {
+            truncated_tail,
+            in_flight: self.open,
+            ..self.report
+        }
     }
 }
 
@@ -594,4 +628,61 @@ pub fn parse_journal(text: &str) -> Result<Replay, JournalError> {
 pub fn read_journal(path: &Path) -> Result<Replay, JournalError> {
     let text = std::fs::read_to_string(path).map_err(JournalError::Io)?;
     parse_journal(&text)
+}
+
+/// Relit un journal fichier ligne à ligne, avec les mêmes règles que
+/// [`parse_journal`], sans le charger entièrement : la mémoire est bornée par
+/// la plus longue ligne. Chaque ligne valide est remise à `visit`, dans l'ordre.
+/// Retourne vrai si une dernière ligne incomplète a été ignorée.
+///
+/// # Errors
+/// [`JournalError::Io`] si le fichier est illisible (ou non UTF-8), puis
+/// [`JournalError::Corrupt`], [`JournalError::UnsupportedVersion`] ou
+/// [`JournalError::Sequence`] ; les lignes déjà remises restent valides.
+pub fn visit_journal(
+    path: &Path,
+    mut visit: impl FnMut(&JournalLine),
+) -> Result<bool, JournalError> {
+    use std::io::BufRead;
+    let mut reader = io::BufReader::new(File::open(path).map_err(JournalError::Io)?);
+    let mut raw = String::new();
+    let mut number = 0_usize;
+    let mut expected = 0_u64;
+    loop {
+        raw.clear();
+        if reader.read_line(&mut raw).map_err(JournalError::Io)? == 0 {
+            return Ok(false);
+        }
+        number += 1;
+        let complete = raw.ends_with('\n');
+        let text = raw.trim_end_matches(['\n', '\r']);
+        if text.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = match serde_json::from_str(text) {
+            Ok(value) => value,
+            // Only a last line without its newline can be cut by a crash.
+            Err(_) if !complete => return Ok(true),
+            Err(_) => return Err(JournalError::Corrupt { line: number }),
+        };
+        let version = value
+            .get("format_version")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(JournalError::Corrupt { line: number })?;
+        if version != u64::from(JOURNAL_FORMAT_VERSION) {
+            return Err(JournalError::UnsupportedVersion {
+                found: u32::try_from(version).unwrap_or(u32::MAX),
+            });
+        }
+        let entry: JournalLine =
+            serde_json::from_value(value).map_err(|_| JournalError::Corrupt { line: number })?;
+        if entry.sequence != expected {
+            return Err(JournalError::Sequence {
+                expected,
+                found: entry.sequence,
+            });
+        }
+        expected += 1;
+        visit(&entry);
+    }
 }

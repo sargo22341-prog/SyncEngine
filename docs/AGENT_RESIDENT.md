@@ -97,9 +97,11 @@ puis C. L’interface conserve uniquement un historique borné de mesures en mé
 Après un arrêt forcé, l’agent peut être présent alors que le profil reste bloqué
 sur une prise interrompue. Dans le profil, choisir **Diagnostiquer l’interruption**,
 vérifier l’historique et les fichiers, puis confirmer **J’ai vérifié : lever le
-blocage**. L’ancienne exécution reste un échec ; les journaux, fichiers temporaires
-et versions sont conservés. La prise correspondante est acquittée sans être
-rejouée. Il devient ensuite possible de retirer le profil ou revoir son horaire.
+blocage**. L’ancienne exécution reste un échec ; les fichiers temporaires et la
+corbeille sont conservés, le journal est supprimé après l'acquittement. La
+fenêtre « Synchronisation interrompue » affichée au démarrage offre aussi
+**Reprendre** (retrait des fichiers temporaires consignés puis nouvelle
+simulation). La prise correspondante est acquittée sans être rejouée. Il devient ensuite possible de retirer le profil ou revoir son horaire.
 Une exécution réellement active reste protégée par les verrous de commande et
 d’exécution. L’action de diagnostic ne lance pas elle-même un transfert ; les
 échéances futures autorisées restent actives et repartent d’une nouvelle analyse.
