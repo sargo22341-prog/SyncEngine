@@ -139,7 +139,7 @@ In French:
   during a run.
 - Scheduled runs need native tasks: one click on Windows, manual systemd setup on Linux; see
   [scheduling](docs/PLANIFICATION.md).
-- Linux builds are checked on Ubuntu 24.04 in CI; Debian is not compiled natively.
+- Linux builds are checked on Ubuntu 24.04 and 26.04 in CI; portable archives are built on 24.04. Debian is not compiled natively.
 - `cargo audit` reports warnings (unmaintained or unsound crates) inherited from the graphical
   toolkit and the Linux tray icon; no known vulnerability. Any new warning fails CI; see the
   [tolerated advisories](docs/DEVELOPPEMENT.md#avis-rustsec-tolérés) (French).

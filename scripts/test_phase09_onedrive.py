@@ -21,6 +21,15 @@ from cryptography.x509.oid import NameOID
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def handle(self):
+        try:
+            super().handle()
+        except ConnectionResetError:
+            # A rejected test certificate closes TLS before any HTTP request.
+            # Preserve diagnostics for resets while processing a real request.
+            if getattr(self, "raw_requestline", b""):
+                raise
+
     counts = {}
     failures = []
     mutex = threading.Lock()

@@ -2,6 +2,8 @@
 
 Règles de contribution (humains et agents IA) : [`AGENTS.md`](../AGENTS.md).
 Organisation du code : [Architecture](ARCHITECTURE.md).
+Dernière revue des versions et résultats de validation :
+[actualisation des dépendances](MISE_A_JOUR_DEPENDANCES.md).
 
 Le lecteur d'inventaire Windows vendored possède des tests séparés du workspace :
 `cargo test -p cap-primitives --lib large_read_dir --locked` (également en CI).
@@ -61,8 +63,10 @@ chemin absolu dédié.
 
 ## Contrôles
 
-À passer avant chaque commit ; la CI les exécute sous Ubuntu 24.04 et
-Windows et refuse tout warning :
+À passer avant chaque commit ; la CI les exécute sous Ubuntu 24.04, Ubuntu
+26.04 et Windows et refuse tout warning. Python 3.15 est utilisé dans les jobs.
+Les archives Linux restent construites sous Ubuntu 24.04 pour ne pas relever
+implicitement leurs exigences de bibliothèques système :
 
 ```sh
 cargo fmt --all -- --check
@@ -78,7 +82,7 @@ lancent des serveurs éphémères en local (certificats et clés jetables sous
 `target/`, rien n'est installé sur le système) :
 
 ```sh
-python -m pip install paramiko==5.1.0 pyftpdlib==2.2.0 pyopenssl==26.4.0
+python -m pip install -r scripts/requirements-network.txt
 python scripts/test_phase08_sftp.py
 python scripts/test_phase08_webdav.py
 python scripts/test_phase08_ftp.py
@@ -159,7 +163,7 @@ python scripts/release.py collect --bundle target/release/bundle --output target
 ## Icône
 
 Source : `docs/icon/syncengine.png`. `python scripts/generate_icons.py docs/icon/syncengine.png`
-(Pillow) régénère `apps/desktop/assets/` : `.ico` intégré à l'exécutable
+(Pillow 13.0.0 : `python -m pip install Pillow==13.0.0`) régénère `apps/desktop/assets/` : `.ico` intégré à l'exécutable
 Windows par `build.rs`, `.rgba` intégré pour la fenêtre et la zone de
 notification. Aucune image n'est livrée à côté des exécutables.
 

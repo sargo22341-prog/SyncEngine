@@ -14,6 +14,7 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Dépendances actualisées, compatibilité SQLite adaptée et contrôles renforcés sous Python 3.15.
 - Réglages : « Supprimer toutes les données de SyncEngine » efface toute trace du logiciel portable (données, corbeilles, tâches planifiées, démarrage automatique), après confirmation.
 - Au démarrage, une synchronisation interrompue (plantage, coupure) est signalée avec « Voir le détail », « Reprendre » (nouvelle simulation) ou « J’ai vérifié, ignorer ».
 - Suivi en direct : les fichiers en cours de copie s’affichent sous la courbe de débit, avec leur progression.

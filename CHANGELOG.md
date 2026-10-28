@@ -5,6 +5,14 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Actualisation des dépendances
+- Migration vers rusqlite 0.41.1 (type explicite du callback de sauvegarde),
+  globset 0.4.21 et actualisation des dépendances transitives dans Cargo.lock.
+- CI sous Python 3.15, dépendances réseau centralisées et warnings Rust,
+  rustdoc et Python traités comme des erreurs dans tous les jobs.
+- Ajout des contrôles Ubuntu 26.04 ; audit et publication sur cette LTS,
+  archives Linux toujours compilées sous 24.04 pour conserver leur plancher système.
+
 ### Supprimer toutes les données de SyncEngine
 - Réglages › Données : liste exacte des traces (dossier d’état et corbeilles,
   `%LOCALAPPDATA%\SyncEngine` ou `~/.local/state/SyncEngine`, tâches

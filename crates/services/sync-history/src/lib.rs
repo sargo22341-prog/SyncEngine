@@ -395,7 +395,8 @@ impl History {
             .write(true)
             .create_new(true)
             .open(path)?;
-        self.connection.backup("main", path, None)?;
+        self.connection
+            .backup("main", path, None::<fn(rusqlite::backup::Progress)>)?;
         reservation.sync_all()?;
         Ok(())
     }
