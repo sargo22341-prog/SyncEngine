@@ -32,6 +32,7 @@ pub mod windows_listing {
     pub use crate::windows::fs::open_directory::open_directory_nofollow;
     pub use crate::windows::fs::handle_read_dir::{HandleReadDir, readable_root_identity, root_identity};
     pub use crate::windows::fs::large_read_dir::{Entry, ReadDir};
+    pub use crate::windows::fs::flush_data::flush_data_no_sync;
 }
 
 #[doc(hidden)]

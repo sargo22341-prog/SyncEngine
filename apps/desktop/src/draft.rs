@@ -487,12 +487,30 @@ pub(crate) enum FilterList {
     IncludeFiles,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FilterDraft {
     pub(crate) include_files: Vec<String>,
     pub(crate) exclude_files: Vec<String>,
     pub(crate) exclude_directories: Vec<String>,
+    /// Always true on Windows, whose names ignore case: the facade applies
+    /// it there anyway (`sync_orchestrator::host_filter`).
     pub(crate) case_insensitive: bool,
+}
+
+/// The case option can only be chosen where file names keep case.
+pub(crate) fn case_choice_available() -> bool {
+    !cfg!(windows)
+}
+
+impl Default for FilterDraft {
+    fn default() -> Self {
+        Self {
+            include_files: Vec::new(),
+            exclude_files: Vec::new(),
+            exclude_directories: Vec::new(),
+            case_insensitive: !case_choice_available(),
+        }
+    }
 }
 
 impl FilterDraft {
@@ -501,8 +519,11 @@ impl FilterDraft {
             include_files: rules.include_files().to_vec(),
             exclude_files: rules.exclude_files().to_vec(),
             exclude_directories: rules.exclude_directories().to_vec(),
-            case_insensitive: rules.case_insensitive(),
+            case_insensitive: rules.case_insensitive() || !case_choice_available(),
         }
+    }
+    pub(crate) fn set_case_insensitive(&mut self, value: bool) {
+        self.case_insensitive = value || !case_choice_available();
     }
     pub(crate) fn rules(&self) -> FilterRules {
         let mut rules = FilterRules::new().with_case_insensitive(self.case_insensitive);
@@ -1262,6 +1283,18 @@ mod tests {
         assert_eq!(next_occurrence(&d, 0, 0), Some(3600));
         assert_eq!(next_occurrence(&d, 0, 7200), Some(86_400 + 3600));
         assert_eq!(next_occurrence(&Trigger::Logon, 0, 0), None);
+    }
+
+    #[test]
+    fn windows_filters_always_ignore_case() {
+        let stored = FilterRules::new().exclude_file("Thumbs.db");
+        let mut f = FilterDraft::from_rules(&stored);
+        f.set_case_insensitive(false);
+        // Given Windows, Then the case option cannot be turned off.
+        assert_eq!(f.case_insensitive, cfg!(windows));
+        assert_eq!(FilterDraft::default().case_insensitive, cfg!(windows));
+        f.set_case_insensitive(true);
+        assert!(f.rules().case_insensitive());
     }
 
     #[test]

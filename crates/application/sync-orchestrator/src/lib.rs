@@ -25,9 +25,12 @@ mod scheduled;
 pub use scheduled::{hold_execution_lock, user_lock_root};
 mod schedules;
 mod trash;
+mod tree;
 pub use trash::{
     KEPT_TRASH_RUNS, TRASH_FOLDER, TrashEstimate, TrashFile, TrashOverview, TrashPage, TrashRun,
+    TrashTree,
 };
+pub use tree::{TREE_PAGE, TreeFolder};
 
 use connector_local::{LocalConnector, LocalOptions};
 pub use live::{
@@ -44,7 +47,7 @@ use sync_core::{CancellationToken, ExecutionId, HashAlgorithm, PlanId, ProfileId
 use sync_decisions::{PlanContext, PlanStrategy, PlanningInput};
 use sync_events::{EmitOutcome, Event, EventEmitter, EventKind, EventSink};
 use sync_executor::{ExecutionOptions, ExecutionRequest, Executor, PlanExecutor};
-use sync_filter::Filter;
+use sync_filter::{Filter, FilterRules};
 use sync_history::{History, RetentionPolicy};
 use sync_journal::{FileJournal, JournalError, JournalRecord, JournalSink};
 use sync_plan::{
@@ -653,7 +656,7 @@ impl Application {
                     DeletionPolicy::Disabled
                 },
             );
-            let filter = Filter::new(profile.filter.clone()).map_err(io)?;
+            let filter = Filter::new(host_filter(&profile.filter)).map_err(io)?;
             // Presentation counters only, updated from both scan threads.
             let progress = Progress::default();
             let observe = |side: bool, stats: &ScanStats, issues: usize| {
@@ -1121,6 +1124,17 @@ impl Progress {
         snapshot.entries_hashed = sum(&self.hashed);
         snapshot.hash_target = self.target.load(Relaxed);
     }
+}
+
+/// Rules a preview actually applies, recorded in its plan. Windows names
+/// ignore case, so filters do too there (`Thumbs.db` excludes `thumbs.db`,
+/// like FreeFileSync), whatever the stored option. Elsewhere the profile
+/// option decides.
+#[must_use]
+pub fn host_filter(rules: &FilterRules) -> FilterRules {
+    rules
+        .clone()
+        .with_case_insensitive(rules.case_insensitive() || cfg!(windows))
 }
 
 fn unique(prefix: &str) -> Result<String, AppError> {

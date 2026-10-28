@@ -138,6 +138,120 @@ pub(super) fn page(
     Ok(serde_json::json!({"operations":values,"total":total}))
 }
 
+/// One folder level of a historical run, with the same filter and search as
+/// [`page`]: `{"folders":[TreeFolder],"operations":[{operation,outcome}],"total":n}`
+/// where `total` counts the operations directly inside `folder`.
+pub(super) fn tree(
+    root: &Path,
+    id: &ProfileId,
+    execution: &str,
+    folder: &str,
+    offset: usize,
+    filter: HistoryFilter,
+    query: &str,
+) -> Result<serde_json::Value, AppError> {
+    crate::tree::check(folder, offset)?;
+    if query.len() > 512 {
+        return Err(error("invalid_input", "historical query out of range"));
+    }
+    let mut db = crate::runs::open(root)?;
+    let state: String = db
+        .query_row(
+            "SELECT state FROM runs WHERE profile=?1 AND execution=?2",
+            params![id.as_str(), execution],
+            |r| r.get(0),
+        )
+        .map_err(io)?;
+    // Same sources as `page`: the problem index when it applies, else the
+    // original plan and report.
+    let indexed = if filter != HistoryFilter::All && state != "running" {
+        let persisted = index::ensure(&mut db, id.as_str(), execution)?;
+        Some(if persisted {
+            index::MATCHES.to_owned()
+        } else {
+            index::MATCHES.replace(
+                "FROM problem_rows",
+                "FROM (SELECT ?1 execution,* FROM history_ready)",
+            )
+        })
+    } else {
+        None
+    };
+    let (code, profile) = (filter.code(), id.as_str());
+    let mut rows: Vec<(usize, String, String)> = Vec::new();
+    {
+        let (sql, values): (String, Vec<&dyn rusqlite::ToSql>) = match &indexed {
+            Some(matches) => (
+                format!(
+                    "SELECT ordinal,COALESCE(path,''),COALESCE(action,'') {matches} ORDER BY ordinal"
+                ),
+                vec![&execution, &code, &query],
+            ),
+            None => (
+                format!(
+                    "{ROWS} SELECT ordinal,COALESCE(path,''),COALESCE(action,'') FROM matches ORDER BY ordinal"
+                ),
+                vec![&profile, &execution, &code, &query],
+            ),
+        };
+        let mut stmt = db.prepare(&sql).map_err(io)?;
+        let found = stmt
+            .query_map(values.as_slice(), |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(io)?;
+        for row in found {
+            let (ordinal, path, action) = row.map_err(io)?;
+            rows.push((usize::try_from(ordinal).map_err(io)?, path, action));
+        }
+    }
+    let level = crate::tree::level(
+        rows.iter().map(|(ordinal, path, action)| {
+            (
+                *ordinal,
+                crate::tree::Item {
+                    path,
+                    action,
+                    bytes: 0,
+                },
+            )
+        }),
+        folder,
+        offset,
+    );
+    let chosen = serde_json::to_string(&level.entries).map_err(io)?;
+    let (sql, values): (String, Vec<&dyn rusqlite::ToSql>) = match &indexed {
+        Some(matches) => (
+            format!(
+                "SELECT operation,outcome {matches} AND ordinal IN (SELECT value FROM json_each(?4)) ORDER BY ordinal"
+            ),
+            vec![&execution, &code, &query, &chosen],
+        ),
+        None => (
+            format!(
+                "{ROWS}, page AS MATERIALIZED (SELECT * FROM matches WHERE ordinal IN (SELECT value FROM json_each(?5))) SELECT json_extract(r.plan,'$.operations['||p.ordinal||']'),p.outcome FROM chosen r,page p ORDER BY p.ordinal"
+            ),
+            vec![&profile, &execution, &code, &query, &chosen],
+        ),
+    };
+    let mut stmt = db.prepare(&sql).map_err(io)?;
+    let found = stmt
+        .query_map(values.as_slice(), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })
+        .map_err(io)?;
+    let mut operations = Vec::new();
+    for row in found {
+        let (operation, outcome) = row.map_err(io)?;
+        operations.push(serde_json::json!({"operation":serde_json::from_str::<serde_json::Value>(&operation).map_err(io)?,"outcome":outcome.map(|s|serde_json::from_str::<serde_json::Value>(&s)).transpose().map_err(io)?}));
+    }
+    Ok(serde_json::json!({"folders":level.folders,"operations":operations,"total":level.total}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

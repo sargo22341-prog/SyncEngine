@@ -299,6 +299,17 @@ pub struct TrashPage {
     pub files: Vec<TrashFile>,
 }
 
+/// One folder level of a synchronization in the trash (see [`crate::TreeFolder`]).
+#[derive(Debug, Clone, Serialize)]
+pub struct TrashTree {
+    /// Sub-folders with their number of kept files.
+    pub folders: Vec<crate::TreeFolder>,
+    /// Files directly inside the folder in total.
+    pub total: usize,
+    /// At most 100 of them from the requested offset.
+    pub files: Vec<TrashFile>,
+}
+
 /// Kept file: logical path, action when known, location in its folder.
 type Kept = (String, Option<Action>, String);
 
@@ -333,6 +344,45 @@ fn recorded_files(
             })
             .collect(),
     ))
+}
+
+/// Kept files of a synchronization: recorded by its history, else found in
+/// its folder (interrupted run).
+fn kept_files(
+    root: &Path,
+    profile: &ProfileId,
+    execution: &str,
+    dir: &Path,
+) -> Result<Vec<Kept>, AppError> {
+    match recorded_files(root, profile, execution)? {
+        Some(list) if !list.is_empty() => Ok(list),
+        _ => {
+            let mut list = Vec::new();
+            match walk(dir, "", &mut |path, _| {
+                list.push((path.clone(), None, path))
+            }) {
+                Ok(()) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(io(e)),
+            }
+            Ok(list)
+        }
+    }
+}
+
+/// Presentation of one kept file, with the current size of its copy.
+fn trash_file(dir: &Path, (path, action, location): &Kept) -> TrashFile {
+    let bytes = copy_path(dir, location)
+        .ok()
+        .and_then(|file| std::fs::symlink_metadata(file).ok())
+        .filter(std::fs::Metadata::is_file)
+        .map(|meta| meta.len());
+    TrashFile {
+        path: path.clone(),
+        action: *action,
+        bytes,
+        location: location.clone(),
+    }
 }
 
 /// File of the copy `location` (a logical path) inside `dir`.
@@ -383,41 +433,72 @@ impl Application {
         offset: usize,
     ) -> Result<TrashPage, AppError> {
         let dir = run_dir(&self.state, id, execution)?;
-        let entries = match recorded_files(&self.state, id, execution)? {
-            Some(list) if !list.is_empty() => list,
-            _ => {
-                let mut list = Vec::new();
-                match walk(&dir, "", &mut |path, _| {
-                    list.push((path.clone(), None, path))
-                }) {
-                    Ok(()) => (),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                    Err(e) => return Err(io(e)),
-                }
-                list
-            }
-        };
+        let entries = kept_files(&self.state, id, execution, &dir)?;
         let files = entries
             .iter()
             .skip(offset)
             .take(PAGE)
-            .map(|(path, action, location)| {
-                let bytes = copy_path(&dir, location)
-                    .ok()
-                    .and_then(|file| std::fs::symlink_metadata(file).ok())
-                    .filter(std::fs::Metadata::is_file)
-                    .map(|meta| meta.len());
-                TrashFile {
-                    path: path.clone(),
-                    action: *action,
-                    bytes,
-                    location: location.clone(),
-                }
-            })
+            .map(|kept| trash_file(&dir, kept))
             .collect();
         Ok(TrashPage {
             total: entries.len(),
             files,
+        })
+    }
+
+    /// One folder level (`""` for the root) of the files kept by a
+    /// synchronization, by their path in the synchronized tree. Read-only.
+    /// # Errors
+    /// Unknown profile or synchronization, invalid folder, unreadable files.
+    pub fn trash_tree(
+        &self,
+        id: &ProfileId,
+        execution: &str,
+        folder: &str,
+        offset: usize,
+    ) -> Result<TrashTree, AppError> {
+        crate::tree::check(folder, offset)?;
+        let dir = run_dir(&self.state, id, execution)?;
+        let entries = kept_files(&self.state, id, execution, &dir)?;
+        let codes: Vec<String> = entries
+            .iter()
+            .map(|(_, action, _)| {
+                action
+                    .map(|a| serde_json::to_value(a).map_err(io))
+                    .transpose()
+                    .map(|v| {
+                        v.and_then(|v| v.as_str().map(str::to_owned))
+                            .unwrap_or_default()
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let level = crate::tree::level(
+            entries
+                .iter()
+                .zip(&codes)
+                .enumerate()
+                .map(|(index, ((path, _, _), code))| {
+                    (
+                        index,
+                        crate::tree::Item {
+                            path,
+                            action: code,
+                            bytes: 0,
+                        },
+                    )
+                }),
+            folder,
+            offset,
+        );
+        Ok(TrashTree {
+            folders: level.folders,
+            total: level.total,
+            files: level
+                .entries
+                .iter()
+                .filter_map(|index| entries.get(*index))
+                .map(|kept| trash_file(&dir, kept))
+                .collect(),
         })
     }
 

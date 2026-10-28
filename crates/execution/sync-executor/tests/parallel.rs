@@ -495,3 +495,131 @@ fn verification_and_archiving_are_visible_without_inflating_transfer_bytes()
     no_partial(&destination);
     Ok(())
 }
+
+/// Given three large and four small files with four workers, When the plan
+/// runs, Then only one large file is transferred at a time while the small
+/// ones go on in the other workers.
+#[test]
+fn large_files_are_transferred_one_at_a_time_beside_small_ones()
+-> Result<(), Box<dyn std::error::Error>> {
+    use connector_api::{
+        ContentReader, ListPage, PageToken, StorageCapabilities, StorageConnector, StorageError,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    use std::time::{Duration, Instant};
+    use sync_core::{ConnectorId, FileEntry, ResourcePath};
+    use sync_executor::LARGE_TRANSFER_BYTES;
+    #[derive(Default)]
+    struct Counters {
+        large_active: AtomicUsize,
+        large_peak: AtomicUsize,
+        small_done: AtomicUsize,
+        overlapped: AtomicBool,
+    }
+    struct Observed {
+        inner: MemoryConnector,
+        counters: Arc<Counters>,
+    }
+    struct Reader {
+        inner: Box<dyn ContentReader>,
+        counters: Arc<Counters>,
+        large: bool,
+        started: bool,
+    }
+    impl ContentReader for Reader {
+        fn read(&mut self, bytes: &mut [u8]) -> Result<usize, StorageError> {
+            let c = &self.counters;
+            if !self.started {
+                self.started = true;
+                if self.large {
+                    let active = c.large_active.fetch_add(1, Ordering::SeqCst) + 1;
+                    c.large_peak.fetch_max(active, Ordering::SeqCst);
+                    // The small files finish meanwhile (bounded wait).
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while c.small_done.load(Ordering::SeqCst) < 4 && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    if c.small_done.load(Ordering::SeqCst) == 4 {
+                        c.overlapped.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+            let read = self.inner.read(bytes)?;
+            if read == 0 {
+                if self.large {
+                    c.large_active.fetch_sub(1, Ordering::SeqCst);
+                } else {
+                    c.small_done.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+            Ok(read)
+        }
+    }
+    impl StorageConnector for Observed {
+        fn transfer_concurrency(&self) -> NonZeroUsize {
+            parallel()
+        }
+        fn connector_id(&self) -> &ConnectorId {
+            self.inner.connector_id()
+        }
+        fn capabilities(&self) -> &StorageCapabilities {
+            self.inner.capabilities()
+        }
+        fn list(
+            &self,
+            p: &ResourcePath,
+            t: Option<&PageToken>,
+            c: &CancellationToken,
+        ) -> Result<ListPage, StorageError> {
+            self.inner.list(p, t, c)
+        }
+        fn stat(&self, p: &ResourcePath, c: &CancellationToken) -> Result<FileEntry, StorageError> {
+            self.inner.stat(p, c)
+        }
+        fn open_read(
+            &self,
+            p: &ResourcePath,
+            c: &CancellationToken,
+        ) -> Result<Box<dyn ContentReader>, StorageError> {
+            Ok(Box::new(Reader {
+                inner: self.inner.open_read(p, c)?,
+                counters: self.counters.clone(),
+                large: p.as_str().starts_with("big"),
+                started: false,
+            }))
+        }
+    }
+    let big = vec![1_u8; usize::try_from(LARGE_TRANSFER_BYTES)?];
+    let mut inner = MemoryConnector::new("source");
+    for n in 0..3 {
+        inner = inner.file(&format!("big{n}"), &big, ts(10));
+    }
+    for n in 0..4 {
+        inner = inner.file(&format!("small{n}"), &[n; 64], ts(10));
+    }
+    let source = Observed {
+        inner,
+        counters: Arc::default(),
+    };
+    let destination = destination();
+    let plan = backup_plan(&source, &destination);
+    let report = execute(
+        &plan,
+        &source,
+        &destination,
+        confirmed().with_copy_workers(parallel()),
+        &mut MemoryJournal::new(),
+    )?;
+    assert_eq!(report.status(), ExecutionStatus::Succeeded);
+    assert_eq!(report.totals().done, 7);
+    assert_eq!(source.counters.large_peak.load(Ordering::SeqCst), 1);
+    assert!(source.counters.overlapped.load(Ordering::SeqCst));
+    for n in 0..3 {
+        assert_eq!(destination.content(&format!("big{n}")), Some(big.clone()));
+    }
+    no_partial(&destination);
+    Ok(())
+}

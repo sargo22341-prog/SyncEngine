@@ -34,6 +34,24 @@ impl Application {
     ) -> Result<serde_json::Value, AppError> {
         crate::history::page(&self.state, &id, execution, offset, filter, query)
     }
+    /// One folder level of a historical run, with the filter and search of
+    /// [`Self::history_page_filtered`]: sub-folders with their counts, then at
+    /// most [`crate::TREE_PAGE`] plan/outcome pairs directly inside `folder`
+    /// (`""` for the root), from `offset`. The folder counts are per action;
+    /// historical entries carry no byte total.
+    /// # Errors
+    /// Missing execution, invalid folder or query, or persistence failure.
+    pub fn history_tree(
+        &self,
+        id: ProfileId,
+        execution: &str,
+        folder: &str,
+        offset: usize,
+        filter: crate::HistoryFilter,
+        query: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        crate::history::tree(&self.state, &id, execution, folder, offset, filter, query)
+    }
     /// Builds the exact cached plan but sends at most 100 operations over IPC.
     /// # Errors
     /// Same failures as `preview`; no truncation of the executable model.
@@ -87,5 +105,70 @@ impl Application {
         Ok(
             serde_json::json!({"operations":matches().skip(offset).take(100).collect::<Vec<_>>(),"total":matches().count()}),
         )
+    }
+    /// One folder level of the exact cached plan, with the same search and
+    /// action filter as [`Self::plan_page`]: sub-folders with their counts
+    /// per action and bytes, then at most [`crate::TREE_PAGE`] operations
+    /// directly inside `folder` (`""` for the root), from `offset`.
+    /// `{"folders":[TreeFolder],"operations":[…],"total":n}`.
+    /// # Errors
+    /// Stale plan, invalid folder, query or action.
+    pub fn plan_tree(
+        &self,
+        id: &str,
+        folder: &str,
+        offset: usize,
+        query: &str,
+        action: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        crate::tree::check(folder, offset)?;
+        if query.len() > 512 || action.len() > 32 {
+            return Err(error("invalid_input", "query too large"));
+        }
+        let cache = lock(&self.cache)?;
+        let cached = cache
+            .as_ref()
+            .filter(|c| c.plan.id().as_str() == id)
+            .ok_or_else(|| error("stale", "new preview required"))?;
+        let action: Option<sync_plan::Action> = if action.is_empty() {
+            None
+        } else {
+            Some(serde_json::from_value(serde_json::Value::String(action.into())).map_err(io)?)
+        };
+        let query = query.to_lowercase();
+        let operations = cached.plan.operations();
+        let codes: Vec<String> = operations
+            .iter()
+            .map(|op| serde_json::to_value(op.action()).map_err(io))
+            .map(|v| v.map(|v| v.as_str().unwrap_or_default().to_owned()))
+            .collect::<Result<_, _>>()?;
+        let level = crate::tree::level(
+            operations
+                .iter()
+                .zip(&codes)
+                .enumerate()
+                .filter(|(_, (op, _))| {
+                    action.is_none_or(|a| op.action() == a)
+                        && (query.is_empty() || op.path().as_str().to_lowercase().contains(&query))
+                })
+                .map(|(index, (op, code))| {
+                    (
+                        index,
+                        crate::tree::Item {
+                            path: op.path().as_str(),
+                            action: code,
+                            bytes: op.bytes().unwrap_or(0),
+                        },
+                    )
+                }),
+            folder,
+            offset,
+        );
+        let page: Vec<_> = level
+            .entries
+            .iter()
+            .filter_map(|index| operations.get(*index))
+            .collect();
+        Ok(serde_json::json!({"folders":level.folders,"operations":page,"total":level.total}))
     }
 }

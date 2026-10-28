@@ -170,6 +170,14 @@ impl App {
                         false,
                     ))
                     .push(item(
+                        Glyph::Bolt,
+                        "Synchroniser tout le groupe…",
+                        None,
+                        (!busy && self.ws.profiles.iter().any(|p| &p.group == g))
+                            .then(|| Message::AskGroupRun(g.clone())),
+                        false,
+                    ))
+                    .push(item(
                         Glyph::Clock,
                         "Planifier le groupe…",
                         None,
@@ -198,7 +206,7 @@ impl App {
                         Some(Message::ToggleGroup(g.clone())),
                         false,
                     ));
-                rows += 5;
+                rows += 6;
             }
             MenuTarget::Background => {
                 col = col
@@ -424,6 +432,22 @@ impl App {
                     .into(),
                 )
             }
+            Dialog::GroupRun {
+                group,
+                profiles,
+                allow_deletions,
+            } => (
+                560.0,
+                self.group_run_dialog(&dp, group, profiles, *allow_deletions),
+            ),
+            Dialog::GroupReport {
+                group,
+                results,
+                cancelled,
+            } => (
+                560.0,
+                self.group_report_dialog(&dp, group, results, *cancelled),
+            ),
             Dialog::Shortcuts => (520.0, shortcuts(&dp)),
         };
         let lift = 24.0 * (1.0 - t);

@@ -1,8 +1,9 @@
 //! Dependency-aware bounded workers for independent files and directories.
 //! The coordinator owns outcomes. Deletions start after all workers join.
 use super::*;
+use crate::options::LARGE_TRANSFER_BYTES;
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 use std::sync::mpsc;
 use sync_journal::JournalSink;
 
@@ -117,7 +118,22 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
         drop(reply);
         let mut free: Vec<_> = (0..workers).collect();
         let mut busy = 0;
+        // Large transfers wait for a slot; small ones keep the other workers.
+        let large = |index: usize| {
+            let op = &operations[index];
+            op.kind() == EntryKind::File
+                && op
+                    .bytes()
+                    .is_some_and(|bytes| bytes >= LARGE_TRANSFER_BYTES)
+        };
+        let large_slots = options.large_transfers.get();
+        let mut large_busy = 0;
+        let mut deferred = VecDeque::new();
         loop {
+            if large_busy < large_slots {
+                // Eligibility is checked again when they are popped.
+                ready.extend(deferred.drain(..));
+            }
             while !free.is_empty() {
                 let Some(Reverse(index)) = ready.pop() else {
                     break;
@@ -128,7 +144,9 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
                     && matches!(op.kind(), EntryKind::File | EntryKind::Directory)
                     && matches!(op.action(), Action::Copy | Action::Replace)
                     && op.depends_on().iter().all(|id| run.is_done(id));
-                if eligible {
+                if eligible && large(index) && large_busy >= large_slots {
+                    deferred.push_back(Reverse(index));
+                } else if eligible {
                     let Some(worker) = free.pop() else {
                         break;
                     };
@@ -138,6 +156,9 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
                         break;
                     }
                     busy += 1;
+                    if large(index) {
+                        large_busy += 1;
+                    }
                 } else {
                     run.visit(index, op);
                     if run.stop.is_some() {
@@ -155,6 +176,9 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
                 break;
             };
             busy -= 1;
+            if large(index) {
+                large_busy -= 1;
+            }
             free.push(worker);
             // An origin failure takes precedence over sibling cancellations.
             if let Some(stop) = stop

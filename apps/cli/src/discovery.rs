@@ -102,7 +102,8 @@ impl DiscoveryError {
 }
 
 pub(crate) fn filter_of(args: &DiscoveryArgs) -> Result<Filter, DiscoveryError> {
-    let mut rules = FilterRules::new().with_case_insensitive(args.ignore_case);
+    // Windows names ignore case: so do its filters (see `host_filter`).
+    let mut rules = FilterRules::new().with_case_insensitive(args.ignore_case || cfg!(windows));
     for pattern in &args.include_files {
         rules = rules.include_file(pattern);
     }

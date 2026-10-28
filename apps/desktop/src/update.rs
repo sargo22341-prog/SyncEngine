@@ -314,8 +314,12 @@ impl App {
             }
             Message::Simulate(id) => self.simulate(id, DeletionCeiling::Guarded),
             Message::LiftDeletionCeiling(id) => self.simulate(id, DeletionCeiling::Lifted),
+            Message::Previewed(id, result) if self.group_waits_for(&id) => {
+                self.group_previewed(result)
+            }
             Message::Previewed(id, result) => {
                 self.job = None;
+                let mut list = Task::none();
                 match result {
                     Ok(view) => {
                         let mut reveal = Tween::new(0.0, 900, Ease::OutCubic);
@@ -328,6 +332,7 @@ impl App {
                             query: String::new(),
                             loading: false,
                             reveal,
+                            tree: crate::tree::Tree::default(),
                         });
                         let all = self
                             .preview
@@ -346,24 +351,27 @@ impl App {
                         if self.nav != Nav::Profiles {
                             self.go(Nav::Profiles);
                         }
+                        if self.list_mode == crate::tree::ListMode::Tree {
+                            list = self.reload_plan();
+                        }
                     }
                     Err(e) => {
                         self.fail(&e);
                     }
                 }
-                self.finish_job_tasks()
+                Task::batch([list, self.finish_job_tasks()])
             }
             Message::PlanFilter(filter) => {
                 if let Some(p) = &mut self.preview {
                     p.filter = filter;
                 }
-                self.load_plan_page(0)
+                self.reload_plan()
             }
             Message::PlanQuery(q) => {
                 if let Some(p) = &mut self.preview {
                     p.query = q.chars().take(512).collect();
                 }
-                self.load_plan_page(0)
+                self.reload_plan()
             }
             Message::PlanMore => {
                 let offset = self.preview.as_ref().map_or(0, |p| p.ops.len());
@@ -394,6 +402,50 @@ impl App {
                         }
                         self.fail(&e);
                     }
+                }
+                Task::none()
+            }
+            Message::PlanTree(msg) => {
+                let request = self.preview.as_mut().and_then(|p| p.tree.update(msg));
+                request.map_or_else(Task::none, |r| self.load_plan_tree(r))
+            }
+            Message::PlanTreeLevel(request, result) => {
+                match result {
+                    Err(e) if e.code == "stale" => {
+                        self.preview = None;
+                        self.fail(&e);
+                    }
+                    result => {
+                        if let Some(p) = &mut self.preview {
+                            p.tree.loaded(&request, result.map_err(|e| e.message));
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::ListMode(mode) => {
+                if self.list_mode == mode {
+                    return Task::none();
+                }
+                self.list_mode = mode;
+                let history = self
+                    .expanded_run
+                    .clone()
+                    .map_or_else(Task::none, |execution| self.reload_history(execution));
+                Task::batch([self.reload_plan(), history])
+            }
+            Message::HistoryTree(msg) => {
+                let (Some(execution), Some(request)) =
+                    (self.expanded_run.clone(), self.history_tree.update(msg))
+                else {
+                    return Task::none();
+                };
+                self.load_history_tree(execution, request)
+            }
+            Message::HistoryTreeLevel(execution, request, result) => {
+                if self.expanded_run.as_deref() == Some(execution.as_str()) {
+                    self.history_tree
+                        .loaded(&request, result.map_err(|e| e.message));
                 }
                 Task::none()
             }
@@ -457,13 +509,21 @@ impl App {
                     }
                     Err(e) => self.fail(e),
                 }
+                let group = self
+                    .group_run
+                    .is_some()
+                    .then(|| self.group_executed(&result, job.cancel_requested));
                 self.last_run = Some(LastRun {
                     profile: job.profile,
                     name: job.name,
                     result,
                     duration: self.now.saturating_duration_since(job.started),
                 });
-                self.finish_job_tasks()
+                let refresh = self.finish_job_tasks();
+                match group {
+                    Some(next) => Task::batch([refresh, next]),
+                    None => refresh,
+                }
             }
             Message::SetPaused {
                 agent,
@@ -652,6 +712,17 @@ impl App {
                 Task::none()
             }
             Message::SubmitGroup => self.submit_group(),
+            Message::AskGroupRun(g) => self.ask_group_run(g),
+            Message::GroupRunDeletions(v) => {
+                if let Some(Dialog::GroupRun {
+                    allow_deletions, ..
+                }) = &mut self.dialog
+                {
+                    *allow_deletions = v;
+                }
+                Task::none()
+            }
+            Message::StartGroupRun => self.start_group_run(),
             Message::ScheduleGroup(g) => {
                 let targets: Vec<ProfileId> = self
                     .ws
@@ -828,13 +899,13 @@ impl App {
                 self.history_query.clear();
                 self.history = None;
                 self.go(Nav::History);
-                self.load_history(execution, 0)
+                self.reload_history(execution)
             }
             Message::HistoryFilter(filter) => {
                 self.history_filter = filter;
                 self.history = None;
                 match self.expanded_run.clone() {
-                    Some(execution) => self.load_history(execution, 0),
+                    Some(execution) => self.reload_history(execution),
                     None => Task::none(),
                 }
             }
@@ -848,7 +919,7 @@ impl App {
             Message::HistorySearch => {
                 self.history = None;
                 match self.expanded_run.clone() {
-                    Some(execution) => self.load_history(execution, 0),
+                    Some(execution) => self.reload_history(execution),
                     None => Task::none(),
                 }
             }
@@ -860,7 +931,7 @@ impl App {
                 }
                 self.expanded_run = Some(execution.clone());
                 self.history = None;
-                self.load_history(execution, 0)
+                self.reload_history(execution)
             }
             Message::HistoryOffset(offset) => match self.expanded_run.clone() {
                 Some(execution) => self.load_history(execution, offset),

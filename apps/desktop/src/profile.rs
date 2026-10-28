@@ -9,6 +9,7 @@ use crate::model::{self, OpView};
 use crate::shell::{mode_color, mode_glyph, outcome_color};
 use crate::speed;
 use crate::theme::{self, Palette, Tone};
+use crate::tree::ListMode;
 use crate::ui::{self, El};
 use iced::widget::{Space, button, column, container, row, scrollable, text_input};
 use iced::{Alignment, Color, Length, Padding};
@@ -974,12 +975,33 @@ impl App {
             filter_chip("Remplacements", Some(Action::Replace)),
             filter_chip("Suppressions", Some(Action::Delete)),
             filter_chip("Conflits", Some(Action::Conflict)),
+            Space::new().width(Length::Fixed(12.0)),
+            mode_switch(p, self.list_mode),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
         .wrap()
         .vertical_spacing(8);
         let toolbar = column![actions, filters].spacing(10);
+        let compact = self.ws.preferences.compact;
+        if self.list_mode == ListMode::Tree {
+            let pal = *p;
+            let tree = crate::tree::view(
+                p,
+                &preview.tree,
+                Message::PlanTree,
+                &|op, indent| op_row(&pal, op, compact, Some(indent)),
+                &|folder| crate::tree::action_summary(&pal, folder),
+                "Aucune opération pour ce filtre.",
+            );
+            col = col.push(toolbar).push(
+                container(tree)
+                    .padding(8)
+                    .width(Length::Fill)
+                    .style(theme::card(*p, 0.0, false)),
+            );
+            return container(col).width(Length::Fill).into();
+        }
 
         let mut list = column![
             row![
@@ -992,7 +1014,7 @@ impl App {
         ]
         .spacing(2);
         for op in &preview.ops {
-            list = list.push(op_row(p, op, self.ws.preferences.compact));
+            list = list.push(op_row(p, op, compact, None));
         }
         if preview.ops.is_empty() && !preview.loading {
             list = list.push(
@@ -1150,7 +1172,34 @@ fn seconds(value: f32) -> String {
     format!("{value:.1} s").replace('.', ",")
 }
 
-fn op_row<'a>(p: &Palette, op: &'a OpView, compact: bool) -> El<'a, Message> {
+/// « Dossiers » / « Liste » switch of the long lists (simulation, history).
+pub(crate) fn mode_switch<'a>(p: &Palette, mode: ListMode) -> El<'a, Message> {
+    let chip = |label: &'static str, glyph: Glyph, value: ListMode| -> El<'a, Message> {
+        let on = mode == value;
+        button(
+            row![
+                icons::icon(glyph, 13.0, if on { p.text } else { p.muted }),
+                ui::colored(if on { p.text } else { p.muted }, label, 12.0)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding(Padding::from([4, 12]))
+        .style(theme::chip(*p, p.accent, on))
+        .on_press(Message::ListMode(value))
+        .into()
+    };
+    row![
+        chip("Dossiers", Glyph::Folder, ListMode::Tree),
+        chip("Liste", Glyph::Layers, ListMode::Flat),
+    ]
+    .spacing(6)
+    .into()
+}
+
+/// One planned operation. In the folder view (`indent`), only its name is
+/// shown, below its folder.
+fn op_row<'a>(p: &Palette, op: &'a OpView, compact: bool, indent: Option<f32>) -> El<'a, Message> {
     let c = action_color(p, op.action);
     let size = (op.kind != "directory")
         .then(|| {
@@ -1160,10 +1209,14 @@ fn op_row<'a>(p: &Palette, op: &'a OpView, compact: bool) -> El<'a, Message> {
                 .or_else(|| op.receiver.as_ref().and_then(|o| o.size))
         })
         .flatten();
+    let shown = match indent {
+        Some(_) => op.path.rsplit('/').next().unwrap_or(&op.path),
+        None => op.path.as_str(),
+    };
     let path = if op.kind == "directory" {
-        format!("{}/", op.path)
+        format!("{shown}/")
     } else {
-        op.path.clone()
+        shown.to_owned()
     };
     container(
         row![
@@ -1193,7 +1246,12 @@ fn op_row<'a>(p: &Palette, op: &'a OpView, compact: bool) -> El<'a, Message> {
         ]
         .align_y(Alignment::Center),
     )
-    .padding(Padding::from([if compact { 4 } else { 8 }, 12]))
+    .padding(Padding {
+        top: if compact { 4.0 } else { 8.0 },
+        bottom: if compact { 4.0 } else { 8.0 },
+        left: 12.0 + indent.unwrap_or(0.0),
+        right: 12.0,
+    })
     .width(Length::Fill)
     .style(move |_| iced::widget::container::Style {
         border: iced::Border {

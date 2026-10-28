@@ -295,6 +295,73 @@ pub(crate) fn plan_page(
     })
 }
 
+/// Folders and entries of a tree level, from the facade's JSON.
+fn tree_level<T>(
+    value: &serde_json::Value,
+    entries: Vec<T>,
+) -> Result<crate::tree::Level<T>, AppError> {
+    let folders = serde_json::from_value(value["folders"].clone()).map_err(|e| AppError {
+        code: "format".into(),
+        message: format!("arborescence illisible : {e}"),
+        profile: None,
+    })?;
+    Ok(crate::tree::Level {
+        folders,
+        entries,
+        total: value["total"].as_u64().unwrap_or(0) as usize,
+    })
+}
+
+/// One folder level of the cached plan (same search and filter as the list).
+pub(crate) fn plan_tree(
+    app: &Shared,
+    plan: String,
+    request: &crate::tree::Request,
+    query: String,
+    action: &'static str,
+) -> impl Future<Output = Result<crate::tree::Level<model::OpView>, Failure>> + use<> {
+    let (folder, offset) = (request.folder.clone(), request.offset);
+    call(app, move |a| {
+        let value = a.plan_tree(&plan, &folder, offset, &query, action)?;
+        tree_level(&value, model::ops(&value["operations"]))
+    })
+}
+
+/// One folder level of a historical run (same filter and search as its list).
+pub(crate) fn history_tree(
+    app: &Shared,
+    id: ProfileId,
+    execution: String,
+    request: &crate::tree::Request,
+    filter: sync_orchestrator::HistoryFilter,
+    query: String,
+) -> impl Future<Output = Result<crate::tree::Level<model::HistoryRow>, Failure>> + use<> {
+    let (folder, offset) = (request.folder.clone(), request.offset);
+    call(app, move |a| {
+        let value = a.history_tree(id, &execution, &folder, offset, filter, &query)?;
+        tree_level(&value, model::history_rows(&value))
+    })
+}
+
+/// One folder level of the files kept by a synchronization.
+pub(crate) fn trash_tree(
+    app: &Shared,
+    id: ProfileId,
+    execution: String,
+    request: &crate::tree::Request,
+) -> impl Future<Output = Result<crate::tree::Level<sync_orchestrator::TrashFile>, Failure>> + use<>
+{
+    let (folder, offset) = (request.folder.clone(), request.offset);
+    call(app, move |a| {
+        let level = a.trash_tree(&id, &execution, &folder, offset)?;
+        Ok(crate::tree::Level {
+            folders: level.folders,
+            entries: level.files,
+            total: level.total,
+        })
+    })
+}
+
 /// Final classification of an execution started from this window.
 #[derive(Debug, Clone)]
 pub(crate) struct Executed {

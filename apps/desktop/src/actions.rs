@@ -8,12 +8,13 @@ use crate::backend::{self, Failure, ScheduleView, Workspace};
 use crate::draft;
 use crate::model;
 use crate::speed;
+use crate::tree::{self, ListMode};
 use crate::ui_prefs::ThemeChoice;
 use crate::wizard::WizardMsg;
 use iced::Task;
 use iced::keyboard::{Key, Modifiers, key::Named};
 use std::collections::{HashSet, VecDeque};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sync_core::ProfileId;
 use sync_orchestrator::{Application, DeletionCeiling, JobPhase, JobSnapshot};
 use sync_profiles::Profile;
@@ -70,7 +71,9 @@ impl App {
         };
         if let Ok(snapshot) = app.snapshot() {
             job.samples.push_back(Sample {
-                at: self.now,
+                // Time of the read itself, not of the frame that triggered
+                // it: a late frame would otherwise skew the windowed rate.
+                at: Instant::now(),
                 bytes: snapshot.bytes_transferred,
                 operations: snapshot.entries_done,
                 // Listing and content reading both count as analysis work.
@@ -584,6 +587,67 @@ impl App {
         });
         Task::perform(task, |r: Result<backend::Batch, Failure>| {
             Message::ScheduleSaved(r.unwrap_or_else(|e| Err((Vec::new(), e))))
+        })
+    }
+
+    /// Reloads the shown simulation list (folders or flat) from its start.
+    pub(crate) fn reload_plan(&mut self) -> Task<Message> {
+        match self.list_mode {
+            ListMode::Flat => self.load_plan_page(0),
+            ListMode::Tree => match &mut self.preview {
+                Some(p) => {
+                    let request = p.tree.reset();
+                    self.load_plan_tree(request)
+                }
+                None => Task::none(),
+            },
+        }
+    }
+
+    pub(crate) fn load_plan_tree(&self, request: tree::Request) -> Task<Message> {
+        let (Some(app), Some(p)) = (&self.backend, &self.preview) else {
+            return Task::none();
+        };
+        let action = p.filter.map(model::action_key).unwrap_or("");
+        let task = backend::plan_tree(
+            app,
+            p.view.plan_id.clone(),
+            &request,
+            p.query.clone(),
+            action,
+        );
+        Task::perform(task, move |r| Message::PlanTreeLevel(request.clone(), r))
+    }
+
+    /// Reloads the expanded run (folders or flat page) from its start.
+    pub(crate) fn reload_history(&mut self, execution: String) -> Task<Message> {
+        match self.list_mode {
+            ListMode::Flat => self.load_history(execution, 0),
+            ListMode::Tree => {
+                let request = self.history_tree.reset();
+                self.load_history_tree(execution, request)
+            }
+        }
+    }
+
+    pub(crate) fn load_history_tree(
+        &self,
+        execution: String,
+        request: tree::Request,
+    ) -> Task<Message> {
+        let (Some(app), Some(id)) = (&self.backend, self.selected.clone()) else {
+            return Task::none();
+        };
+        let task = backend::history_tree(
+            app,
+            id,
+            execution.clone(),
+            &request,
+            self.history_filter,
+            self.history_query.clone(),
+        );
+        Task::perform(task, move |r| {
+            Message::HistoryTreeLevel(execution.clone(), request.clone(), r)
         })
     }
 

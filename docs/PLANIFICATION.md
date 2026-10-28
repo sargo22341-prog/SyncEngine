@@ -13,8 +13,12 @@ Le cycle de vie et les limites Windows sont détaillés dans
 1. Dans l'assistant ou la page Planification, choisir un déclencheur et cocher
    explicitement les autorisations (écritures, et suppressions si besoin).
    Un nouvel horaire n'a aucune autorisation pré-cochée. En édition, les
-   autorisations existantes sont conservées si le profil est inchangé ; une
-   modification du profil les invalide. Un groupe ne reprend les cases que si
+   autorisations existantes sont conservées si le profil est inchangé. Dans
+   l'assistant, changer le mode, la source ou la destination les décoche ;
+   modifier les filtres, le nom, le groupe, la corbeille ou la comparaison les
+   conserve, et l'enregistrement les renouvelle pour la nouvelle configuration
+   (l'autorisation des suppressions reste liée au profil qui les permet). Un
+   profil modifié hors de l'assistant garde son autorisation invalide. Un groupe ne reprend les cases que si
    tous ses membres ont les mêmes réglages et une autorisation valide.
 2. **Windows** : enregistrer l'horaire installe ou actualise automatiquement
    la tâche partagée de l'agent résident (ouverture de session). Aucun bouton
@@ -162,8 +166,8 @@ Retirer les tâches ne supprime ni profils, ni historique, ni sauvegardes.
 ## Validation des corrections Windows
 
 - Étant donné un miroir déjà autorisé, ouvrir son horaire sans changer le
-  profil conserve les autorisations ; changer la destination ou les filtres
-  dans l'assistant exige de les recocher.
+  profil conserve les autorisations ; changer les filtres dans l'assistant
+  les conserve, changer la destination ou le mode exige de les recocher.
 - Étant donné un groupe contenant un profil non autorisé ou modifié, ouvrir
   l'horaire du groupe ne reprend pas les consentements d'un autre membre.
 - Étant donné un refus d'accès à l'enregistrement, seule l'installation

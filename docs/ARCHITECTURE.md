@@ -49,8 +49,11 @@ La simulation et l'exécution utilisent le **même** plan.
 
 Les copies locales/SMB indépendantes peuvent utiliser un pool borné (quatre
 workers demandés par défaut, huit annoncés par ces connecteurs, plafond moteur
-de seize). Les autres connecteurs restent séquentiels tant qu'ils n'annoncent
-pas explicitement la capacité. Le coordinateur libère les dépendances après
+de seize). Un seul fichier d'au moins 8 Mio est transféré à la fois
+(`ExecutionOptions::large_transfers`) : plusieurs gros flux sur un même disque
+dur s'effondrent ; les petits fichiers occupent les autres workers. Les autres
+connecteurs restent séquentiels tant qu'ils n'annoncent pas explicitement la
+capacité. Le coordinateur libère les dépendances après
 résultat : un dossier parent précède son contenu. Les suppressions attendent la
 fin de tous les workers ; le bidirectionnel reste ordonné. Les remplacements
 versionnés utilisent aussi le pool, borné par la capacité du magasin. Chaque
@@ -69,6 +72,23 @@ stricts. L’option moteur est explicite et désactivée par défaut hors façad
 Les E/S de vérification et d’archivage ont des compteurs informatifs séparés.
 Le magasin et le connecteur revalident toujours les dossiers des versions et
 chaque écriture effective ; aucun cache ne permet une mutation.
+
+Le connecteur local vide le fichier temporaire en arrière-plan (fil dédié,
+seconde poignée) : sous Windows les données seules sans vider le cache de
+l'appareil, tous les 16 Mio, sinon `sync_data` tous les 128 Mio. La copie
+n'attend que si plus de deux pas restent à vider, la lecture chevauche donc
+l'écriture ; le `sync_all` final reste la garantie de durabilité. Voir
+[le débit de copie](DEBIT_COPIE.md).
+
+## Vues par dossiers
+
+`Application::plan_tree`, `history_tree` et `trash_tree` regroupent une liste
+longue (plan en cache, historique d'une exécution, corbeille) par dossier,
+un niveau à la fois : sous-dossiers avec le nombre d'éléments en dessous par
+action (`TreeFolder`), puis au plus 100 entrées directement dedans. Mêmes
+filtres et recherche que les listes paginées ; l'opération propre d'un
+dossier (création, suppression) est rattachée à sa ligne. Présentation
+seulement : le plan exécutable n'est pas modifié.
 
 ## Crates
 

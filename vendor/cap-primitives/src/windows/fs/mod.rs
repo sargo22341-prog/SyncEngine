@@ -7,6 +7,8 @@ mod dir_options_ext;
 mod dir_utils;
 mod file_type_ext;
 mod get_path;
+#[allow(unsafe_code)]
+pub(crate) mod flush_data;
 // SYNCENGINE-PATCH: localized FFI; ownership/buffer review in SYNCENGINE-PATCH.md.
 #[allow(unsafe_code)]
 pub(crate) mod large_read_dir;

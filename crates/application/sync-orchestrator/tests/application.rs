@@ -989,3 +989,106 @@ fn agent_stop_request_and_window_presence_are_explicit() -> Result<(), Box<dyn s
     assert!(!sync_orchestrator::desktop_present(&state)?);
     Ok(())
 }
+
+#[test]
+fn windows_filters_ignore_case_and_the_plan_records_the_applied_rules()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Given a stored case-sensitive filter « Thumbs.db » and a « thumbs.db » file.
+    let (_temp, app, mut p) = fixture(SyncMode::Backup)?;
+    p.filter = FilterRules::new().exclude_file("Thumbs.db");
+    app.profile_save(p.clone())?;
+    fs::write(p.source.join("thumbs.db"), b"cache")?;
+    fs::write(p.source.join("photo.jpg"), b"data")?;
+    // When previewing.
+    let preview = app.preview(p.id.clone())?;
+    let paths: Vec<_> = preview["plan"]["operations"]
+        .as_array()
+        .ok_or("operations absentes")?
+        .iter()
+        .filter_map(|op| op["path"].as_str())
+        .collect();
+    // Then Windows excludes it (and records it), other systems keep the case.
+    assert!(paths.contains(&"photo.jpg"));
+    assert_eq!(paths.contains(&"thumbs.db"), !cfg!(windows));
+    assert_eq!(
+        preview["plan"]["filter"]["case_insensitive"].as_bool(),
+        Some(cfg!(windows))
+    );
+    Ok(())
+}
+
+#[test]
+fn plan_and_history_folder_views_aggregate_below_each_folder()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Given copies spread over nested folders and one root file.
+    let (_temp, app, p) = fixture(SyncMode::Backup)?;
+    fs::create_dir_all(p.source.join("Photos/2024"))?;
+    fs::create_dir_all(p.source.join("Docs"))?;
+    for n in 0..3 {
+        fs::write(p.source.join(format!("Photos/2024/{n}.jpg")), b"jpeg")?;
+    }
+    fs::write(p.source.join("Docs/a.txt"), b"text")?;
+    fs::write(p.source.join("root.txt"), b"r")?;
+    let preview = app.preview_paged(p.id.clone())?;
+    let plan = preview["plan"]["id"].as_str().ok_or("plan id")?.to_owned();
+    // When reading the root level of the plan.
+    let root = app.plan_tree(&plan, "", 0, "", "")?;
+    // Then folders carry their counts and bytes, files stay entries.
+    let folders = root["folders"].as_array().ok_or("folders")?;
+    assert_eq!(folders.len(), 2);
+    assert_eq!(folders[0]["name"], "Docs");
+    assert_eq!(folders[1]["path"], "Photos");
+    assert_eq!(folders[1]["count"], 4, "folder 2024 and its three files");
+    assert_eq!(folders[1]["bytes"], 12);
+    assert_eq!(folders[1]["own"], "copy");
+    assert_eq!(root["total"], 1);
+    assert_eq!(root["operations"][0]["path"], "root.txt");
+    let leaf = app.plan_tree(&plan, "Photos/2024", 0, "", "")?;
+    assert_eq!(leaf["total"], 3);
+    // The search filters the levels too.
+    let searched = app.plan_tree(&plan, "", 0, "a.txt", "")?;
+    assert_eq!(searched["folders"].as_array().ok_or("folders")?.len(), 1);
+    assert_eq!(searched["total"], 0);
+    assert!(app.plan_tree(&plan, "../Photos", 0, "", "").is_err());
+    assert!(app.plan_tree("stale", "", 0, "", "").is_err());
+    // When executed, Then the history offers the same folders.
+    let report = app.execute(p.id.clone(), plan, true, false)?;
+    let execution = report["execution"].as_str().ok_or("execution")?;
+    let history = app.history_tree(
+        p.id.clone(),
+        execution,
+        "Photos",
+        0,
+        sync_orchestrator::HistoryFilter::All,
+        "",
+    )?;
+    assert_eq!(history["folders"][0]["path"], "Photos/2024");
+    assert_eq!(history["folders"][0]["count"], 3);
+    assert_eq!(history["total"], 0);
+    let leaf = app.history_tree(
+        p.id.clone(),
+        execution,
+        "Photos/2024",
+        0,
+        sync_orchestrator::HistoryFilter::All,
+        "",
+    )?;
+    assert_eq!(leaf["total"], 3);
+    assert_eq!(leaf["operations"][0]["outcome"]["status"]["status"], "done");
+    assert_eq!(
+        leaf["operations"][0]["operation"]["path"],
+        "Photos/2024/0.jpg"
+    );
+    // The problem filter (indexed path) finds nothing below.
+    let problems = app.history_tree(
+        p.id,
+        execution,
+        "",
+        0,
+        sync_orchestrator::HistoryFilter::Problems,
+        "",
+    )?;
+    assert_eq!(problems["folders"], serde_json::json!([]));
+    assert_eq!(problems["total"], 0);
+    Ok(())
+}

@@ -172,3 +172,29 @@ partages lecture/écriture sont conservés, sans partage de suppression.
 Références :
 - https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_attribute_tag_info
 - https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points-and-file-operations
+
+## Vidage des données sans vidage du cache de l’appareil (API opt-in)
+
+`windows_listing::flush_data_no_sync(&File)` appelle `NtFlushBuffersFileEx`
+avec `FLUSH_FLAGS_FILE_DATA_ONLY | FLUSH_FLAGS_NO_SYNC` (Windows 8 et
+suivants) : les données en cache du fichier sont écrites sur l’appareil et
+l’appel attend cette écriture, sans métadonnées et sans demander à l’appareil
+de vider son propre cache. `connector-local` s’en sert uniquement pour donner
+le rythme d’une copie (fil `flush.rs`) ; ce n’est pas une barrière de
+durabilité, le `sync_all` final sur la poignée d’écriture le reste. Les
+systèmes de fichiers qui ne connaissent pas cette requête renvoient
+ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED ou ERROR_INVALID_PARAMETER ;
+l’appelant revient alors à `File::sync_data`.
+
+Justification de l’appel FFI : la bibliothèque standard n’expose que
+`FlushFileBuffers`, qui vide aussi le cache de l’appareil ; sur disque dur ce
+vidage coûte assez pour diviser le débit par deux avec des pas de 8 Mio
+(mesures dans `docs/DEBIT_COPIE.md`). L’exception `allow(unsafe_code)` est
+limitée au module `flush_data.rs`.
+
+Revue de sûreté interne : la poignée appartient au `File` emprunté et reste
+ouverte pendant l’appel ; aucun bloc de paramètres n’est passé (pointeur nul,
+taille 0, comme documenté) ; le bloc d’état est une variable locale
+initialisée, écrite par l’appel seul. Le code NTSTATUS est converti par
+`RtlNtStatusToDosError`, sans pointeur. Aucune poignée n’est créée ni fermée.
+Cette revue n’est pas une revue indépendante externe.

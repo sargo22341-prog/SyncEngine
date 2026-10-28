@@ -528,7 +528,9 @@ impl App {
         .spacing(6)
         .wrap();
         let controls = column![
-            filters,
+            row![filters, ui::fill(), crate::profile::mode_switch(p, self.list_mode)]
+                .spacing(10)
+                .align_y(Alignment::Center),
             text_input(
                 "Rechercher un chemin ou un diagnostic… (Entrée pour appliquer)",
                 &self.history_query
@@ -543,6 +545,28 @@ impl App {
             )
         ]
         .spacing(8);
+        let filtered = self.history_filter != sync_orchestrator::HistoryFilter::All
+            || !self.history_query.is_empty();
+        let empty = if filtered {
+            "Aucune opération ne correspond à ces filtres."
+        } else {
+            "Aucun changement enregistré pour cette exécution."
+        };
+        if self.list_mode == crate::tree::ListMode::Tree {
+            let pal = *p;
+            let tree = crate::tree::view(
+                p,
+                &self.history_tree,
+                Message::HistoryTree,
+                &|r, indent| history_row(&pal, r, Some(indent)),
+                &|folder| crate::tree::action_summary(&pal, folder),
+                empty,
+            );
+            return column![controls, tree]
+                .spacing(8)
+                .padding(Padding::from([0, 8]))
+                .into();
+        }
         let Some(page) = &self.history else {
             return container(
                 column![controls, ui::muted(p, "Chargement des opérations…")].spacing(10),
@@ -552,51 +576,10 @@ impl App {
         };
         let mut col = column![].spacing(2);
         for r in &page.rows {
-            let (status_color, glyph) = match r.status.as_str() {
-                "done" => (p.success, Glyph::Check),
-                "no_action" => (p.faint, Glyph::Check),
-                "refused" | "cancelled" | "not_started" => (p.warning, Glyph::Alert),
-                _ => (p.danger, Glyph::Alert),
-            };
-            let (path, action) = r.op.as_ref().map_or(("?".into(), "—"), |o| {
-                (o.path.clone(), model::action_label(o.action))
-            });
-            let mut detail = r.detail.clone();
-            if let Some(v) = &r.version {
-                detail = format!("{detail}  · version préservée {v}");
-            }
-            col = col.push(
-                row![
-                    icons::icon(glyph, 14.0, status_color),
-                    container(ui::caption(p, action)).width(Length::Fixed(90.0)),
-                    column![
-                        ui::mono(p.text, model::ellipsize(&path, 80), 12.0),
-                        ui::caption(p, detail)
-                    ]
-                    .spacing(1)
-                    .width(Length::Fill),
-                    ui::colored(
-                        status_color,
-                        model::outcome_label(&r.status).to_owned(),
-                        12.0
-                    ),
-                ]
-                .spacing(10)
-                .padding(Padding::from([5, 10]))
-                .align_y(Alignment::Center),
-            );
+            col = col.push(history_row(p, r, None));
         }
         if page.rows.is_empty() {
-            col = col.push(ui::muted(
-                p,
-                if self.history_filter == sync_orchestrator::HistoryFilter::All
-                    && self.history_query.is_empty()
-                {
-                    "Aucun changement enregistré pour cette exécution."
-                } else {
-                    "Aucune opération ne correspond à ces filtres."
-                },
-            ));
+            col = col.push(ui::muted(p, empty));
         }
         let end = (page.offset + page.rows.len()).min(page.total);
         let pager = row![
@@ -1039,5 +1022,51 @@ fn onboarding<'a>(p: &Palette) -> El<'a, Message> {
     .padding(28)
     .width(Length::Fill)
     .style(theme::outline(*p, p.accent, 0.5))
+    .into()
+}
+
+/// One historical operation and its outcome. In the folder view
+/// (`indent`), only its name is shown, below its folder.
+fn history_row<'a>(p: &Palette, r: &'a model::HistoryRow, indent: Option<f32>) -> El<'a, Message> {
+    let (status_color, glyph) = match r.status.as_str() {
+        "done" => (p.success, Glyph::Check),
+        "no_action" => (p.faint, Glyph::Check),
+        "refused" | "cancelled" | "not_started" => (p.warning, Glyph::Alert),
+        _ => (p.danger, Glyph::Alert),
+    };
+    let (path, action) = r.op.as_ref().map_or(("?".into(), "—"), |o| {
+        let shown = match indent {
+            Some(_) => o.path.rsplit('/').next().unwrap_or(&o.path),
+            None => o.path.as_str(),
+        };
+        (shown.to_owned(), model::action_label(o.action))
+    });
+    let mut detail = r.detail.clone();
+    if let Some(v) = &r.version {
+        detail = format!("{detail}  · version préservée {v}");
+    }
+    row![
+        icons::icon(glyph, 14.0, status_color),
+        container(ui::caption(p, action)).width(Length::Fixed(90.0)),
+        column![
+            ui::mono(p.text, model::ellipsize(&path, 80), 12.0),
+            ui::caption(p, detail)
+        ]
+        .spacing(1)
+        .width(Length::Fill),
+        ui::colored(
+            status_color,
+            model::outcome_label(&r.status).to_owned(),
+            12.0
+        ),
+    ]
+    .spacing(10)
+    .padding(Padding {
+        top: 5.0,
+        bottom: 5.0,
+        left: 10.0 + indent.unwrap_or(0.0),
+        right: 10.0,
+    })
+    .align_y(Alignment::Center)
     .into()
 }

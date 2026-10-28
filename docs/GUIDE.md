@@ -197,7 +197,25 @@ interrompues, elles sont présentées l'une après l'autre.
 sécurité, planification, récapitulatif. « Enregistrer et simuler » lance
 directement la simulation. Les filtres sont des motifs glob sur le chemin
 relatif (`*.tmp`, `build/**/*.o`, `**/node_modules`) ; ils s'appliquent à
-l'identique en simulation et en exécution.
+l'identique en simulation et en exécution. Sous Windows, comme les noms de
+fichiers, ils ignorent toujours la casse (`Thumbs.db` exclut aussi
+`thumbs.db`), y compris pour les profils enregistrés avant ce changement ;
+ailleurs, l'option « Ignorer la casse des motifs » décide.
+
+Les listes longues (simulation, historique d'une exécution, corbeille)
+s'affichent par dossiers repliables : chaque dossier indique le nombre
+d'éléments qu'il contient par action (par exemple « 5 000 suppressions »)
+et, en simulation, leur taille. Ouvrir un dossier charge son contenu,
+100 fichiers à la fois. « Liste » rétablit la liste à plat dans l'ordre du
+plan. Les filtres et la recherche s'appliquent aux deux vues.
+
+Clic droit sur un groupe › « Synchroniser tout le groupe… » : après une seule
+confirmation, chaque profil du groupe est simulé puis exécuté, l'un après
+l'autre, puis un bilan indique pour chacun le résultat, « déjà à jour » ou
+la raison pour laquelle il a été laissé de côté. Les suppressions ne sont
+appliquées que si la case dédiée est cochée ; un profil dont la corbeille ne
+peut pas garder les fichiers remplacés ou supprimés est laissé de côté sans
+écriture. « Annuler » arrête le profil en cours et les suivants.
 
 Le bouton d'exécution est rouge si le plan contient des suppressions, et ces
 suppressions demandent une case de confirmation distincte. Une tâche en cours
@@ -206,9 +224,13 @@ peut être annulée à tout moment ; l'état partiel est enregistré.
 Pendant l'exécution, le débit et la courbe suivent les octets copiés bloc par
 bloc (tous les 1 Mio), y compris à l'intérieur d'un gros fichier, et sont
 moyennés sur une fenêtre glissante de 4 s, comme FreeFileSync ; la première
-seconde affiche « mesure… ». Les fichiers locaux sont vidés sur le disque tous
-les 128 Mio pendant l'écriture : le débit affiché est celui du disque, pas
-celui du cache de Windows/Linux. Le nombre d'opérations par seconde est
+seconde affiche « mesure… ». Les fichiers locaux sont vidés sur le disque en
+arrière-plan pendant l'écriture (tous les 16 Mio sous Windows) : le débit
+affiché est celui du disque, pas celui du cache de Windows/Linux, et la
+lecture de la source continue pendant ce vidage. Un seul gros fichier
+(8 Mio et plus) est copié à la fois, comme FreeFileSync par défaut : deux
+gros fichiers écrits ensemble sur un disque dur ralentissent tout. Voir
+[l'analyse du débit](DEBIT_COPIE.md). Le nombre d'opérations par seconde est
 affiché à côté (création de dossiers, petits fichiers). La relecture de
 vérification d'un fichier n'est pas comptée comme débit.
 

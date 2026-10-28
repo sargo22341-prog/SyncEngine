@@ -39,6 +39,7 @@
 mod confined;
 mod connector;
 mod errors;
+mod flush;
 mod paging;
 mod paths;
 mod write;

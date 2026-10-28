@@ -31,7 +31,7 @@ Filtres et comparaison (toutes commandes de scan) :
 | --- | --- |
 | `--include <MOTIF>` / `--exclude <MOTIF>` | garde / écarte les fichiers correspondants (répétable) |
 | `--exclude-dir <MOTIF>` | ne parcourt pas les dossiers correspondants |
-| `--ignore-case` | motifs insensibles à la casse |
+| `--ignore-case` | motifs insensibles à la casse (toujours actif sous Windows) |
 | `--hash` | compare aussi le contenu (BLAKE3) |
 
 Un motif sans `/` porte sur le nom seul, sinon sur le chemin relatif.

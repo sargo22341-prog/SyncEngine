@@ -1,9 +1,11 @@
 //! Mutations confined to stable directory handles. No ambient path publication.
+use crate::flush::{FlushBehind, STEP_BYTES, SYNC_STEP_BYTES};
 use crate::{
     confined,
     connector::cancelled,
     errors::{io_error, local_error},
 };
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
 use connector_api::{
     CommitMode, ContentWriter, StorageError, StorageErrorKind, StorageOperation, WriteOptions,
@@ -14,16 +16,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sync_core::{CancellationToken, EntryKind, FileEntry, ResourcePath, TimestampPrecision};
 pub(crate) const STAGING_PREFIX: &str = ".syncengine-";
 pub(crate) const STAGING_SUFFIX: &str = ".partial";
-/// Written bytes after which the staging file is flushed to the device
-/// (`sync_data`) while the transfer goes on. Without it the OS accepts a whole
-/// large file into its write cache at memory speed, then the final
-/// `sync_all` blocks for seconds: progress (and throughput) would report a
-/// burst followed by a stall instead of the device's actual pace. Bounding
-/// dirty data adds no write; the final `sync_all` stays. Measured on a 2 GB
-/// file to a 134 MB/s disk (Windows 11): 64 MiB costs ~10 % in time, 128 MiB
-/// none measurable (30.2 s / 29.8 s against 30.4 s / 29.2 s) with a steady
-/// rate, 256 MiB none either but 2 s steps visible in a 4 s average window.
-pub(crate) const FLUSH_EVERY_BYTES: u64 = 128 * 1024 * 1024;
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 fn staging_name() -> String {
     let nanos = std::time::SystemTime::now()
@@ -163,8 +155,19 @@ pub(crate) struct LocalWriter {
     precision: TimestampPrecision,
     cancel: CancellationToken,
     finished: bool,
-    /// Bytes written since the last intermediate flush.
-    unflushed: u64,
+    pacing: Pacing,
+}
+/// How written data is pushed to the device before the final `sync_all`
+/// (see `flush.rs` for the reasons and measurements).
+enum Pacing {
+    /// Not started yet: files under one step never need a flush thread.
+    Pending { written: u64 },
+    /// Background flushes while the writer goes on.
+    Behind(FlushBehind),
+    /// Fallback when no second handle or thread is available: `sync_data`
+    /// in the writing thread every [`SYNC_STEP_BYTES`], which serializes
+    /// reads and flushes. Bytes written since the last flush.
+    Inline { unflushed: u64 },
 }
 impl LocalWriter {
     pub(crate) fn open(
@@ -207,14 +210,55 @@ impl LocalWriter {
             precision,
             cancel: cancel.clone(),
             finished: false,
-            unflushed: 0,
+            pacing: Pacing::Pending { written: 0 },
         })
+    }
+    /// Starts flush-behind for a file that became large; a refused second
+    /// handle (or thread) falls back to inline flushes.
+    fn start_pacing(&self) -> Pacing {
+        // A second handle of our own staging file, used only to flush.
+        let mut open = OpenOptions::new();
+        open.write(true).follow(FollowSymlinks::No);
+        match self
+            .parent
+            .open_with(&self.staging_name, &open)
+            .and_then(|handle| FlushBehind::start(handle.into_std()))
+        {
+            Ok(flush) => Pacing::Behind(flush),
+            Err(_) => Pacing::Inline { unflushed: 0 },
+        }
+    }
+    /// Accounts `bytes` more written to the staging file (see [`Pacing`]).
+    fn pace(&mut self, bytes: u64) -> Result<(), StorageError> {
+        let op = StorageOperation::Write;
+        match &mut self.pacing {
+            Pacing::Pending { .. } => Ok(()),
+            Pacing::Behind(flush) => flush.wrote(bytes, &self.cancel).map_err(|e| {
+                if self.cancel.is_cancelled() {
+                    cancelled(op, &self.target)
+                } else {
+                    io_error(e, op, &self.target)
+                }
+            }),
+            Pacing::Inline { unflushed } => {
+                *unflushed = unflushed.saturating_add(bytes);
+                if *unflushed < SYNC_STEP_BYTES {
+                    return Ok(());
+                }
+                *unflushed = 0;
+                self.file
+                    .as_ref()
+                    .map_or(Ok(()), File::sync_data)
+                    .map_err(|e| io_error(e, op, &self.target))
+            }
+        }
     }
     fn publish(&mut self, mode: CommitMode) -> Result<FileEntry, StorageError> {
         let op = StorageOperation::Write;
         if self.cancel.is_cancelled() {
             return Err(cancelled(op, &self.target));
         }
+        self.pacing = Pacing::Pending { written: 0 };
         let file = self.file.take().ok_or_else(|| {
             local_error(
                 StorageErrorKind::Permanent,
@@ -295,7 +339,9 @@ impl LocalWriter {
             })?;
         Ok(confined::entry(self.target.clone(), &meta, self.precision))
     }
-    fn cleanup(&self) -> Result<(), StorageError> {
+    fn cleanup(&mut self) -> Result<(), StorageError> {
+        // Closes the flush handle first: the staging file is then removable.
+        self.pacing = Pacing::Pending { written: 0 };
         match self.parent.remove_file(&self.staging_name) {
             Ok(()) => sync_directory(&self.parent, &self.staging, StorageOperation::Write),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -319,13 +365,17 @@ impl ContentWriter for LocalWriter {
         })?;
         file.write_all(data)
             .map_err(|e| io_error(e, op, &self.target))?;
-        self.unflushed = self.unflushed.saturating_add(data.len() as u64);
-        if self.unflushed >= FLUSH_EVERY_BYTES {
-            self.unflushed = 0;
-            file.sync_data()
-                .map_err(|e| io_error(e, op, &self.target))?;
+        let bytes = data.len() as u64;
+        if let Pacing::Pending { written } = self.pacing {
+            let written = written.saturating_add(bytes);
+            if written < STEP_BYTES {
+                self.pacing = Pacing::Pending { written };
+                return Ok(());
+            }
+            self.pacing = self.start_pacing();
+            return self.pace(written);
         }
-        Ok(())
+        self.pace(bytes)
     }
     fn staging_path(&self) -> Option<&ResourcePath> {
         Some(&self.staging)

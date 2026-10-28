@@ -128,6 +128,12 @@ fn enabled_trash_keeps_listable_copies_until_emptied_or_profile_removed() -> Res
             ("obsolete", Some(Action::Delete), Some(19)),
         ]
     );
+    // The folder view of the same synchronization lists them at the root.
+    let tree = app.trash_tree(&p.id, execution, "", 0)?;
+    assert!(tree.folders.is_empty());
+    assert_eq!(tree.total, 2);
+    assert_eq!(tree.files.len(), 2);
+    assert!(app.trash_tree(&p.id, execution, "../x", 0).is_err());
     // « Enregistrer sous… » copies a kept file without changing the trash.
     let saved = temp.path().join("restored.txt");
     let obsolete = page

@@ -9,16 +9,14 @@ use crate::icons::{self, Glyph};
 use crate::model;
 use crate::native;
 use crate::theme::{self, Palette, Tone};
+use crate::tree::{Level, Request, Tree, TreeMsg};
 use crate::ui::{self, El};
 use iced::widget::{Space, button, column, container, row, scrollable};
 use iced::{Alignment, Length, Padding, Task};
 use std::path::PathBuf;
 use sync_core::ProfileId;
-use sync_orchestrator::{TrashOverview, TrashPage};
+use sync_orchestrator::{TrashFile, TrashOverview};
 use sync_plan::Action;
-
-/// Files per page, as returned by the facade.
-const PAGE: usize = 100;
 
 /// State of the trash dialog.
 #[derive(Debug, Clone)]
@@ -26,10 +24,9 @@ pub(crate) struct TrashDialog {
     pub(crate) profile: ProfileId,
     /// `None` while loading.
     pub(crate) overview: Option<Result<TrashOverview, Failure>>,
-    /// Synchronization whose files are shown.
+    /// Synchronization whose files are shown, by folder.
     pub(crate) open: Option<String>,
-    pub(crate) offset: usize,
-    pub(crate) page: Option<Result<TrashPage, Failure>>,
+    pub(crate) tree: Tree<TrashFile>,
     /// Second step of « Vider la corbeille ».
     pub(crate) confirm_empty: bool,
     pub(crate) emptying: bool,
@@ -40,8 +37,8 @@ pub(crate) enum TrashMsg {
     Open(ProfileId),
     Loaded(ProfileId, Result<TrashOverview, Failure>),
     Expand(String),
-    Page(usize),
-    Paged(String, usize, Result<TrashPage, Failure>),
+    Tree(TreeMsg),
+    Level(String, Request, Result<Level<TrashFile>, Failure>),
     OpenFolder(PathBuf),
     SaveAs { execution: String, location: String },
     Saved(Result<Option<PathBuf>, Failure>),
@@ -73,15 +70,19 @@ impl App {
         )
     }
 
-    fn load_trash_page(&self, id: ProfileId, execution: String, offset: usize) -> Task<Message> {
+    fn load_trash_level(
+        &self,
+        id: ProfileId,
+        execution: String,
+        request: Request,
+    ) -> Task<Message> {
         let Some(app) = &self.backend else {
             return Task::none();
         };
-        let key = execution.clone();
-        Task::perform(
-            backend::call(app, move |a| a.trash_page(&id, &execution, offset)),
-            move |r| wrap(TrashMsg::Paged(key.clone(), offset, r)),
-        )
+        let task = backend::trash_tree(app, id, execution.clone(), &request);
+        Task::perform(task, move |r| {
+            wrap(TrashMsg::Level(execution.clone(), request.clone(), r))
+        })
     }
 
     pub(crate) fn trash(&mut self, msg: TrashMsg) -> Task<Message> {
@@ -91,8 +92,7 @@ impl App {
                     profile: id.clone(),
                     overview: None,
                     open: None,
-                    offset: 0,
-                    page: None,
+                    tree: Tree::default(),
                     confirm_empty: false,
                     emptying: false,
                 })));
@@ -113,29 +113,26 @@ impl App {
                     return Task::none();
                 }
                 t.open = Some(execution.clone());
-                t.offset = 0;
-                t.page = None;
+                let request = t.tree.reset();
                 let id = t.profile.clone();
-                self.load_trash_page(id, execution, 0)
+                self.load_trash_level(id, execution, request)
             }
-            TrashMsg::Page(offset) => {
+            TrashMsg::Tree(msg) => {
                 let Some(t) = self.trash_state() else {
                     return Task::none();
                 };
-                let Some(execution) = t.open.clone() else {
+                let (Some(execution), Some(request)) = (t.open.clone(), t.tree.update(msg)) else {
                     return Task::none();
                 };
-                t.offset = offset;
-                t.page = None;
                 let id = t.profile.clone();
-                self.load_trash_page(id, execution, offset)
+                self.load_trash_level(id, execution, request)
             }
-            TrashMsg::Paged(execution, offset, result) => {
+            TrashMsg::Level(execution, request, result) => {
                 if let Some(t) = self
                     .trash_state()
-                    .filter(|t| t.open.as_deref() == Some(execution.as_str()) && t.offset == offset)
+                    .filter(|t| t.open.as_deref() == Some(execution.as_str()))
                 {
-                    t.page = Some(result);
+                    t.tree.loaded(&request, result.map_err(|e| e.message));
                 }
                 Task::none()
             }
@@ -209,7 +206,7 @@ impl App {
                 t.emptying = false;
                 t.confirm_empty = false;
                 t.open = None;
-                t.page = None;
+                t.tree = Tree::default();
                 let id = t.profile.clone();
                 match &result {
                     Ok(()) => self.toast(
@@ -405,73 +402,56 @@ impl App {
         t: &'a TrashDialog,
         execution: &'a str,
     ) -> El<'a, Message> {
-        let page = match &t.page {
-            None => return ui::caption(p, "Lecture…"),
-            Some(Err(e)) => return ui::colored(p.danger, e.message.clone(), 12.0),
-            Some(Ok(page)) => page,
-        };
-        let mut rows = column![].spacing(4);
-        for file in &page.files {
-            let kind = match file.action {
-                Some(Action::Replace) => "remplacé",
-                Some(Action::Delete) => "supprimé",
-                _ => "conservé",
-            };
-            rows = rows.push(
-                row![
-                    container(ui::mono(p.text, model::ellipsize(&file.path, 64), 12.0))
-                        .width(Length::Fill),
-                    ui::caption(p, kind),
-                    ui::caption(
-                        p,
-                        file.bytes.map_or_else(|| "absent".to_owned(), model::bytes)
-                    ),
-                    ui::action(
-                        p,
-                        Tone::Ghost,
-                        None,
-                        "Enregistrer sous…",
-                        file.bytes.is_some().then(|| {
-                            wrap(TrashMsg::SaveAs {
-                                execution: execution.to_owned(),
-                                location: file.location.clone(),
-                            })
-                        })
-                    ),
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center),
-            );
-        }
-        let end = (t.offset + page.files.len()).min(page.total);
-        let pager = row![
-            ui::caption(
-                p,
-                format!(
-                    "{}–{} sur {}",
-                    model::count((t.offset + 1).min(end) as u64),
-                    model::count(end as u64),
-                    model::count(page.total as u64)
-                )
-            ),
-            ui::fill(),
-            ui::action(
-                p,
-                Tone::Ghost,
-                Some(Glyph::ChevronLeft),
-                "Précédent",
-                (t.offset > 0).then(|| wrap(TrashMsg::Page(t.offset.saturating_sub(PAGE))))
-            ),
-            ui::action(
-                p,
-                Tone::Ghost,
-                Some(Glyph::ChevronRight),
-                "Suivant",
-                (end < page.total).then(|| wrap(TrashMsg::Page(t.offset + PAGE)))
-            ),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-        column![rows, pager].spacing(8).into()
+        let pal = *p;
+        crate::tree::view(
+            p,
+            &t.tree,
+            |msg| wrap(TrashMsg::Tree(msg)),
+            &|file, indent| trash_file_row(&pal, file, indent, execution),
+            &|folder| crate::tree::action_summary(&pal, folder),
+            "Aucun fichier dans cette synchronisation.",
+        )
     }
+}
+
+/// One kept file, below its folder.
+fn trash_file_row<'a>(
+    p: &Palette,
+    file: &'a TrashFile,
+    indent: f32,
+    execution: &'a str,
+) -> El<'a, Message> {
+    let kind = match file.action {
+        Some(Action::Replace) => "remplacé",
+        Some(Action::Delete) => "supprimé",
+        _ => "conservé",
+    };
+    let name = file.path.rsplit('/').next().unwrap_or(&file.path);
+    row![
+        container(ui::mono(p.text, model::ellipsize(name, 64), 12.0)).width(Length::Fill),
+        ui::caption(p, kind),
+        ui::caption(
+            p,
+            file.bytes.map_or_else(|| "absent".to_owned(), model::bytes)
+        ),
+        ui::action(
+            p,
+            Tone::Ghost,
+            None,
+            "Enregistrer sous…",
+            file.bytes.is_some().then(|| {
+                wrap(TrashMsg::SaveAs {
+                    execution: execution.to_owned(),
+                    location: file.location.clone(),
+                })
+            })
+        ),
+    ]
+    .spacing(10)
+    .padding(Padding {
+        left: indent,
+        ..Padding::ZERO
+    })
+    .align_y(Alignment::Center)
+    .into()
 }

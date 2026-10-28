@@ -440,6 +440,33 @@ pub(crate) fn action_key(action: Action) -> &'static str {
     }
 }
 
+/// Inverse of [`action_key`] (folder summaries of the tree views).
+pub(crate) fn action_from_key(key: &str) -> Option<Action> {
+    [
+        Action::Copy,
+        Action::Replace,
+        Action::Delete,
+        Action::Keep,
+        Action::Conflict,
+        Action::Skip,
+    ]
+    .into_iter()
+    .find(|a| action_key(*a) == key)
+}
+
+/// Plural noun of an action, after a count (« 3 suppressions »).
+pub(crate) fn action_noun(action: Action) -> &'static str {
+    match action {
+        Action::Copy => "copies",
+        Action::Replace => "remplacements",
+        Action::Delete => "suppressions",
+        Action::Keep => "conservés",
+        Action::Conflict => "conflits",
+        Action::Skip => "ignorés",
+        _ => "autres",
+    }
+}
+
 pub(crate) fn reason_label(code: &str) -> &str {
     match code {
         "missing_at_destination" => "Absent de la destination",

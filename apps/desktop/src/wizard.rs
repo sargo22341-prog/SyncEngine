@@ -247,25 +247,25 @@ impl Wizard {
         if !matches!(msg, WizardMsg::Next | WizardMsg::Save(_)) {
             self.error = None;
         }
-        let before = self.draft.clone();
-        let profile_edit = matches!(
+        // What is synchronized where: changing it is a new decision, so
+        // the schedule consents must be given again. Other edits (filters,
+        // name, group, trash, comparison) keep them: saving from this
+        // assistant, which shows them, renews them for the new configuration.
+        let endpoints_edit = matches!(
             &msg,
             WizardMsg::Mode(_)
                 | WizardMsg::Provider(..)
                 | WizardMsg::Field(..)
                 | WizardMsg::Flag(..)
                 | WizardMsg::Browsed(..)
-                | WizardMsg::Preset(_)
-                | WizardMsg::AddPattern(_)
-                | WizardMsg::RemovePattern(..)
-                | WizardMsg::CaseInsensitive(_)
-                | WizardMsg::AllowDelete(_)
-                | WizardMsg::Trash(_)
-                | WizardMsg::TrashSize(_)
-                | WizardMsg::Compare(_)
-                | WizardMsg::Name(_)
-                | WizardMsg::Group(_)
         );
+        let before = endpoints_edit.then(|| {
+            (
+                self.draft.mode,
+                self.draft.source.clone(),
+                self.draft.destination.clone(),
+            )
+        });
         match msg {
             WizardMsg::Mode(mode) => {
                 self.draft.mode = Some(mode);
@@ -317,7 +317,7 @@ impl Wizard {
                 self.draft.filters.add(list, &value);
             }
             WizardMsg::RemovePattern(list, i) => self.draft.filters.remove(list, i),
-            WizardMsg::CaseInsensitive(v) => self.draft.filters.case_insensitive = v,
+            WizardMsg::CaseInsensitive(v) => self.draft.filters.set_case_insensitive(v),
             WizardMsg::AllowDelete(v) => {
                 self.draft.allow_delete = v && self.draft.deletions_possible();
                 if !self.draft.allow_delete {
@@ -403,7 +403,11 @@ impl Wizard {
                 };
             }
         }
-        if profile_edit && self.draft != before {
+        if before.is_some_and(|(mode, source, destination)| {
+            mode != self.draft.mode
+                || source != self.draft.source
+                || destination != self.draft.destination
+        }) {
             self.draft.schedule.approve_writes = false;
             self.draft.schedule.approve_deletions = false;
         }
@@ -1086,11 +1090,20 @@ impl Wizard {
                 "Vide = tous les fichiers. Ex. **/*.jpg pour ne garder que les photos.",
                 p.success
             ),
-            toggler(f.case_insensitive)
-                .label("Ignorer la casse des motifs")
-                .on_toggle(|v| Message::Wizard(WizardMsg::CaseInsensitive(v)))
-                .text_size(14)
-                .style(theme::switch(*p, false)),
+            if crate::draft::case_choice_available() {
+                El::from(
+                    toggler(f.case_insensitive)
+                        .label("Ignorer la casse des motifs")
+                        .on_toggle(|v| Message::Wizard(WizardMsg::CaseInsensitive(v)))
+                        .text_size(14)
+                        .style(theme::switch(*p, false)),
+                )
+            } else {
+                ui::caption(
+                    p,
+                    "Comme les noms de fichiers Windows, les motifs ignorent la casse : Thumbs.db exclut aussi thumbs.db.",
+                )
+            },
         ]
         .spacing(16)
         .into()
@@ -1449,16 +1462,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn editing_profile_invalidates_consent_but_navigation_keeps_it() {
+    fn endpoint_edits_invalidate_consent_but_other_edits_keep_it() {
         let now = Instant::now();
         let mut w = Wizard::open(ProfileDraft::new(""), vec![], now);
-        w.draft.schedule.kind = TriggerKind::Interval;
-        w.draft.schedule.approve_writes = true;
-        w.draft.schedule.approve_deletions = true;
+        w.draft.mode = Some(SyncMode::Mirror);
+        w.draft.allow_delete = true;
+        w.draft.schedule.kind = TriggerKind::Logon;
+        let consent = |w: &mut Wizard| {
+            w.draft.schedule.approve_writes = true;
+            w.draft.schedule.approve_deletions = true;
+        };
+        let kept =
+            |w: &Wizard| w.draft.schedule.approve_writes && w.draft.schedule.approve_deletions;
+        consent(&mut w);
+        // Given authorized consents, When navigating or editing filters,
+        // name, group, trash or comparison, Then they stay checked.
         w.update(WizardMsg::Back, now);
-        assert!(w.draft.schedule.approve_writes && w.draft.schedule.approve_deletions);
+        w.update(WizardMsg::Preset(0), now);
+        w.update(
+            WizardMsg::PatternInput(FilterList::ExcludeFiles, "*.tmp".into()),
+            now,
+        );
+        w.update(WizardMsg::AddPattern(FilterList::ExcludeFiles), now);
+        w.update(WizardMsg::CaseInsensitive(true), now);
         w.update(WizardMsg::Name("new profile name".into()), now);
+        w.update(WizardMsg::Group("Travail".into()), now);
+        w.update(WizardMsg::Trash(true), now);
+        w.update(WizardMsg::Compare(CompareMethod::Content), now);
+        assert!(kept(&w));
+        // Selecting the same values again is not a change either.
+        w.update(WizardMsg::Mode(SyncMode::Mirror), now);
+        assert!(kept(&w));
+        // When the destination changes, Then both consents are required again.
+        w.update(
+            WizardMsg::Field(Side::Destination, Field::Path, "other-destination".into()),
+            now,
+        );
         assert!(!w.draft.schedule.approve_writes && !w.draft.schedule.approve_deletions);
+        consent(&mut w);
+        w.update(WizardMsg::Mode(SyncMode::Bidirectional), now);
+        assert!(!w.draft.schedule.approve_writes);
+        // Disabling deletions withdraws only the deletion consent.
+        consent(&mut w);
+        w.update(WizardMsg::AllowDelete(false), now);
+        assert!(w.draft.schedule.approve_writes && !w.draft.schedule.approve_deletions);
     }
 
     #[test]

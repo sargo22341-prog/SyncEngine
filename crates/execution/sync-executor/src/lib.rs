@@ -36,6 +36,8 @@
 //! Synchrone avec jusqu'à quatre copies indépendantes par défaut, bornées par
 //! les deux connecteurs et [`ExecutionOptions::copy_workers`]. Le coordinateur
 //! respecte les dépendances des dossiers et la capacité du magasin de versions ;
+//! un seul gros fichier est transféré à la fois par défaut
+//! ([`ExecutionOptions::large_transfers`]), les petits occupant les autres workers ;
 //! les suppressions attendent la jonction de tous les workers.
 //! Le bidirectionnel conserve son parcours séquentiel. Le journal est sérialisé
 //! sans retirer ses barrières de durabilité. Un appelant async utilise un fil dédié.
@@ -69,7 +71,9 @@ use sync_plan::ExecutionPlan;
 use sync_versioning::VersionStore;
 
 pub use error::ExecutionError;
-pub use options::{DEFAULT_MAX_CLOCK_SKEW, DEFAULT_MAX_PLAN_AGE, ExecutionOptions};
+pub use options::{
+    DEFAULT_MAX_CLOCK_SKEW, DEFAULT_MAX_PLAN_AGE, ExecutionOptions, LARGE_TRANSFER_BYTES,
+};
 pub use ownership::{default_lock_root, execution_lock};
 pub use report::{ExecutionReport, OperationOutcome, OutcomeStatus, Refusal, StopCause};
 pub use sync_journal::JournalTotals as ExecutionTotals;

@@ -5,6 +5,53 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Débit de copie et courbe
+- Connecteur local : le fichier temporaire est vidé sur le disque par un fil
+  dédié, à travers une seconde poignée, pendant que la copie continue
+  (`flush.rs`). Sous Windows, le vidage écrit les données seules, sans vider
+  le cache de l’appareil (`NtFlushBuffersFileEx`, `FLUSH_FLAGS_FILE_DATA_ONLY |
+  FLUSH_FLAGS_NO_SYNC`, extension `flush_data_no_sync` du correctif
+  `cap-primitives`), tous les 16 Mio ; ailleurs, ou si le système de fichiers
+  le refuse, `sync_data` tous les 128 Mio. Le `sync_all` final reste la
+  garantie de durabilité. Avant, le vidage tous les 128 Mio bloquait la
+  lecture et faisait avancer la progression par paliers de 128 Mio
+  (±33 Mo/s sur la moyenne de 4 s).
+- Exécuteur : `ExecutionOptions::large_transfers` (défaut 1) — un seul fichier
+  d’au moins 8 Mio (`LARGE_TRANSFER_BYTES`) transféré à la fois, les petits
+  fichiers occupant les autres workers.
+- Mesures Windows (disques durs SATA, exemple `copy_throughput`) : trois ou
+  quatre fichiers de 1,1 à 1,4 Go d’un disque dur à un autre passent de
+  29 Mo/s (quatre workers) ou 62–70 Mo/s (un worker) à 102–120 Mo/s, avec une
+  courbe à ±10 % autour de sa médiane. Détail : `docs/DEBIT_COPIE.md`.
+- Interface : chaque échantillon de la courbe est daté à la lecture du compteur.
+
+### Synchroniser tout le groupe
+- Clic droit sur un groupe : « Synchroniser tout le groupe… ». Après une seule
+  confirmation, chaque profil est simulé puis son plan exact exécuté, l’un
+  après l’autre, avec un bilan par profil. Les suppressions demandent une case
+  explicite ; un plan qui dépasserait la corbeille est laissé de côté sans
+  écriture ; annuler arrête le profil en cours et les suivants.
+
+### Arborescence des listes
+- Simulation, historique d’une exécution et corbeille : vue « Dossiers »
+  repliable (défaut) ou « Liste ». Chaque dossier indique le nombre
+  d’éléments en dessous, par action, et leur taille pour la simulation.
+  Les niveaux sont chargés à l’ouverture, 100 fichiers à la fois, avec les
+  mêmes filtres et recherche que la liste. Façade : `plan_tree`,
+  `history_tree`, `trash_tree`, `TreeFolder`.
+
+### Filtres insensibles à la casse sous Windows
+- La façade applique les filtres sans tenir compte de la casse sous Windows
+  (`host_filter`), y compris pour les profils existants ; le plan enregistre
+  les règles réellement appliquées. L’assistant n’offre plus l’option sous
+  Windows ; la CLI `discovery` fait de même. Ailleurs, rien ne change.
+
+### Autorisations de planification à l’édition
+- Dans l’assistant, modifier les filtres, le nom, le groupe, la corbeille ou
+  la comparaison conserve les cases « écritures » et « suppressions » ;
+  l’enregistrement les renouvelle pour la nouvelle configuration. Changer le
+  mode, la source ou la destination les décoche toujours.
+
 ### Actualisation des dépendances
 - Migration vers rusqlite 0.41.1 (type explicite du callback de sauvegarde),
   globset 0.4.21 et actualisation des dépendances transitives dans Cargo.lock.

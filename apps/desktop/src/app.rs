@@ -117,6 +117,8 @@ pub(crate) struct PreviewState {
     pub(crate) total: usize,
     pub(crate) loading: bool,
     pub(crate) reveal: Tween,
+    /// Folder view of the same filtered operations.
+    pub(crate) tree: crate::tree::Tree<model::OpView>,
 }
 
 /// Result of the last execution launched from this window.
@@ -197,6 +199,18 @@ pub(crate) enum Dialog {
         pending: Option<ProfileId>,
         error: Option<String>,
     },
+    /// « Synchroniser tout le groupe » confirmation.
+    GroupRun {
+        group: String,
+        profiles: Vec<ProfileId>,
+        allow_deletions: bool,
+    },
+    /// Outcome of each profile of a group run.
+    GroupReport {
+        group: String,
+        results: Vec<crate::group_run::GroupResult>,
+        cancelled: bool,
+    },
     Schedule {
         targets: Vec<ProfileId>,
         title: String,
@@ -251,6 +265,11 @@ pub(crate) enum Message {
     PlanQuery(String),
     PlanMore,
     PlanPage(u64, Result<PlanPage, Failure>),
+    PlanTree(crate::tree::TreeMsg),
+    PlanTreeLevel(
+        crate::tree::Request,
+        Result<crate::tree::Level<model::OpView>, Failure>,
+    ),
     DiscardPreview,
     AskExecute,
     Execute,
@@ -292,6 +311,10 @@ pub(crate) enum Message {
     GroupName(String),
     SubmitGroup,
     ScheduleGroup(String),
+    /// Simulates then executes every profile of a group, in a chain.
+    AskGroupRun(String),
+    GroupRunDeletions(bool),
+    StartGroupRun,
     // Wizard.
     Wizard(WizardMsg),
     Saved(Result<Saved, Failure>, bool),
@@ -311,6 +334,14 @@ pub(crate) enum Message {
     ExpandRun(String),
     HistoryPage(Result<HistoryPage, Failure>),
     HistoryOffset(usize),
+    /// « Dossiers » or « Liste » for the simulation and history lists.
+    ListMode(crate::tree::ListMode),
+    HistoryTree(crate::tree::TreeMsg),
+    HistoryTreeLevel(
+        String,
+        crate::tree::Request,
+        Result<crate::tree::Level<model::HistoryRow>, Failure>,
+    ),
     // Settings.
     Theme(ThemeChoice),
     Compact(bool),
@@ -356,6 +387,8 @@ pub(crate) struct App {
     pub(crate) hovered: Option<ProfileId>,
     pub(crate) lift: HashMap<ProfileId, Tween>,
     pub(crate) job: Option<Job>,
+    /// Group simulated and executed profile after profile.
+    pub(crate) group_run: Option<crate::group_run::GroupRun>,
     /// Scheduled run of the agent, followed live (see [`Job::agent`]).
     pub(crate) agent_job: Option<Job>,
     /// A read of the agent snapshot is in flight (no overlapping reads).
@@ -368,6 +401,10 @@ pub(crate) struct App {
     pub(crate) last_run: Option<LastRun>,
     pub(crate) expanded_run: Option<String>,
     pub(crate) history: Option<HistoryPage>,
+    /// Folder view of the expanded run, with the same filter and search.
+    pub(crate) history_tree: crate::tree::Tree<model::HistoryRow>,
+    /// Folders or flat list, for this session.
+    pub(crate) list_mode: crate::tree::ListMode,
     pub(crate) history_filter: sync_orchestrator::HistoryFilter,
     pub(crate) history_query: String,
     pub(crate) history_generation: u64,
@@ -434,6 +471,7 @@ impl App {
             hovered: None,
             lift: HashMap::new(),
             job: None,
+            group_run: None,
             agent_job: None,
             agent_polling: false,
             presence: None,
@@ -443,6 +481,8 @@ impl App {
             last_run: None,
             expanded_run: None,
             history: None,
+            history_tree: crate::tree::Tree::default(),
+            list_mode: crate::tree::ListMode::default(),
             history_filter: sync_orchestrator::HistoryFilter::All,
             history_query: String::new(),
             history_generation: 0,
@@ -571,7 +611,7 @@ impl App {
     }
 
     pub(crate) fn busy(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.group_run.is_some()
     }
 
     /// All data is being or has been deleted: no read may recreate a file

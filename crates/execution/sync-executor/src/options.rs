@@ -5,6 +5,10 @@ use std::time::Duration;
 use sync_copy::DEFAULT_BUFFER_SIZE;
 use sync_verify::VerifyMode;
 
+/// Taille à partir de laquelle un transfert est « gros » : son débit, pas
+/// la latence d'ouverture, domine (voir [`ExecutionOptions::large_transfers`]).
+pub const LARGE_TRANSFER_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Âge maximal par défaut d'un plan à l'exécution (1 heure).
 pub const DEFAULT_MAX_PLAN_AGE: Duration = Duration::from_secs(3600);
 
@@ -26,6 +30,14 @@ pub struct ExecutionOptions {
     /// Independent copies/replacements respect parent dependencies; the version
     /// store further bounds concurrency. Deletions and bidirectional runs are ordered.
     pub copy_workers: std::num::NonZeroUsize,
+    /// Gros transferts (au moins [`LARGE_TRANSFER_BYTES`]) menés en même
+    /// temps parmi les workers (défaut 1, comme les « opérations parallèles »
+    /// de FreeFileSync). Plusieurs gros flux sur un même disque dur
+    /// alternent les positions de tête : mesuré sous Windows, trois fichiers
+    /// de 1,4 Go d'un disque dur à un autre passent de 62 Mo/s (un à la fois)
+    /// à 29 Mo/s (quatre workers). Les petits fichiers, dominés par la
+    /// latence d'ouverture, continuent d'utiliser tous les workers.
+    pub large_transfers: std::num::NonZeroUsize,
     /// Niveau de vérification des fichiers transférés (défaut :
     /// [`VerifyMode::Content`]).
     pub verify: VerifyMode,
@@ -54,6 +66,7 @@ impl Default for ExecutionOptions {
         Self {
             refresh_mirror_source: false,
             copy_workers: std::num::NonZeroUsize::new(4).unwrap_or(std::num::NonZeroUsize::MIN),
+            large_transfers: std::num::NonZeroUsize::MIN,
             verify: VerifyMode::default(),
             confirm_deletions: false,
             max_plan_age: DEFAULT_MAX_PLAN_AGE,
@@ -70,6 +83,12 @@ impl ExecutionOptions {
     #[must_use]
     pub fn with_copy_workers(mut self, workers: std::num::NonZeroUsize) -> Self {
         self.copy_workers = workers;
+        self
+    }
+    /// Bounds simultaneous large transfers (see [`Self::large_transfers`]).
+    #[must_use]
+    pub fn with_large_transfers(mut self, transfers: std::num::NonZeroUsize) -> Self {
+        self.large_transfers = transfers;
         self
     }
     /// Options par défaut.

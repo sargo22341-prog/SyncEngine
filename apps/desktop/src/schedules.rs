@@ -280,7 +280,7 @@ pub(crate) fn editor<'a>(
         );
         col = col.push(ui::caption(
             p,
-            "L’autorisation porte sur la configuration exacte du profil : toute modification exige de la renouveler. Les tâches Windows sont enregistrées automatiquement.",
+            "L’autorisation porte sur la configuration exacte du profil. Changer le mode, la source ou la destination exige de la renouveler ; les autres modifications enregistrées depuis l’assistant la conservent. Les tâches Windows sont enregistrées automatiquement.",
         ));
     }
     col.into()
