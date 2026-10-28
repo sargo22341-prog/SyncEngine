@@ -77,6 +77,13 @@ RUSTFLAGS='-D warnings' cargo check --workspace --all-targets --all-features
 
 Sous PowerShell : `$env:RUSTFLAGS='-D warnings'; cargo check --workspace --all-targets --all-features`.
 
+Une annotation `expect` doit correspondre à un lint réellement émis sur chaque
+cible où elle s'applique : une attente devenue inutile bloque aussi la CI.
+Par exemple, `TraceKind::Task` est utilisé dans la présentation et le filtrage
+sur les deux plateformes, même si seules les tâches Windows sont inventoriées.
+Le rappel des avis RustSec tolérés émet une annotation d'avertissement sans
+faire échouer son étape ; les deux audits précédents restent bloquants.
+
 Les tests de connecteurs réseau sont ignorés par `cargo test` : des scripts
 lancent des serveurs éphémères en local (certificats et clés jetables sous
 `target/`, rien n'est installé sur le système) :

@@ -47,13 +47,6 @@ const STATE_FOLDERS: [&str; 2] = [sync_orchestrator::TRASH_FOLDER, "versions"];
 pub(crate) enum TraceKind {
     Folder,
     File,
-    #[cfg_attr(
-        not(windows),
-        expect(
-            dead_code,
-            reason = "scheduled tasks and the Run value exist only under Windows"
-        )
-    )]
     Task,
     #[cfg_attr(
         not(windows),

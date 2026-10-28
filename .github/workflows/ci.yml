@@ -165,11 +165,9 @@ jobs:
 
       # Rappel visible à chaque run des avis tolérés ci-dessus, pour ne pas les oublier.
       - name: Audit RustSec (avis tolérés, rappel)
-        continue-on-error: true
         run: |
           if ! cargo audit --deny warnings; then
             echo "::warning::Avis RustSec tolérés encore présents : voir docs/DEVELOPPEMENT.md."
-            exit 1
           fi
 
   build:
