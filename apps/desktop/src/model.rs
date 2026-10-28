@@ -24,6 +24,30 @@ pub(crate) struct Summary {
     /// The user lifted the deletion ceiling for this preview only.
     #[serde(default)]
     pub(crate) ceiling_lifted: bool,
+    /// Trash decision of the plan (absent from older facades: disabled).
+    #[serde(default)]
+    pub(crate) trash: TrashSummary,
+}
+
+/// Size of the files the plan replaces or deletes, against the trash.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+pub(crate) struct TrashSummary {
+    pub(crate) enabled: bool,
+    pub(crate) limit: u64,
+    pub(crate) needed: u64,
+    /// More than the trash can keep: nothing is kept, the loss is permanent.
+    pub(crate) overflow: bool,
+}
+
+impl TrashSummary {
+    /// Warning shown by the preview and the execution dialog.
+    pub(crate) fn overflow_message(&self) -> String {
+        format!(
+            "Cette synchronisation va remplacer ou supprimer {}. La corbeille ({}) ne peut pas les garder : ces fichiers seront supprimés définitivement.",
+            bytes(self.needed),
+            bytes(self.limit)
+        )
+    }
 }
 
 impl Summary {

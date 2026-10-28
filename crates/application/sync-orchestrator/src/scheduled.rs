@@ -106,7 +106,18 @@ impl Application {
                 .as_str()
                 .ok_or_else(|| error("internal", "identifiant de plan absent"))?
                 .to_owned();
-            self.execute_locked(approved.id.clone(), id, true, allow_deletions, Some(cancel))
+            // Never a permanent loss without a person: an overflowing trash
+            // refuses the run (`trash_insufficient`), to be launched manually.
+            self.execute_locked(
+                approved.id.clone(),
+                id,
+                crate::Consent {
+                    writes: true,
+                    deletions: allow_deletions,
+                    permanent_loss: false,
+                },
+                Some(cancel),
+            )
         })();
         result.map_err(|mut e| {
             e.profile = Some(approved.id.clone());

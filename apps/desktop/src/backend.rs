@@ -45,6 +45,8 @@ impl Failure {
             "integrity" => "Données d’état illisibles",
             "unavailable" => "Emplacement ou stockage indisponible",
             "scheduler_install" => "Enregistrement de la planification Windows impossible",
+            "trash_insufficient" => "Corbeille insuffisante",
+            "trash_retention" => "Corbeille non nettoyée",
             _ => "Opération impossible",
         }
     }
@@ -303,6 +305,8 @@ pub(crate) struct Executed {
     pub(crate) outcome: model::Outcome,
     pub(crate) label: String,
     pub(crate) totals: Vec<(String, u64)>,
+    /// Journal or trash clean-up left for later (the report is complete).
+    pub(crate) maintenance: Vec<String>,
 }
 
 pub(crate) fn execute(
@@ -310,9 +314,23 @@ pub(crate) fn execute(
     id: ProfileId,
     plan: String,
     confirm_delete: bool,
+    confirm_permanent: bool,
 ) -> impl Future<Output = Result<Executed, Failure>> + use<> {
     call(app, move |a| {
-        let value = a.execute(id.clone(), plan, true, confirm_delete)?;
+        let consent = sync_orchestrator::Consent {
+            writes: true,
+            deletions: confirm_delete,
+            permanent_loss: confirm_permanent,
+        };
+        let value = a.execute_with(id.clone(), plan, consent)?;
+        let maintenance = value["maintenance_warnings"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|w| w.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
         let report = value
             .get("execution")
             .filter(|v| v.is_object())
@@ -353,6 +371,7 @@ pub(crate) fn execute(
             outcome,
             label,
             totals,
+            maintenance,
         })
     })
 }

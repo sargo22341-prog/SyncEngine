@@ -62,6 +62,12 @@ sous Linux. Si des échéances ont été manquées
 une fois, dès le passage suivant de l'agent ; `--skip-missed` les ignore (on
 attend alors la prochaine échéance).
 
+Une échéance dont les fichiers à remplacer ou supprimer dépassent la corbeille
+du profil est **bloquée** (« bloqué : corbeille insuffisante, lancez-la
+manuellement » dans la page Planification) : sans personne pour confirmer, rien
+n'est supprimé définitivement. Les échéances suivantes sont de nouveau
+évaluées normalement.
+
 ## Suivre une synchronisation planifiée
 
 Pendant une exécution, l'agent publie sa progression dans `agent-live.json`

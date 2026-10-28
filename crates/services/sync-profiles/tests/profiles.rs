@@ -2,7 +2,7 @@
 use sync_core::ProfileId;
 use sync_filter::FilterRules;
 use sync_plan::SyncMode;
-use sync_profiles::{CompareMethod, Preferences, Profile, Profiles};
+use sync_profiles::{CompareMethod, GIB, Preferences, Profile, Profiles, TrashPolicy};
 
 #[test]
 fn migration_round_trip_edit_remove_and_preferences() -> Result<(), Box<dyn std::error::Error>> {
@@ -21,6 +21,7 @@ fn migration_round_trip_edit_remove_and_preferences() -> Result<(), Box<dyn std:
         remote_destination: None,
         allow_delete: false,
         compare: sync_profiles::CompareMethod::Content,
+        trash: sync_profiles::TrashPolicy::legacy(),
     };
     store.save(&profile)?;
     assert_eq!(store.list()?, vec![profile.clone()]);
@@ -52,6 +53,7 @@ fn invalid_edits_keep_previous_row() -> Result<(), Box<dyn std::error::Error>> {
         remote_destination: None,
         allow_delete: false,
         compare: sync_profiles::CompareMethod::Content,
+        trash: sync_profiles::TrashPolicy::legacy(),
     };
     store.save(&profile)?;
     let mut invalid = profile.clone();
@@ -104,7 +106,7 @@ fn migrates_v1_without_rewriting_local_configuration_and_rejects_secret_urls()
     );
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
-        3
+        4
     );
     p.remote_source = Some(sync_profiles::RemoteEndpoint::Webdav {
         root: "https://user:secret@example.org/".into(),
@@ -150,7 +152,7 @@ fn compare_method_is_additive_and_bidirectional_keeps_content()
     );
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
-        3
+        4
     );
     // Saving a content profile keeps the version 2 JSON shape.
     store.save(&p)?;
@@ -168,5 +170,51 @@ fn compare_method_is_additive_and_bidirectional_keeps_content()
     assert!(p.validate().is_err());
     p.compare = CompareMethod::Content;
     p.validate()?;
+    Ok(())
+}
+
+#[test]
+fn version_3_profiles_migrate_to_an_enabled_5_go_trash_and_new_choices_persist()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("profiles.sqlite");
+    // Given a version 3 store written before the trash setting existed,
+    let db = rusqlite::Connection::open(&path)?;
+    db.execute_batch(include_str!("../migrations/001_initial.sql"))?;
+    db.execute_batch("PRAGMA user_version=3;")?;
+    let legacy = serde_json::json!({"id":"old","name":"Legacy","group":"","mode":"mirror",
+        "source":temp.path().join("a"),"destination":temp.path().join("b"),"filter":FilterRules::new(),
+        "allow_delete":true,"compare":"size_and_date"}).to_string();
+    db.execute("INSERT INTO profiles VALUES('old',?1)", [&legacy])?;
+    drop(db);
+    // When it is opened,
+    let store = Profiles::open(&path)?;
+    let mut p = store.list()?.remove(0);
+    // Then the implicit protection stays: trash enabled, limited to 5 Go,
+    // and the store is marked version 4 so older releases refuse it.
+    assert_eq!(p.trash, TrashPolicy::legacy());
+    assert!(p.trash.enabled);
+    assert_eq!(p.trash.max_bytes, 5 * GIB);
+    let db = rusqlite::Connection::open(&path)?;
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
+        4
+    );
+    // An explicit choice is stored and read back as is.
+    p.trash = TrashPolicy::disabled();
+    store.save(&p)?;
+    let stored: String = db.query_row("SELECT config FROM profiles", [], |r| r.get(0))?;
+    assert!(stored.contains(r#""trash":{"enabled":false,"max_bytes":5368709120}"#));
+    drop(store);
+    assert_eq!(Profiles::open(&path)?.list()?, vec![p.clone()]);
+    // Invalid limits and ids naming a parent folder are refused.
+    p.trash = TrashPolicy {
+        enabled: true,
+        max_bytes: 0,
+    };
+    assert!(p.validate().is_err());
+    p.trash = TrashPolicy::legacy();
+    p.id = ProfileId::new("..")?;
+    assert!(p.validate().is_err());
     Ok(())
 }

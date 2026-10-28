@@ -27,6 +27,7 @@ fn fixture(
         remote_destination: None,
         allow_delete: false,
         compare: sync_profiles::CompareMethod::Content,
+        trash: sync_profiles::TrashPolicy::legacy(),
     };
     app.profile_save(profile.clone())?;
     Ok((temp, app, profile))
@@ -181,7 +182,13 @@ fn deletion_requires_confirmation_and_preserves_version() -> Result<(), Box<dyn 
     )?;
     assert_eq!(report["status"], "succeeded");
     assert!(!p.destination.join("old").exists());
-    assert!(temp.path().join("state/versions").is_dir());
+    let execution = report["execution"].as_str().ok_or("execution")?;
+    let kept = temp
+        .path()
+        .join("state/Corbeille/p")
+        .join(execution)
+        .join("old");
+    assert_eq!(fs::read(kept)?, b"old");
     Ok(())
 }
 

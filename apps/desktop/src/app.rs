@@ -173,7 +173,11 @@ pub(crate) enum Dialog {
     Execute {
         profile: ProfileId,
         confirm_delete: bool,
+        /// « Je comprends, supprimer définitivement » (trash too small).
+        confirm_permanent: bool,
     },
+    /// Content of a profile trash (« Voir la corbeille »).
+    Trash(Box<crate::trash::TrashDialog>),
     Remove {
         profile: ProfileId,
     },
@@ -309,6 +313,8 @@ pub(crate) enum Message {
     // Dialogs, toasts, misc.
     CloseDialog,
     ToggleExecuteDelete(bool),
+    ToggleExecutePermanent(bool),
+    Trash(crate::trash::TrashMsg),
     ShowShortcuts,
     DismissToast(u64),
     CopyText(String),

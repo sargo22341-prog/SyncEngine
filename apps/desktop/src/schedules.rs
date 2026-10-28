@@ -549,7 +549,9 @@ fn schedule_status(r: &sync_scheduler::Completion) -> String {
         sync_scheduler::JobStatus::Failed => "échec",
         sync_scheduler::JobStatus::Deferred => "reporté",
     };
-    if r.code.is_empty() {
+    if r.code == "trash_insufficient" {
+        "bloqué : corbeille insuffisante, lancez-la manuellement".to_owned()
+    } else if r.code.is_empty() {
         status.to_owned()
     } else {
         format!("{status} ({})", r.code)

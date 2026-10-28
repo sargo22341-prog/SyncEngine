@@ -14,6 +14,9 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Corbeille par profil (Sécurité) : désactivée pour les nouveaux profils, 5 Go pour les anciens, 30 synchronisations au maximum, avec « Voir la corbeille » au clic droit.
+- Une synchronisation plus grosse que la corbeille est annoncée par la simulation, demande « Je comprends, supprimer définitivement » et reste bloquée en planification.
+- Les journaux d’exécution sont supprimés dès que le bilan est enregistré ; retirer un profil supprime sa corbeille.
 - Démarrage nettement plus rapide : l’historique ne relit plus tous les plans enregistrés, reste borné en taille et oublie les profils supprimés.
 - Historique allégé : 30 exécutions par profil, et seuls les changements, erreurs et avertissements sont enregistrés (les fichiers identiques ne le sont plus).
 - Nettoyage automatique du dossier des données (journaux orphelins, dossiers temporaires de planification) ; Réglages ouvre directement ce dossier.

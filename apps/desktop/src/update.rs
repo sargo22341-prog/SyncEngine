@@ -401,6 +401,7 @@ impl App {
                         self.open_dialog(Dialog::Execute {
                             profile,
                             confirm_delete: false,
+                            confirm_permanent: false,
                         });
                     }
                 }
@@ -412,6 +413,16 @@ impl App {
                 }
                 Task::none()
             }
+            Message::ToggleExecutePermanent(v) => {
+                if let Some(Dialog::Execute {
+                    confirm_permanent, ..
+                }) = &mut self.dialog
+                {
+                    *confirm_permanent = v;
+                }
+                Task::none()
+            }
+            Message::Trash(msg) => self.trash(msg),
             Message::Execute => self.execute(),
             Message::Executed(result) => {
                 let Some(job) = self.job.take() else {
@@ -429,6 +440,13 @@ impl App {
                             format!("{} — {}", job.name, done.label),
                             "Le détail complet est conservé dans l’historique.",
                         );
+                        if !done.maintenance.is_empty() {
+                            self.toast(
+                                ToastKind::Warning,
+                                "Nettoyage reporté",
+                                done.maintenance.join(" ; "),
+                            );
+                        }
                     }
                     Err(e) => self.fail(e),
                 }
@@ -568,7 +586,7 @@ impl App {
                     Ok(()) => self.toast(
                         ToastKind::Success,
                         "Profil retiré",
-                        "Les fichiers, l’historique et les versions sont conservés.",
+                        "Sa corbeille est supprimée ; vos fichiers source et destination sont intacts.",
                     ),
                     Err(e) => self.fail(&e),
                 }

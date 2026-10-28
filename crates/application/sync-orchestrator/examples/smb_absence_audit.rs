@@ -110,6 +110,7 @@ mod audit {
             filter: sync_filter::FilterRules::new(),
             allow_delete: true,
             compare: sync_profiles::CompareMethod::SizeAndDate,
+            trash: sync_profiles::TrashPolicy::legacy(),
         };
         app.profile_save(profile.clone())?;
         let plan = preview(&app, &profile, "normal absence")?;

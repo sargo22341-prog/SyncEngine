@@ -1,5 +1,5 @@
 //! Local and optional remote profile configuration, separate from observed synchronization state.
-//! SQLite migrations v0→v1→v2→v3 are transactional; unknown/corrupt stores are refused.
+//! SQLite migrations v0→v1→v2→v3→v4 are transactional; unknown/corrupt stores are refused.
 //! No secrets or scheduling configuration are stored here. All I/O is blocking.
 
 mod endpoints;
@@ -38,6 +38,50 @@ impl CompareMethod {
     }
 }
 
+/// One gibibyte, the unit of the trash size shown as « Go » by the desktop.
+pub const GIB: u64 = 1024 * 1024 * 1024;
+
+/// Recycle bin of a profile: copies of the destination files that a
+/// synchronization replaces or deletes, kept in the application state
+/// directory (`Corbeille/<profile id>/<execution>/…`), at most 30
+/// synchronizations and `max_bytes`, oldest synchronizations removed first.
+/// A synchronization needing more than `max_bytes` keeps nothing (all or
+/// nothing) and needs an explicit manual confirmation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrashPolicy {
+    /// Copies are made before every replacement or deletion.
+    pub enabled: bool,
+    /// Size limit of the whole profile trash, also kept while disabled.
+    pub max_bytes: u64,
+}
+
+impl TrashPolicy {
+    /// Default limit: 5 Go.
+    pub const DEFAULT_MAX_BYTES: u64 = 5 * GIB;
+    /// Largest accepted limit (100 000 Go).
+    pub const MAX_BYTES: u64 = 100_000 * GIB;
+
+    /// Default of new profiles: no copy, default limit pre-filled.
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self {
+            enabled: false,
+            max_bytes: Self::DEFAULT_MAX_BYTES,
+        }
+    }
+
+    /// Profiles saved before this setting existed always kept versions:
+    /// they keep a protection, bounded to the default limit.
+    #[must_use]
+    pub const fn legacy() -> Self {
+        Self {
+            enabled: true,
+            max_bytes: Self::DEFAULT_MAX_BYTES,
+        }
+    }
+}
+
 /// Editable configuration. Validation is repeated before every save and use.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +113,10 @@ pub struct Profile {
     /// when `Content`, so such rows stay byte-for-byte those of version 2.
     #[serde(default, skip_serializing_if = "CompareMethod::is_content")]
     pub compare: CompareMethod,
+    /// Recycle bin. Absent from rows saved before version 4: those profiles
+    /// always kept versions and migrate to [`TrashPolicy::legacy`].
+    #[serde(default = "TrashPolicy::legacy")]
+    pub trash: TrashPolicy,
 }
 
 impl Profile {
@@ -117,6 +165,13 @@ impl Profile {
             SyncMode::Backup | SyncMode::Mirror | SyncMode::Bidirectional => (),
             _ => return Err(ProfileError::Invalid("mode non pris en charge")),
         }
+        if !(1..=TrashPolicy::MAX_BYTES).contains(&self.trash.max_bytes) {
+            return Err(ProfileError::Invalid("taille de corbeille invalide"));
+        }
+        // The id names the trash folder: `.` and `..` would leave it.
+        if self.id.as_str().chars().all(|c| c == '.') {
+            return Err(ProfileError::Invalid("identifiant de profil réservé"));
+        }
         Filter::new(self.filter.clone()).map_err(|_| ProfileError::Invalid("filtres invalides"))?;
         Ok(())
     }
@@ -147,7 +202,7 @@ pub enum ProfileError {
 /// Versioned store. The caller places it outside synchronized trees.
 pub struct Profiles(Connection);
 impl Profiles {
-    /// Opens an identified store, migrating empty v0 or additive v1/v2 to v3.
+    /// Opens an identified store, migrating empty v0 or additive v1/v2/v3 to v4.
     /// # Errors
     /// Unreadable, corrupt, foreign or future database; migration failure.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ProfileError> {
@@ -170,13 +225,14 @@ impl Profiles {
                 return Err(ProfileError::Invalid("base étrangère"));
             }
             tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
-        } else if !matches!(version, 1..=3) || app != 1_398_361_680 {
+        } else if !matches!(version, 1..=4) || app != 1_398_361_680 {
             return Err(ProfileError::Invalid("version ou application inconnue"));
         }
         // Additive JSON fields: legacy configurations remain byte-for-byte intact.
         // Version 2 prevents old applications silently opening new remote
-        // profiles, version 3 profiles compared by size and date (`compare`).
-        tx.execute_batch("PRAGMA user_version=3;")?;
+        // profiles, version 3 profiles compared by size and date (`compare`),
+        // version 4 the per-profile trash (`trash`, absent = legacy enabled 5 Go).
+        tx.execute_batch("PRAGMA user_version=4;")?;
         tx.commit()?;
         connection.execute_batch("PRAGMA synchronous=FULL;")?;
         Ok(Self(connection))
@@ -207,7 +263,7 @@ impl Profiles {
         Ok(())
     }
 
-    /// Deletes configuration only; history and content versions are retained.
+    /// Deletes configuration only; the facade removes history and trash.
     /// # Errors
     /// Persistence failure.
     pub fn remove(&self, id: &ProfileId) -> Result<(), ProfileError> {

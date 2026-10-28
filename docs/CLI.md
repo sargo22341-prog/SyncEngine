@@ -94,4 +94,7 @@ syncengine profile preview ETAT ID
 syncengine profile run ETAT ID --confirm [--confirm-delete]
 ```
 
-Les sorties sont en JSON.
+Les sorties sont en JSON. `profile run` suit les règles d'une exécution
+planifiée : si les fichiers à remplacer ou supprimer dépassent la corbeille du
+profil, il est refusé (`trash_insufficient`) ; lancez alors la synchronisation
+depuis l'interface, qui demande une confirmation explicite.

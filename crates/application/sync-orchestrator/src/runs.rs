@@ -1,6 +1,6 @@
 //! Durable application attempts, including preflight failures and interruptions.
 use crate::{AppError, error, io};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::path::Path;
 use sync_core::{ExecutionId, PlanId, ProfileId, Timestamp};
@@ -194,13 +194,16 @@ pub(super) fn open(root: &Path) -> Result<Connection, AppError> {
     Ok(db)
 }
 
-/// Removes execution journals (`run-….jsonl`) that no attempt references any
-/// more: left by retention in older versions, or created just before a failed
-/// `begin` (no mutation runs before it). Called while the state is owned, so
-/// no execution can be writing one. Other files are never touched.
-fn retire_unlisted_journals(db: &Connection, root: &Path) -> Result<(), AppError> {
-    let mut known = db
-        .prepare("SELECT EXISTS(SELECT 1 FROM runs WHERE execution=?1)")
+/// Removes execution journals (`run-….jsonl`) of every attempt that is not
+/// running: their final report is committed (journals are discarded right
+/// after it since this version, older ones stayed), or no attempt references
+/// them (created just before a failed `begin`, when no mutation ran yet).
+/// Journals of interrupted attempts stay for their diagnosis. Called while the
+/// state is owned, so no execution can be writing one. Other files are never
+/// touched.
+fn retire_settled_journals(db: &Connection, root: &Path) -> Result<(), AppError> {
+    let mut running = db
+        .prepare("SELECT EXISTS(SELECT 1 FROM runs WHERE execution=?1 AND state='running')")
         .map_err(io)?;
     for entry in std::fs::read_dir(root).map_err(io)? {
         let entry = entry.map_err(io)?;
@@ -218,7 +221,7 @@ fn retire_unlisted_journals(db: &Connection, root: &Path) -> Result<(), AppError
         }
         // A stale journal that cannot be removed (held by another program)
         // must not prevent opening: it is retried at the next opening.
-        if !known
+        if !running
             .query_row([execution], |r| r.get::<_, bool>(0))
             .map_err(io)?
             && std::fs::remove_file(entry.path()).is_err()
@@ -286,7 +289,7 @@ pub(super) fn initialize(root: &Path, profiles: Option<&[ProfileId]>) -> Result<
         retire(&tx, root, &orphans)?;
         tx.commit().map_err(io)?;
     }
-    retire_unlisted_journals(&db, root)?;
+    retire_settled_journals(&db, root)?;
     compact(&db)?;
     let check: String = db
         .query_row("PRAGMA quick_check", [], |r| r.get(0))
@@ -379,6 +382,28 @@ pub(super) fn finish(
     retire(&tx, root, &expired)?;
     tx.commit().map_err(io)
 }
+/// Records the final report, then removes the execution journal: once that
+/// transaction is committed the history holds the outcome of every
+/// operation, and the journal is no longer needed. If the report cannot be
+/// written the journal stays (the attempt remains « running » for diagnosis).
+/// A journal that cannot be removed is returned as a warning; the next
+/// opening retries.
+pub(super) fn settle(
+    root: &Path,
+    id: &ExecutionId,
+    result: &Result<serde_json::Value, AppError>,
+    plan: Option<&ExecutionPlan>,
+) -> Result<Option<AppError>, AppError> {
+    finish(root, id, result, plan)?;
+    // ExecutionId excludes separators: one file of the state directory.
+    Ok(
+        match std::fs::remove_file(root.join(format!("{id}.jsonl"))) {
+            Ok(()) => None,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => Some(error("journal_retention", e)),
+        },
+    )
+}
 /// Removes completed attempts selected from the database, with their journals.
 fn retire(db: &Connection, root: &Path, expired: &[String]) -> Result<(), AppError> {
     for expired in expired {
@@ -441,6 +466,52 @@ fn list_view(root: &Path, id: &ProfileId, overview: bool) -> Result<Vec<Run>, Ap
         })
     })
     .collect()
+}
+
+/// Attempt of a profile, as needed by the trash.
+pub(super) struct ProfileRun {
+    pub(super) execution: String,
+    pub(super) state: String,
+    pub(super) started: Option<i64>,
+}
+
+/// Every attempt of a profile, newest first.
+pub(super) fn profile_runs(root: &Path, id: &ProfileId) -> Result<Vec<ProfileRun>, AppError> {
+    let db = open(root)?;
+    let mut stmt = db
+        .prepare("SELECT execution,state,json_extract(started,'$.secs') FROM runs WHERE profile=?1 ORDER BY rowid DESC")
+        .map_err(io)?;
+    stmt.query_map([id.as_str()], |r| {
+        Ok(ProfileRun {
+            execution: r.get(0)?,
+            state: r.get(1)?,
+            started: r.get(2)?,
+        })
+    })
+    .map_err(io)?
+    .collect::<Result<_, _>>()
+    .map_err(io)
+}
+
+/// Stored final report of one attempt of a profile.
+pub(super) fn report_of(
+    root: &Path,
+    id: &ProfileId,
+    execution: &str,
+) -> Result<Option<serde_json::Value>, AppError> {
+    let db = open(root)?;
+    let report: Option<Option<String>> = db
+        .query_row(
+            "SELECT report FROM runs WHERE profile=?1 AND execution=?2",
+            [id.as_str(), execution],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(io)?;
+    report
+        .flatten()
+        .map(|text| serde_json::from_str(&text).map_err(io))
+        .transpose()
 }
 
 pub(super) fn acknowledge(root: &Path, id: &ProfileId) -> Result<(), AppError> {
@@ -560,6 +631,43 @@ mod retention_tests {
         );
         assert!(unfinished(root.path(), &ProfileId::new("p")?)?);
         assert!(root.path().join("run-interrupted.jsonl").exists());
+        Ok(())
+    }
+    #[test]
+    fn journal_is_removed_only_after_the_final_report_is_committed() -> Result<(), Failure> {
+        let root = fixture()?;
+        std::fs::write(root.path().join("run-current.jsonl"), b"journal")?;
+        let id = ExecutionId::new("run-current")?;
+        // Given a final report that cannot be written (corrupt retention),
+        open(root.path())?.execute(
+            "UPDATE runs SET execution='../outside' WHERE execution='run-0'",
+            [],
+        )?;
+        // When the attempt is settled, Then it fails and the journal stays.
+        assert!(settle(root.path(), &id, &Ok(serde_json::json!({})), None).is_err());
+        assert!(root.path().join("run-current.jsonl").exists());
+        assert!(unfinished(root.path(), &ProfileId::new("p")?)?);
+        // Given a writable history, When it is settled (success or failure
+        // alike), Then the report is committed and only then the journal goes.
+        open(root.path())?.execute(
+            "UPDATE runs SET execution='run-0' WHERE execution='../outside'",
+            [],
+        )?;
+        let failed = Err(error("cancelled", "arrêt manuel"));
+        assert!(settle(root.path(), &id, &failed, None)?.is_none());
+        assert!(!root.path().join("run-current.jsonl").exists());
+        let state: String = open(root.path())?.query_row(
+            "SELECT state FROM runs WHERE execution='run-current'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(state, "error");
+        // The interrupted attempt keeps its journal for diagnosis, also
+        // through the next opening, which removes settled ones.
+        std::fs::write(root.path().join("run-74.jsonl"), b"older settled")?;
+        initialize(root.path(), None)?;
+        assert!(root.path().join("run-interrupted.jsonl").exists());
+        assert!(!root.path().join("run-74.jsonl").exists());
         Ok(())
     }
     #[test]

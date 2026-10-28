@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use sync_core::ProfileId;
 use sync_filter::FilterRules;
 use sync_plan::SyncMode;
-use sync_profiles::{CompareMethod, Profile, RemoteEndpoint};
+use sync_profiles::{CompareMethod, GIB, Profile, RemoteEndpoint, TrashPolicy};
 use sync_scheduler::{MissedJobs, Schedule, Trigger};
 
 /// Endpoint natures, in display order.
@@ -809,6 +809,12 @@ pub(crate) struct ProfileDraft {
     pub(crate) allow_delete: bool,
     /// One-way identity rule; bidirectional profiles always use content.
     pub(crate) compare: CompareMethod,
+    /// Copies of replaced or deleted files are kept (« Corbeille »).
+    pub(crate) trash_enabled: bool,
+    /// « Taille maximale (Go) » as typed.
+    pub(crate) trash_size: String,
+    /// Stored limit, kept as is while its field is left unchanged.
+    pub(crate) trash_base: u64,
     pub(crate) schedule: ScheduleDraft,
     pub(crate) had_schedule: bool,
 }
@@ -826,6 +832,10 @@ impl ProfileDraft {
             allow_delete: false,
             // New profiles: listings only, like FreeFileSync's default.
             compare: CompareMethod::SizeAndDate,
+            // New profiles keep no copy until the user enables the trash.
+            trash_enabled: TrashPolicy::disabled().enabled,
+            trash_size: gib_label(TrashPolicy::DEFAULT_MAX_BYTES),
+            trash_base: TrashPolicy::DEFAULT_MAX_BYTES,
             schedule: ScheduleDraft::default(),
             had_schedule: false,
         }
@@ -845,6 +855,9 @@ impl ProfileDraft {
             filters: FilterDraft::from_rules(&profile.filter),
             allow_delete: profile.allow_delete,
             compare: profile.compare,
+            trash_enabled: profile.trash.enabled,
+            trash_size: gib_label(profile.trash.max_bytes),
+            trash_base: profile.trash.max_bytes,
             schedule: ScheduleDraft::for_profile(profile, schedule),
             had_schedule: schedule.is_some(),
         }
@@ -884,6 +897,37 @@ impl ProfileDraft {
         })
     }
 
+    /// Trash limit in bytes from the typed whole number of Go.
+    /// # Errors
+    /// Not a whole number between 1 and 100 000.
+    pub(crate) fn trash_limit(&self) -> Result<u64, String> {
+        let typed = self.trash_size.trim();
+        if typed == gib_label(self.trash_base) {
+            return Ok(self.trash_base);
+        }
+        typed
+            .parse::<u64>()
+            .ok()
+            .filter(|gib| (1..=TrashPolicy::MAX_BYTES / GIB).contains(gib))
+            .map(|gib| gib * GIB)
+            .ok_or_else(|| {
+                "Taille maximale de la corbeille : un nombre entier de 1 à 100 000 Go".into()
+            })
+    }
+
+    /// Trash setting to save; a disabled trash keeps a valid limit.
+    pub(crate) fn trash(&self) -> Result<TrashPolicy, String> {
+        let max_bytes = match self.trash_limit() {
+            Ok(limit) => limit,
+            Err(_) if !self.trash_enabled => self.trash_base,
+            Err(e) => return Err(e),
+        };
+        Ok(TrashPolicy {
+            enabled: self.trash_enabled,
+            max_bytes,
+        })
+    }
+
     pub(crate) fn deletions_possible(&self) -> bool {
         matches!(self.mode, Some(SyncMode::Mirror | SyncMode::Bidirectional))
     }
@@ -901,6 +945,7 @@ impl ProfileDraft {
         if let Some(e) = self.remote_pair_error() {
             return Err(e);
         }
+        let trash = self.trash()?;
         let name = self.name.trim();
         if name.is_empty() {
             return Err("Donnez un nom au profil".into());
@@ -921,6 +966,7 @@ impl ProfileDraft {
             filter: self.filters.rules(),
             allow_delete: self.allow_delete && self.deletions_possible(),
             compare: self.effective_compare(),
+            trash,
         };
         profile.validate().map_err(|e| match e {
             sync_profiles::ProfileError::Invalid(m) => describe(m),
@@ -939,6 +985,16 @@ fn describe(message: &str) -> String {
         "Les chemins doivent être absolus".into()
     } else {
         format!("Configuration refusée : {message}")
+    }
+}
+
+/// Whole Go shown in the size field (« 5 » for 5 Go); other sizes, set
+/// outside the assistant, keep two decimals.
+pub(crate) fn gib_label(bytes: u64) -> String {
+    if bytes.is_multiple_of(GIB) {
+        (bytes / GIB).to_string()
+    } else {
+        format!("{:.2}", bytes as f64 / GIB as f64).replace('.', ",")
     }
 }
 
@@ -986,6 +1042,34 @@ mod tests {
         } else {
             format!("/data/{name}")
         }
+    }
+
+    #[test]
+    fn new_profiles_have_no_trash_and_edits_keep_the_stored_limit() {
+        let mut d = ProfileDraft::new("");
+        d.mode = Some(SyncMode::Mirror);
+        d.source = local(&abs("A"));
+        d.destination = local(&abs("B"));
+        d.name = "Miroir".into();
+        // Given a new profile, Then its trash is disabled with 5 Go ready.
+        let p = d.build().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(p.trash, TrashPolicy::disabled());
+        assert_eq!(d.trash_size, "5");
+        // An enabled trash needs a whole number of Go.
+        d.trash_enabled = true;
+        d.trash_size = "0".into();
+        assert!(d.build().is_err());
+        d.trash_size = "12".into();
+        assert_eq!(d.build().map(|p| p.trash.max_bytes), Ok(12 * GIB));
+        // A limit set elsewhere is kept while its field is unchanged, so an
+        // edit does not invalidate a schedule by itself.
+        let mut odd = p.clone();
+        odd.trash = TrashPolicy {
+            enabled: true,
+            max_bytes: GIB + 1,
+        };
+        let edit = ProfileDraft::edit(&odd, None);
+        assert_eq!(edit.build().map(|p| p.trash), Ok(odd.trash));
     }
 
     #[test]

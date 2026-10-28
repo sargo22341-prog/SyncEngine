@@ -114,6 +114,8 @@ pub(crate) enum WizardMsg {
     RemovePattern(FilterList, usize),
     CaseInsensitive(bool),
     AllowDelete(bool),
+    Trash(bool),
+    TrashSize(String),
     Compare(CompareMethod),
     Schedule(ScheduleMsg),
     Name(String),
@@ -210,7 +212,8 @@ impl Wizard {
                 }
                 d.destination.build().err().or_else(|| d.remote_pair_error())
             }
-            Step::Filters | Step::Safety => None,
+            Step::Filters => None,
+            Step::Safety => d.trash().err(),
             Step::Schedule => match d.schedule.trigger() {
                 Err(e) => Some(e),
                 Ok(Some(_)) if !d.schedule.approve_writes => {
@@ -257,6 +260,8 @@ impl Wizard {
                 | WizardMsg::RemovePattern(..)
                 | WizardMsg::CaseInsensitive(_)
                 | WizardMsg::AllowDelete(_)
+                | WizardMsg::Trash(_)
+                | WizardMsg::TrashSize(_)
                 | WizardMsg::Compare(_)
                 | WizardMsg::Name(_)
                 | WizardMsg::Group(_)
@@ -318,6 +323,10 @@ impl Wizard {
                 if !self.draft.allow_delete {
                     self.draft.schedule.approve_deletions = false;
                 }
+            }
+            WizardMsg::Trash(on) => self.draft.trash_enabled = on,
+            WizardMsg::TrashSize(v) => {
+                self.draft.trash_size = v.chars().filter(char::is_ascii_digit).take(6).collect();
             }
             WizardMsg::Compare(method) => self.draft.compare = method,
             WizardMsg::Schedule(m) => schedules::apply(&mut self.draft.schedule, m),
@@ -1162,7 +1171,7 @@ impl Wizard {
         let guards = column![
             guard("Simulation obligatoire", "Le plan exact affiché est le seul exécutable ; toute modification exige une nouvelle simulation."),
             guard("Copie vérifiée", "Empreinte BLAKE3 calculée pendant la copie et contenu relu avant publication."),
-            guard("Versions conservées", "Avant chaque remplacement ou suppression."),
+            guard("Plafond de suppressions", "Une simulation qui supprimerait plus de la moitié de la destination demande votre accord."),
             guard("Jamais de suppression déduite d’une panne", "Source inaccessible, inventaire incomplet ou source vide : suppressions refusées."),
         ]
         .spacing(14);
@@ -1207,6 +1216,7 @@ impl Wizard {
         };
         column![
             deletion,
+            self.trash_view(p),
             self.compare_view(p),
             container(guards)
                 .padding(18)
@@ -1215,6 +1225,72 @@ impl Wizard {
         ]
         .spacing(16)
         .into()
+    }
+
+    /// Always shown: replacements go through the trash as much as deletions.
+    fn trash_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
+        let on = self.draft.trash_enabled;
+        let explanation = if on {
+            match self.draft.trash_limit() {
+                Ok(limit) => format!(
+                    "Les anciennes versions sont gardées jusqu’à {}, sur les {} dernières synchronisations au maximum.",
+                    model::bytes(limit),
+                    sync_orchestrator::KEPT_TRASH_RUNS
+                ),
+                Err(e) => e,
+            }
+        } else {
+            "Les fichiers remplacés ou supprimés ne seront pas récupérables.".to_owned()
+        };
+        let mut col = column![
+            row![
+                ui::glyph_box(Glyph::Trash, if on { p.success } else { p.muted }, 40.0),
+                column![
+                    ui::strong(
+                        p.text,
+                        if on {
+                            "Corbeille : activée"
+                        } else {
+                            "Corbeille : désactivée"
+                        },
+                        15.0
+                    ),
+                    ui::caption(p, explanation),
+                ]
+                .spacing(3)
+                .width(Length::Fill),
+                toggler(on)
+                    .on_toggle(|v| Message::Wizard(WizardMsg::Trash(v)))
+                    .size(24)
+                    .style(theme::switch(*p, false)),
+            ]
+            .spacing(14)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(12);
+        if on {
+            let invalid = self.draft.trash_limit().is_err();
+            col = col.push(
+                container(ui::field(
+                    p,
+                    "Taille maximale (Go)",
+                    "5",
+                    &self.draft.trash_size,
+                    |v| Message::Wizard(WizardMsg::TrashSize(v)),
+                    Some("Au-delà, les synchronisations les plus anciennes sont retirées de la corbeille."),
+                    invalid.then_some("Un nombre entier de 1 à 100 000"),
+                ))
+                .max_width(260.0),
+            );
+        }
+        container(col)
+            .padding(18)
+            .style(theme::outline(
+                *p,
+                if on { p.success } else { p.border },
+                if on { 1.0 } else { 0.0 },
+            ))
+            .into()
     }
 
     fn summary_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
@@ -1338,6 +1414,17 @@ impl Wizard {
                             "Suppressions protégées autorisées".into()
                         } else {
                             "Aucune suppression".into()
+                        },
+                        Step::Safety
+                    ),
+                    item(
+                        Glyph::Trash,
+                        match (d.trash_enabled, d.trash_limit()) {
+                            (true, Ok(limit)) => {
+                                format!("Corbeille activée, {} au maximum", model::bytes(limit))
+                            }
+                            (true, Err(_)) => "Corbeille : taille invalide".into(),
+                            (false, _) => "Corbeille désactivée".into(),
                         },
                         Step::Safety
                     ),

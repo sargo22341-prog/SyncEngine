@@ -138,13 +138,31 @@ depuis le rapport complet. La baseline bidirectionnelle n’est pas recopiée
 (elle vit dans `state.sqlite`). Le plan exécuté, lui, reste complet. JSON
 compact. La rétention garde au plus 30 tentatives terminées par profil et,
 au-delà des 3 plus récentes, retire les plus anciennes dès que plans et
-rapports dépassent 512 Mio pour ce profil. À l’ouverture, les tentatives
-terminées des profils supprimés sont retirées avec leurs journaux (les
-interruptions restent), les journaux `run-….jsonl` qu’aucune tentative ne
-référence sont supprimés, puis la base est compactée (`VACUUM`) si plus de
+rapports dépassent 512 Mio pour ce profil. Le journal `run-….jsonl` d’une
+exécution est supprimé dès que la transaction de son bilan est validée
+(succès, échec ou arrêt) ; si elle échoue, il reste, comme après un plantage.
+À l’ouverture, les tentatives terminées des profils supprimés sont retirées
+(les interruptions restent), les journaux des tentatives qui ne sont pas en
+cours sont supprimés, puis la base est compactée (`VACUUM`) si plus de
 la moitié du fichier et au moins 256 Mio sont libres. Une base v3 est refusée
 par une version antérieure. Mesure : `cargo run --release -p sync-orchestrator
 --all-features --example overview_timing -- <COPIE_DU_DOSSIER_ETAT>`.
+
+## Corbeille par profil
+
+Le profil v4 (`profiles.sqlite`, `user_version=4`) porte `trash`
+(`enabled`, `max_bytes`). Un profil sans ce champ (versions 1 à 3) est lu
+comme une corbeille activée de 5 Gio, la protection implicite d’avant ; les
+nouveaux profils de l’assistant la désactivent. La façade calcule à chaque
+simulation et avant exécution la taille des fichiers remplacés ou supprimés
+(`TrashEstimate`, côté récepteur du plan) : au-delà de la limite, aucune copie
+n’est faite et l’exécution exige `Consent::permanent_loss` ; une exécution
+planifiée est refusée (`trash_insufficient`). Sinon un `VersionStore` dépose
+les copies sous `Corbeille/<profil>/<exécution>/`. Après le bilan, la
+rétention retire les dossiers absents de l’historique, puis les plus anciens
+au-delà de 30 ou de la limite, sans jamais suivre un lien ni une jonction.
+La liste « Voir la corbeille » lit `status.version` des résultats de
+l’historique, avec repli sur le contenu du dossier.
 
 ## Lectures réseau
 

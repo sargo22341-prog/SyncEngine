@@ -52,6 +52,15 @@ impl App {
         let sep = || container(ui::divider(&mp)).padding(Padding::from([4, 6]));
         let busy = self.busy();
         let mut col = column![].spacing(1);
+        let trash_item = |id: &sync_core::ProfileId| {
+            item(
+                Glyph::Trash,
+                "Voir la corbeille…",
+                None,
+                Some(Message::Trash(crate::trash::TrashMsg::Open(id.clone()))),
+                false,
+            )
+        };
         let mut rows = 0usize;
         match &menu.target {
             MenuTarget::Profile(id) => {
@@ -89,6 +98,7 @@ impl App {
                         Some(Message::ShowHistory(id.clone())),
                         false,
                     ))
+                    .push(trash_item(id))
                     .push(item(
                         Glyph::Copy,
                         "Dupliquer…",
@@ -97,7 +107,7 @@ impl App {
                         false,
                     ))
                     .push(sep());
-                rows += 7;
+                rows += 8;
                 let others: Vec<String> = self
                     .groups()
                     .into_iter()
@@ -257,7 +267,12 @@ impl App {
             Dialog::Execute {
                 profile,
                 confirm_delete,
-            } => (560.0, self.execute_dialog(&dp, profile, *confirm_delete)),
+                confirm_permanent,
+            } => (
+                560.0,
+                self.execute_dialog(&dp, profile, *confirm_delete, *confirm_permanent),
+            ),
+            Dialog::Trash(trash) => (720.0, self.trash_dialog(&dp, trash)),
             Dialog::Remove { profile } => {
                 let name = self
                     .profile(profile)
@@ -269,7 +284,7 @@ impl App {
                     480.0,
                     column![
                         dialog_head(&dp, Glyph::Trash, dp.danger, &format!("Retirer « {name} » ?")),
-                        ui::muted(&dp, "Seule la configuration est retirée : vos fichiers, l’historique et les versions conservées restent intacts."),
+                        ui::muted(&dp, "La configuration et la corbeille du profil (anciennes versions des fichiers remplacés ou supprimés) sont supprimées définitivement. Vos fichiers source et destination restent intacts."),
                         if interrupted {
                             ui::callout(&dp, dp.warning, Glyph::Alert, "Diagnostic requis", "Une exécution est encore marquée en cours ou interrompue. Si elle est arrêtée, vérifiez son résultat et confirmez le diagnostic avant de retirer ce profil.")
                         } else if scheduled {
@@ -297,7 +312,7 @@ impl App {
                 column![
                     dialog_head(&dp, Glyph::Alert, dp.warning, "Confirmer le diagnostic de l’interruption"),
                     ui::muted(&dp, "Vérifiez que le transfert est arrêté, puis examinez les fichiers et l’historique. Des copies partielles ou des versions temporaires peuvent subsister après un arrêt forcé."),
-                    ui::muted(&dp, "Votre confirmation marque l’ancienne exécution en échec et lève son blocage. Les fichiers, journaux et versions sont conservés. L’ancienne échéance n’est pas rejouée ; les prochaines échéances autorisées pourront s’exécuter après une nouvelle analyse."),
+                    ui::muted(&dp, "Votre confirmation marque l’ancienne exécution en échec et lève son blocage. Les fichiers, journaux et la corbeille sont conservés. L’ancienne échéance n’est pas rejouée ; les prochaines échéances autorisées pourront s’exécuter après une nouvelle analyse."),
                     row![
                         ui::fill(),
                         ui::action(&dp, Tone::Ghost, None, "Annuler", Some(Message::CloseDialog)),
@@ -446,6 +461,7 @@ impl App {
         p: &Palette,
         profile: &sync_core::ProfileId,
         confirm_delete: bool,
+        confirm_permanent: bool,
     ) -> El<'_, Message> {
         let name = self
             .profile(profile)
@@ -469,7 +485,12 @@ impl App {
             container(
                 column![
                     line(Glyph::Plus, p.success, format!("{} copie(s)", model::count(s.copy))),
-                    line(Glyph::Refresh, p.accent, format!("{} remplacement(s), versions conservées", model::count(s.replace))),
+                    line(Glyph::Refresh, p.accent, format!("{} remplacement(s)", model::count(s.replace))),
+                    line(Glyph::Trash, if s.trash.overflow { p.danger } else { p.muted }, if s.trash.enabled && !s.trash.overflow {
+                        format!("Anciennes versions gardées dans la corbeille ({})", model::bytes(s.trash.needed))
+                    } else {
+                        "Aucune copie des fichiers remplacés ou supprimés".to_owned()
+                    }),
                     line(Glyph::Trash, if s.delete > 0 { p.danger } else { p.faint }, format!("{} suppression(s)", model::count(s.delete))),
                     line(Glyph::Backup, p.muted, format!("{} à transférer", model::bytes(s.bytes))),
                 ]
@@ -511,7 +532,25 @@ impl App {
                 .style(theme::outline(*p, p.danger, 1.0)),
             );
         }
-        let ready = s.delete == 0 || confirm_delete;
+        if s.trash.overflow {
+            col = col.push(
+                container(
+                    column![
+                        ui::colored(p.danger, s.trash.overflow_message(), 13.0),
+                        checkbox(confirm_permanent)
+                            .label("Je comprends, supprimer définitivement")
+                            .on_toggle(Message::ToggleExecutePermanent)
+                            .text_size(13)
+                            .style(theme::check(*p)),
+                    ]
+                    .spacing(10),
+                )
+                .padding(12)
+                .width(Length::Fill)
+                .style(theme::outline(*p, p.danger, 1.0)),
+            );
+        }
+        let ready = (s.delete == 0 || confirm_delete) && (!s.trash.overflow || confirm_permanent);
         col.push(
             row![
                 ui::fill(),

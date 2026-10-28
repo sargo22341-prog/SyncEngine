@@ -107,13 +107,50 @@ qu'appliquée à l'aveugle.
   si un antivirus ou l'indexeur tient brièvement le fichier ouvert, la
   publication est retentée pendant environ une seconde avant d'être signalée
   en échec.
-- Les fichiers remplacés ou supprimés sont conservés dans le dossier d'état
-  (`versions/<exécution>/`).
-- Un journal durable est tenu pendant l'exécution : après une coupure, l'état
+- Si la **corbeille** du profil est activée, les fichiers remplacés ou
+  supprimés y sont gardés (voir [Corbeille](#corbeille)).
+- Un journal durable est tenu pendant l'exécution, puis supprimé dès que le
+  bilan est enregistré dans l'historique : après une coupure, il reste, l'état
   partiel est connu et la prochaine simulation repart d'un nouveau scan.
 - Les liens symboliques ne sont jamais suivis.
 - Une seule exécution à la fois par compte utilisateur (interface, CLI et agent
   partagent un verrou).
+
+## Corbeille
+
+Chaque profil a sa corbeille, réglée dans l'étape **Sécurité** de l'assistant :
+« Corbeille : activée / désactivée » et, si elle est activée, « Taille maximale
+(Go) » (5 par défaut). Elle concerne les **remplacements** autant que les
+suppressions, quel que soit le mode.
+
+- **Nouveaux profils** : corbeille désactivée. Les fichiers remplacés ou
+  supprimés ne sont alors pas récupérables ; les autres garde-fous (plafond de
+  suppressions, confirmations) restent identiques.
+- **Profils créés avant cette version** : ils gardaient toujours une copie ;
+  ils passent à une corbeille activée de 5 Go.
+- **Rangement** : `Corbeille/<identifiant du profil>/<exécution>/…` dans le
+  dossier d'état (jamais sur la destination). L'identifiant, et non le nom,
+  désigne le profil.
+- **Rétention** : au plus 30 synchronisations par profil, comme l'historique.
+  Au-delà de la taille maximale, les synchronisations les plus anciennes sont
+  retirées d'abord ; la dernière et une synchronisation interrompue sont
+  toujours gardées. Une synchronisation retirée de l'historique perd aussi sa
+  corbeille.
+- **Synchronisation plus grosse que la corbeille** : la simulation l'annonce,
+  par exemple « Cette synchronisation va remplacer ou supprimer 1,0 To. La
+  corbeille (5,0 Go) ne peut pas les garder : ces fichiers seront supprimés
+  définitivement. » C'est tout ou rien : aucune copie n'est faite pour cette
+  synchronisation. Lancée à la main, elle exige de cocher « Je comprends,
+  supprimer définitivement » ; planifiée (ou `syncengine profile run`), elle
+  est **bloquée** avec le code `trash_insufficient` (« corbeille insuffisante,
+  lancez-la manuellement »).
+- **Voir la corbeille** (clic droit sur un profil) : place utilisée sur la
+  limite, synchronisations avec date, nombre de fichiers, taille et bouton
+  « Ouvrir le dossier » ; pour chaque fichier, son chemin, « remplacé » ou
+  « supprimé », sa taille et « Enregistrer sous… » (copie vers un emplacement
+  choisi). « Vider la corbeille » demande une confirmation. Il n'y a pas de
+  restauration en place : un miroir supprimerait de nouveau le fichier.
+- **Retirer un profil** supprime sa corbeille (la confirmation l'indique).
 
 ## L'interface
 
@@ -192,8 +229,9 @@ chemin absolu avant de lancer l'interface.
 | `state.sqlite` | baselines, tombstones et historique |
 | `scheduler.sqlite` | planifications autorisées |
 | `desktop-runs.sqlite` | 30 dernières exécutions par profil : seulement leurs changements, erreurs et avertissements |
-| `run-….jsonl` | journal de chaque exécution conservée (les journaux orphelins sont supprimés à l'ouverture) |
-| `versions/` | copies des fichiers remplacés ou supprimés |
+| `run-….jsonl` | journal d'une exécution en cours ou interrompue ; supprimé dès que son bilan est enregistré (à l'ouverture, ceux des exécutions terminées le sont aussi) |
+| `Corbeille/<profil>/<exécution>/` | corbeille des profils : anciennes versions des fichiers remplacés ou supprimés |
+| `versions/` | copies faites par les versions antérieures de SyncEngine ; plus alimenté |
 | `desktop-ui.json` | thème, groupes repliés, comportement du bouton × |
 | `agent-live.json` | progression publiée par l'agent pour l'affichage (pas une source de vérité) |
 | `agent.lock` | verrou OS de l'agent par dossier d'état, libéré après la mort du processus |

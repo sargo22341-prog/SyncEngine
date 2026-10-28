@@ -14,9 +14,10 @@
 //!   `CreateNew`) ;
 //! - la date de modification d'origine est conservée.
 //!
-//! Limites (phase 04) : aucune politique de rétention (les versions
-//! s'accumulent, un dossier par exécution) ; seuls les fichiers sont
-//! conservés (un répertoire supprimé est vide par construction).
+//! Limites : le magasin n'a pas de politique de rétention (un dossier par
+//! exécution ; la façade applicative borne la corbeille de chaque profil) ;
+//! seuls les fichiers sont conservés (un répertoire supprimé est vide par
+//! construction).
 //!
 //! # Exemple
 //! ```

@@ -773,6 +773,18 @@ impl App {
                 "Certains chemins n’ont pas pu être lus : ils sont ignorés et aucune suppression n’est déduite de leur absence.",
             ));
         }
+        if s.trash.overflow {
+            col = col.push(ui::callout(
+                p,
+                p.danger,
+                Glyph::Alert,
+                "Corbeille insuffisante",
+                format!(
+                    "{} L’exécution demandera une confirmation explicite ; une synchronisation planifiée sera bloquée.",
+                    s.trash.overflow_message()
+                ),
+            ));
+        }
         if s.ceiling_lifted && s.delete > 0 {
             col = col.push(ui::callout(
                 p,

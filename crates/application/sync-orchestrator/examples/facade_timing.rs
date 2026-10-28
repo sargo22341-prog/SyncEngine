@@ -56,6 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         filter: FilterRules::new(),
         allow_delete: false,
         compare,
+        trash: sync_profiles::TrashPolicy::legacy(),
     })?;
     for round in ["first copy", "unchanged"] {
         let start = Instant::now();

@@ -350,6 +350,7 @@ impl App {
         let Some(Dialog::Execute {
             profile,
             confirm_delete,
+            confirm_permanent,
         }) = self.dialog.clone()
         else {
             return Task::none();
@@ -358,7 +359,8 @@ impl App {
             return Task::none();
         };
         let summary = preview.view.summary;
-        if summary.delete > 0 && !confirm_delete {
+        if (summary.delete > 0 && !confirm_delete) || (summary.trash.overflow && !confirm_permanent)
+        {
             self.preview = Some(preview);
             return Task::none();
         }
@@ -375,6 +377,7 @@ impl App {
                 profile,
                 preview.view.plan_id,
                 confirm_delete && summary.delete > 0,
+                confirm_permanent && summary.trash.overflow,
             ),
             Message::Executed,
         )

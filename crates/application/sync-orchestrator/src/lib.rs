@@ -16,6 +16,10 @@ pub use history::HistoryFilter;
 mod runs;
 mod scheduled;
 mod schedules;
+mod trash;
+pub use trash::{
+    KEPT_TRASH_RUNS, TRASH_FOLDER, TrashEstimate, TrashFile, TrashOverview, TrashPage, TrashRun,
+};
 
 use connector_local::{LocalConnector, LocalOptions};
 pub use live::{
@@ -28,9 +32,7 @@ use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, MutexGuard};
-use sync_core::{
-    CancellationToken, ExecutionId, HashAlgorithm, PlanId, ProfileId, ResourcePath, Timestamp,
-};
+use sync_core::{CancellationToken, ExecutionId, HashAlgorithm, PlanId, ProfileId, Timestamp};
 use sync_decisions::{PlanContext, PlanStrategy, PlanningInput};
 use sync_events::{EmitOutcome, Event, EventEmitter, EventKind, EventSink};
 use sync_executor::{ExecutionOptions, ExecutionRequest, Executor, PlanExecutor};
@@ -191,6 +193,19 @@ struct Cached {
     plan: ExecutionPlan,
 }
 
+/// Explicit consents of one manual execution of the displayed preview.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Consent {
+    /// Real writes confirmed.
+    pub writes: bool,
+    /// The deletions displayed by the plan are confirmed.
+    pub deletions: bool,
+    /// The files to replace or delete exceed the profile trash and will be
+    /// lost for good (see [`TrashEstimate::overflow`]). Scheduled runs never
+    /// give it: they are refused with `trash_insufficient`.
+    pub permanent_loss: bool,
+}
+
 /// Granularity of the block-level progress forwarded to [`JobSnapshot`]: four
 /// 256 KiB copy buffers. Fine enough for a steady throughput curve on slow
 /// links (1 MiB/s ⇒ one update per second), coarse enough to stay a few
@@ -333,14 +348,22 @@ impl Application {
         Ok(())
     }
 
-    /// Removes configuration only and invalidates preview. Content is never deleted.
+    /// Removes the configuration and its trash (`Corbeille/<id>`), then
+    /// invalidates preview. Synchronized files are never deleted; the history
+    /// of the profile is retired at the next opening.
     /// # Errors
-    /// Busy or persistence failure.
+    /// Busy or persistence failure; `trash_retention` when the profile is
+    /// removed but its trash could not be (removing it again retries).
     pub fn profile_remove(&self, id: ProfileId) -> Result<(), AppError> {
         let _gate = self.gate()?;
         self.profiles()?.remove(&id).map_err(io)?;
         *lock(&self.cache)? = None;
-        Ok(())
+        trash::remove_profile(&self.state, &id).map_err(|e| {
+            error(
+                "trash_retention",
+                format!("profil retiré, mais corbeille non supprimée : {e}"),
+            )
+        })
     }
 
     /// Reads persisted presentation settings.
@@ -635,7 +658,8 @@ impl Application {
                 _ => None,
             });
             let lifted = profile.allow_delete && ceiling == DeletionCeiling::Lifted;
-            let view = serde_json::json!({"plan":value,"summary":{"copy":summary.copy,"replace":summary.replace,"delete":summary.delete,"keep":summary.keep,"conflict":summary.conflict,"skip":summary.skip,"bytes":summary.bytes_to_transfer,"deletions_refused":summary.deletions_refused,"deletion_refusal":refusal,"ceiling_lifted":lifted}});
+            let trash = TrashEstimate::of(&profile.trash, &plan);
+            let view = serde_json::json!({"plan":value,"summary":{"copy":summary.copy,"replace":summary.replace,"delete":summary.delete,"keep":summary.keep,"conflict":summary.conflict,"skip":summary.skip,"bytes":summary.bytes_to_transfer,"deletions_refused":summary.deletions_refused,"deletion_refusal":refusal,"ceiling_lifted":lifted,"trash":trash}});
             *lock(&self.cache)? = Some(Cached { profile, plan });
             Ok(view)
         })();
@@ -645,6 +669,7 @@ impl Application {
     /// Consumes exactly the cached preview, once. A modified profile, mismatching
     /// roots or plan ID is refused. Versions and durable intent precede mutations.
     /// Deletions require separate confirmation even when enabled in the profile.
+    /// Same as [`Self::execute_with`] without consenting to a permanent loss.
     /// # Errors
     /// Busy/stale/confirmation, I/O, executor or durable completion failure.
     /// Errors after execution began can leave partial work; inspect history.
@@ -655,17 +680,48 @@ impl Application {
         confirm: bool,
         confirm_delete: bool,
     ) -> Result<serde_json::Value, AppError> {
+        self.execute_with(
+            id,
+            plan_id,
+            Consent {
+                writes: confirm,
+                deletions: confirm_delete,
+                permanent_loss: false,
+            },
+        )
+    }
+
+    /// Executes the cached preview with explicit consents. When the profile
+    /// trash is enabled, a copy of every replaced or deleted file is kept in
+    /// `Corbeille/<profile>/<execution>/`, unless the plan needs more than
+    /// the trash limit: then nothing is kept (all or nothing), which requires
+    /// [`Consent::permanent_loss`]. After the final report is committed, the
+    /// execution journal is removed and the trash retention applied; their
+    /// failures are returned in `maintenance_warnings` without changing the
+    /// report.
+    /// # Errors
+    /// As [`Self::execute`]; `trash_insufficient` without the consent above.
+    pub fn execute_with(
+        &self,
+        id: ProfileId,
+        plan_id: String,
+        consent: Consent,
+    ) -> Result<serde_json::Value, AppError> {
         let _gate = self.gate()?;
-        self.execute_locked(id, plan_id, confirm, confirm_delete, None)
+        self.execute_locked(id, plan_id, consent, None)
     }
     fn execute_locked(
         &self,
         id: ProfileId,
         plan_id: String,
-        confirm: bool,
-        confirm_delete: bool,
+        consent: Consent,
         token: Option<&CancellationToken>,
     ) -> Result<serde_json::Value, AppError> {
+        let Consent {
+            writes: confirm,
+            deletions: confirm_delete,
+            permanent_loss,
+        } = consent;
         if !confirm {
             return Err(error(
                 "confirmation_required",
@@ -687,8 +743,19 @@ impl Application {
                 "confirmer les suppressions affichées",
             ));
         }
+        let trash = TrashEstimate::of(&cached.profile.trash, &cached.plan);
+        if trash.overflow && !permanent_loss {
+            return Err(error(
+                "trash_insufficient",
+                format!(
+                    "corbeille insuffisante, lancez-la manuellement : cette synchronisation remplace ou supprime {}, au-delà de la corbeille ({})",
+                    trash::human(trash.needed),
+                    trash::human(trash.limit)
+                ),
+            ));
+        }
         let cancel = self.begin(&id, JobPhase::Executing, token)?;
-        let result = self.execute_cached(cached, &cancel, confirm_delete);
+        let result = self.execute_cached(cached, &cancel, confirm_delete, trash);
         self.end(result, &id)
     }
     fn execute_cached(
@@ -696,6 +763,7 @@ impl Application {
         cached: Cached,
         cancel: &CancellationToken,
         confirm_delete: bool,
+        trash: TrashEstimate,
     ) -> Result<serde_json::Value, AppError> {
         let _job_lock = scheduled::job_lock(&self.lock_root)?;
         if runs::unfinished(&self.state, &cached.profile.id)? {
@@ -738,11 +806,18 @@ impl Application {
         };
         let versions =
             LocalConnector::new(&self.state, LocalOptions::new().with_mutations()).map_err(io)?;
-        let store = VersionStore::new(
-            &versions,
-            ResourcePath::parse(&format!("versions/{execution}")).map_err(io)?,
-        )
-        .map_err(io)?;
+        // All or nothing: an overflowing plan keeps no copy at all.
+        let store = if trash.keeps_copies() {
+            Some(
+                VersionStore::new(
+                    &versions,
+                    trash::store_folder(&cached.profile.id, &execution)?,
+                )
+                .map_err(io)?,
+            )
+        } else {
+            None
+        };
         runs::begin(&self.state, &execution, &cached.profile.id, &cached.plan)?;
         let mut options = ExecutionOptions::new()
             .with_deletions_confirmed(confirm_delete)
@@ -767,7 +842,7 @@ impl Application {
                 journal: &mut journal,
                 cancel,
                 options,
-                versions: Some(&store),
+                versions: store.as_ref(),
                 events: Some(&events),
             };
             sync_session::execute(&mut history, request, RetentionPolicy::default())
@@ -780,25 +855,45 @@ impl Application {
                     })
                 })
         } else {
+            let mut request = ExecutionRequest::new(
+                &cached.plan,
+                left.as_ref(),
+                right.as_ref(),
+                execution.clone(),
+                &mut journal,
+                cancel,
+            )
+            .with_options(options)
+            .with_events(&events);
+            if let Some(store) = &store {
+                request = request.with_versions(store);
+            }
             Executor
-                .execute(
-                    ExecutionRequest::new(
-                        &cached.plan,
-                        left.as_ref(),
-                        right.as_ref(),
-                        execution.clone(),
-                        &mut journal,
-                        cancel,
-                    )
-                    .with_options(options)
-                    .with_versions(&store)
-                    .with_events(&events),
-                )
+                .execute(request)
                 .map_err(io)
                 .and_then(|r| serde_json::to_value(r).map_err(io))
         };
-        runs::finish(&self.state, &execution, &result, Some(&cached.plan))?;
-        result
+        let mut warnings: Vec<AppError> =
+            runs::settle(&self.state, &execution, &result, Some(&cached.plan))?
+                .into_iter()
+                .collect();
+        if let Err(e) = trash::enforce(
+            &self.state,
+            &cached.profile.id,
+            cached.profile.trash.max_bytes,
+            Some(&execution),
+        ) {
+            warnings.push(e);
+        }
+        result.map(|mut report| {
+            if let Some(map) = report.as_object_mut().filter(|_| !warnings.is_empty()) {
+                map.insert(
+                    "maintenance_warnings".into(),
+                    warnings.iter().map(|w| w.message.clone()).collect(),
+                );
+            }
+            report
+        })
     }
 
     /// Cancels the current scan/transfer cooperatively. Does not release ownership.

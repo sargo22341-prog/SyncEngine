@@ -5,6 +5,29 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Corbeille par profil et journaux éphémères
+- Profils v4 : réglage `trash` (activée, taille maximale). Les nouveaux
+  profils de l’assistant n’ont pas de corbeille ; les profils existants
+  migrent vers une corbeille activée de 5 Go, sans réécriture de leurs lignes.
+  Une version antérieure refuse une base v4.
+- Les copies avant remplacement ou suppression vont dans
+  `Corbeille/<identifiant du profil>/<exécution>/` au lieu de
+  `versions/<exécution>/` (l’ancien dossier n’est plus alimenté). Corbeille
+  désactivée : aucune copie.
+- Rétention : 30 synchronisations par profil, les plus anciennes retirées
+  d’abord au-delà de la taille maximale ; dernière synchronisation et
+  interruptions gardées.
+- Tout ou rien : la simulation calcule la taille à remplacer ou supprimer ;
+  au-delà de la corbeille, aucune copie n’est faite, l’exécution manuelle exige
+  une confirmation explicite (`Consent::permanent_loss`) et l’exécution
+  planifiée ou `profile run` est refusée (`trash_insufficient`).
+- « Voir la corbeille » : place utilisée, synchronisations, fichiers paginés,
+  « Enregistrer sous… », « Vider la corbeille ». Retirer un profil supprime sa
+  corbeille.
+- Le journal `run-….jsonl` est supprimé dès que le bilan est validé en base,
+  et conservé si cette écriture échoue ou après un plantage. À l’ouverture,
+  les journaux des exécutions terminées sont supprimés.
+
 ### Historique borné et démarrage rapide
 - Historique desktop v3 : un résumé par tentative (`run_overview`) évite de
   relire tous les plans au démarrage et à chaque rafraîchissement. Mesure sur

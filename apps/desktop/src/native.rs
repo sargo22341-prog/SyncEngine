@@ -19,6 +19,14 @@ pub(crate) fn pick_file(title: &str) -> Option<PathBuf> {
     rfd::FileDialog::new().set_title(title).pick_file()
 }
 
+/// Native « save as » dialog proposing `name`. `None` when the user cancels.
+pub(crate) fn pick_save_file(title: &str, name: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(title)
+        .set_file_name(name)
+        .save_file()
+}
+
 /// Shows a folder in the system file manager (Explorer, or `xdg-open`).
 /// The viewer is detached: its own exit status is not awaited.
 pub(crate) fn open_folder(path: &Path) -> Result<(), Failure> {

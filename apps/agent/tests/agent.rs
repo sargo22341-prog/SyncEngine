@@ -44,6 +44,7 @@ fn fixture() -> Result<(tempfile::TempDir, Profile), Error> {
         remote_destination: None,
         allow_delete: false,
         compare: sync_profiles::CompareMethod::Content,
+        trash: sync_profiles::TrashPolicy::legacy(),
     };
     with_app(temp.path(), |app| app.profile_save(p.clone()))?;
     Ok((temp, p))

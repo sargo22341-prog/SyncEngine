@@ -22,6 +22,7 @@ mod shell;
 mod speed;
 mod theme;
 mod titlebar;
+mod trash;
 mod tray;
 mod ui;
 mod ui_prefs;
