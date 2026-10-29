@@ -151,6 +151,15 @@ Tout se fait dans `.github/workflows/ci.yml` :
      sont ajoutées à la fin de la description ;
 - **Actions › CI › Run workflow** permet de monter `minor` ou `major`.
 
+Contrat avec la mise à jour intégrée (`crates/services/app-update`) : tag
+`vX.Y.Z` semver, noms `SyncEngine_<version>_<cible>.zip|.tar.gz`, racine
+unique `SyncEngine_<version>_<cible>/` contenant exactement les cinq fichiers
+ci-dessus, et bloc `### Empreintes SHA-256` au format `sha256sum` à la fin du
+texte de la release. Changer l'un d'eux rend la mise à jour impossible pour
+les versions déjà installées (elles refusent l'archive) : adapter le crate et
+garder l'ancien format lisible pendant une transition. Ses tests
+(`cargo test -p app-update`) utilisent un serveur HTTP local, jamais GitHub.
+
 Ne jamais modifier la version à la main. Chaque changement visible ajoute une
 ligne `- …` sous `<!-- notes -->` dans `RELEASE_NOTES.md` : ce texte devient la
 description de la release, puis la liste est vidée par le commit de version.

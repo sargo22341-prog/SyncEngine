@@ -12,6 +12,8 @@ use serde_json::Value;
 /// le test, ce qui force à décider explicitement de sa place dans le graphe.
 const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
     ("sync-credentials", &["sync-core"]),
+    // Mise à jour applicative : autonome, sans moteur ni interface.
+    ("app-update", &[]),
     (
         "connector-onedrive",
         &[
@@ -116,6 +118,7 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             "sync-filter",
             "sync-plan",
             "sync-scheduler",
+            "app-update",
             // Native COM validation tests only.
             "platform-api",
             "platform-windows",

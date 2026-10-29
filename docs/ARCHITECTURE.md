@@ -100,7 +100,7 @@ seulement : le plan exécutable n'est pas modifié.
 | `crates/discovery` | `sync-filter`, `sync-scanner`, `sync-compare` | filtres, inventaire, comparaison |
 | `crates/strategy` | `sync-decisions`, `sync-backup`, `sync-mirror`, `sync-bidirectional` | production des plans |
 | `crates/execution` | `sync-copy`, `sync-verify`, `sync-versioning`, `sync-journal`, `sync-executor` | application sûre des plans |
-| `crates/services` | `sync-profiles`, `sync-history`, `sync-scheduler`, `sync-credentials` | profils, baselines et historique, planifications (SQLite), port de jetons |
+| `crates/services` | `sync-profiles`, `sync-history`, `sync-scheduler`, `sync-credentials`, `app-update` | profils, baselines et historique, planifications (SQLite), port de jetons, mise à jour applicative depuis GitHub |
 | `crates/application` | `sync-orchestrator`, `sync-session` | façade applicative (profils, simulation, exécution, verrou), cycle bidirectionnel avec baseline |
 | `crates/connectors` | `connector-sftp`, `connector-webdav`, `connector-ftp`, `connector-ftps`, `connector-ftp-transport`, `connector-smb`, `connector-onedrive` | un crate par protocole, chacun derrière sa feature |
 | `apps` | `syncengine-desktop`, `syncengine-cli`, `syncengine-agent` | interface iced, CLI `syncengine`, agent planifié |
@@ -215,6 +215,20 @@ supprime : arrêt coopératif des agents, contrôle des verrous de commande et
 d’exécution (`sync_orchestrator::hold_execution_lock`), retrait des tâches
 vérifiées, de la valeur `Run` et des unités, puis des dossiers sans suivre de
 lien ni de jonction. Les moteurs ne sont pas concernés.
+
+## Mise à jour applicative
+
+`app-update` ne dépend d'aucun crate interne ni de l'interface : requête
+`releases/latest` (reqwest bloquant, HTTPS, sans jeton), comparaison semver,
+empreinte SHA-256 du texte de la release, téléchargement en flux, extraction
+stricte, remplacement par renommage avec retour arrière, nettoyage. Il n'écrit
+que dans le dossier du programme, sous des noms fixes. L'interface
+(`apps/desktop/src/app_update.rs`, distinct de la boucle `update.rs`) vérifie
+ses propres préconditions, arrête l'agent par `request_agent_stop` (attente
+bornée de la libération de `agent.lock`), installe, lève sa propre demande
+d'arrêt puis relance l'agent par la même voie que « Reprendre les
+planifications » (`native::prepare_agent`), et relance l'interface. Mode
+d'emploi : [Guide](GUIDE.md#mises-à-jour).
 
 ## Lectures réseau
 

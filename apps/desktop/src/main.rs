@@ -8,6 +8,7 @@
 mod actions;
 mod anim;
 mod app;
+mod app_update;
 mod backend;
 mod charts;
 mod draft;

@@ -804,7 +804,7 @@ impl App {
                 ui::title(p, "Réglages", 26.0),
                 ui::muted(
                     p,
-                    "Apparence, fenêtre, démarrage et informations sur cette version."
+                    "Apparence, fenêtre, démarrage, mises à jour et informations sur cette version."
                 )
             ]
             .spacing(4),
@@ -893,6 +893,7 @@ impl App {
                 .align_y(Alignment::Center)
                 .into()
             ),
+            section("Mises à jour", self.updates_section(p)),
             section(
                 "Cette version",
                 column![

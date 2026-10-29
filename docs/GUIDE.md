@@ -278,6 +278,60 @@ classique).
 | `Échap` | fermer menu, dialogue ou assistant |
 | `F1` | aide des raccourcis |
 
+## Mises à jour
+
+À chaque ouverture, SyncEngine interroge en arrière-plan la dernière version
+publiée sur GitHub (ni brouillon ni pré-version, sans compte ni jeton). Si elle
+est plus récente que la version installée (comparaison semver : `0.1.10` est
+plus récente que `0.1.9`) et qu'une archive existe pour cette plateforme, la
+fenêtre **« Nouvelle mise à jour disponible »** affiche les deux versions, la
+date de publication et les notes de version (« Afficher plus » si elles sont
+longues). **« Plus tard »** la ferme ; elle reviendra à la prochaine ouverture.
+Rien n'est installé sans clic sur **« Mettre à jour maintenant »**. Un échec de
+la vérification (hors ligne, limite de requêtes GitHub, réponse illisible) ne
+montre rien au démarrage.
+
+Réglages › **Mises à jour** indique la version installée et la cible compilée,
+et permet **« Vérifier les mises à jour »**. Le résultat distingue « à jour »,
+« non disponible pour cette plateforme » et un échec (hors ligne n'est jamais
+présenté comme « à jour »). Une mise à jour détectée y apparaît aussi, avec un
+lien vers la page de la release.
+
+« Mettre à jour maintenant » :
+
+1. refuse pendant une synchronisation de la fenêtre ou de l'agent planifié
+   (« Une synchronisation planifiée est en cours, réessayez après ») ;
+2. télécharge l'archive dans le dossier du programme
+   (`syncengine-update.download`), avec progression et **Annuler** ;
+3. vérifie son empreinte SHA-256 contre celle publiée dans le texte de la
+   release : absente ou différente, l'archive est supprimée et rien n'est
+   remplacé ;
+4. extrait strictement les cinq fichiers attendus dans
+   `syncengine-update.staging/` : tout autre élément, chemin absolu, `..`,
+   lien ou fichier manquant rejette l'archive entière ;
+5. arrête l'agent résident s'il tourne (au plus 20 s, sinon rien n'est
+   remplacé), renomme chaque fichier actuel en `<nom>.old` puis met le nouveau
+   à sa place. Si une étape échoue, les fichiers d'origine sont restaurés ; une
+   restauration incomplète est signalée avec la liste des fichiers à vérifier ;
+6. relance l'agent (s'il tournait), puis la nouvelle interface, et ferme
+   l'ancienne. Au démarrage suivant, les `.old` et les restes temporaires sont
+   supprimés (noms exacts seulement, sans suivre de lien).
+
+Exemple : SyncEngine 0.1.8 s'ouvre, la fenêtre annonce 0.1.9 publiée le
+20/10/2026 ; « Mettre à jour maintenant » télécharge, vérifie, remplace, puis
+SyncEngine 0.1.9 se rouvre seul avec les mêmes profils, planifications et
+historique (ils sont dans le dossier d'état, jamais dans celui du programme),
+et la tâche planifiée Windows continue de lancer l'agent au même endroit.
+
+Le dossier du programme doit être modifiable sans droits administrateur ; sinon
+(ou si l'exécutable a été renommé), la mise à jour est refusée et un bouton
+ouvre la page de la release pour un téléchargement manuel : remplacer alors
+les trois exécutables au même endroit. Aucune trace n'est créée hors du
+dossier du programme. Le remplacement de plusieurs fichiers n'est pas
+atomique. L'empreinte est publiée dans la même release que l'archive : elle
+protège d'un téléchargement corrompu, pas d'un compte GitHub compromis (les
+archives ne sont pas signées).
+
 ## Données de l'application
 
 Dossier d'état : `%APPDATA%\org.syncengine.desktop` (Windows),

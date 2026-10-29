@@ -44,6 +44,14 @@ Une unité n’est retirée que si elle porte l’un de ces noms exacts et conti
 (minuteur). Sans systemd, l’échec de `systemctl` est signalé dans le bilan ;
 les fichiers sont retirés quand même.
 
+## Mise à jour depuis Réglages
+
+Elle n’ajoute **aucune trace hors du dossier du programme** : l’archive
+(`syncengine-update.download`), les fichiers extraits
+(`syncengine-update.staging/`) et les anciennes versions (`<nom>.old`) sont
+écrits à côté des exécutables et retirés au démarrage suivant (noms exacts,
+sans suivre de lien). Ils disparaissent avec le dossier du programme.
+
 ## Contenu du dossier d’état
 
 Voir [le guide](GUIDE.md#données-de-lapplication). Bases SQLite (et leurs

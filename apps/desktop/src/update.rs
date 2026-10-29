@@ -60,10 +60,11 @@ impl App {
                                 Message::AgentResumed,
                             ),
                             lookup,
+                            self.update_after_boot(),
                         ]);
                     }
                 }
-                lookup
+                Task::batch([lookup, self.update_after_boot()])
             }
             Message::Booted(Ok(Opening::Waiting(observation))) => {
                 self.boot_polling = false;
@@ -631,6 +632,7 @@ impl App {
             }
             Message::Interrupted(msg) => self.interrupted(msg),
             Message::Purge(msg) => self.purge(msg),
+            Message::AppUpdate(msg) => self.app_update(msg),
             Message::Remove(id) => {
                 self.close_dialog();
                 let Some(app) = &self.backend else {

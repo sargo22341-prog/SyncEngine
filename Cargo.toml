@@ -3,6 +3,7 @@ resolver = "3"
 exclude = ["vendor/suppaftp", "vendor/libssh2-sys", "vendor/cap-primitives"]
 members = [
     "crates/services/sync-credentials",
+    "crates/services/app-update",
     "crates/connectors/cloud/connector-onedrive",
     "crates/adapters/connector-registry",
     "crates/connectors/network/connector-ftp-transport",
@@ -56,6 +57,7 @@ publish = false
 [workspace.dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 sync-credentials = { path = "crates/services/sync-credentials" }
+app-update = { path = "crates/services/app-update" }
 connector-ftp-transport = { path = "crates/connectors/network/connector-ftp-transport" }
 connector-staging = { path = "crates/adapters/connector-staging" }
 suppaftp = { version = "12.2.1", default-features = false, features = ["native-tls"] }
@@ -103,6 +105,13 @@ thiserror = "2.0.21"
 globset = { version = "0.4.21", default-features = false }
 blake3 = "1.8.7"
 tempfile = "3.27.0"
+# Mise à jour applicative (app-update) : empreinte SHA-256 publiée avec chaque release,
+# lecture stricte des archives portables (.zip Windows, .tar.gz Linux), comparaison semver.
+sha2 = "0.11.1"
+zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2"] }
+flate2 = "1.1.10"
+tar = { version = "0.4.46", default-features = false }
+semver = "1.0.28"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

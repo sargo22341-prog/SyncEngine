@@ -41,6 +41,10 @@ impl App {
         if matches!(&self.dialog, Some(Dialog::Purge(d)) if d.running) {
             return;
         }
+        // Likewise an update being installed.
+        if matches!(self.dialog, Some(Dialog::Update)) && self.update_installing() {
+            return;
+        }
         self.dialog_t.go(0.0, self.now);
     }
 
@@ -51,6 +55,7 @@ impl App {
             .retain(|t| now.saturating_duration_since(t.born) < t.life);
         if self.dialog.is_some() && self.dialog_t.target() == 0.0 && !self.dialog_t.running(now) {
             self.dialog = None;
+            self.update_dialog_closed();
         }
         if let Some(w) = &mut self.wizard
             && w.closing

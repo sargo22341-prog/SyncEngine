@@ -33,6 +33,7 @@ sync-core.workspace = true
 sync-filter.workspace = true
 sync-plan.workspace = true
 sync-scheduler.workspace = true
+app-update.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

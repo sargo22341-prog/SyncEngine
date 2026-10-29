@@ -48,6 +48,25 @@ pub(crate) fn open_folder(path: &Path) -> Result<(), Failure> {
         .map_err(|e| Failure::new("unavailable", format!("ouverture du dossier : {e}")))
 }
 
+/// Opens an `https://github.com/` page in the default browser (release page
+/// of an update). Any other address is refused. The browser is detached.
+pub(crate) fn open_url(url: &str) -> Result<(), Failure> {
+    if !url.starts_with("https://github.com/") || url.chars().any(|c| c.is_whitespace() || c == '"')
+    {
+        return Err(Failure::new("invalid_input", "adresse refusée"));
+    }
+    let viewer = if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(viewer)
+        .arg(url)
+        .spawn()
+        .map(drop)
+        .map_err(|e| Failure::new("unavailable", format!("ouverture du navigateur : {e}")))
+}
+
 #[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(windows)]

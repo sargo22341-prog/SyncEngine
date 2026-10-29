@@ -5,6 +5,27 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Mises à jour depuis GitHub
+- Nouveau crate `crates/services/app-update` (sans interface) : lecture de
+  `releases/latest` (ni brouillon ni pré-version), comparaison semver avec la
+  version compilée, archive de la cible courante, empreinte SHA-256 lue dans le
+  bloc `### Empreintes SHA-256` du texte de la release ; téléchargement en flux
+  dans le dossier du programme (`syncengine-update.download`) avec progression
+  et annulation ; extraction stricte (`syncengine-update.staging/`) ;
+  remplacement par renommage `<nom>.old` avec retour arrière ; nettoyage des
+  noms exacts au démarrage suivant. Erreurs classées : `offline`,
+  `rate_limited`, `no_asset`, `checksum_missing`, `checksum_mismatch`,
+  `invalid_archive`, `busy`, `not_writable`, `replace_failed`,
+  `rollback_incomplete`…
+- Interface : vérification silencieuse à chaque ouverture, fenêtre « Nouvelle
+  mise à jour disponible » (« Mettre à jour maintenant » / « Plus tard », rien
+  n'est persisté), section Réglages › Mises à jour. L'installation est refusée
+  pendant une synchronisation ; l'agent résident est arrêté (attente bornée à
+  20 s) puis relancé, et un arrêt explicite de l'utilisateur est conservé.
+  L'interface se relance depuis le nouvel exécutable.
+- Dépendances ajoutées : `sha2`, `zip` (lecture deflate seulement), `tar`,
+  `flate2`, `semver` (les deux dernières étaient déjà transitives).
+
 ### Débit de copie et courbe
 - Connecteur local : le fichier temporaire est vidé sur le disque par un fil
   dédié, à travers une seconde poignée, pendant que la copie continue

@@ -283,6 +283,7 @@ impl App {
             Dialog::Trash(trash) => (720.0, self.trash_dialog(&dp, trash)),
             Dialog::Interrupted(d) => (680.0, self.interrupted_dialog(&dp, d)),
             Dialog::Purge(d) => (640.0, self.purge_dialog(&dp, d)),
+            Dialog::Update => (640.0, self.update_dialog(&dp)),
             Dialog::Remove { profile } => {
                 let name = self
                     .profile(profile)

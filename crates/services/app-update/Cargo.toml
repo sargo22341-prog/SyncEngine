@@ -1,0 +1,25 @@
+[package]
+license.workspace = true
+name = "app-update"
+description = "Mise à jour applicative depuis les releases GitHub : vérification semver, empreinte SHA-256, extraction stricte et remplacement des exécutables avec retour arrière, sans interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+zip.workspace = true
+flate2.workspace = true
+tar.workspace = true
+semver.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

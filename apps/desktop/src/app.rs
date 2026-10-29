@@ -219,6 +219,8 @@ pub(crate) enum Dialog {
         saving: bool,
     },
     Shortcuts,
+    /// « Nouvelle mise à jour disponible » (see [`crate::app_update`]).
+    Update,
 }
 
 /// Messages of the whole application.
@@ -303,6 +305,8 @@ pub(crate) enum Message {
     Diagnosed(Result<Vec<String>, Failure>),
     Interrupted(crate::interrupted::InterruptedMsg),
     Purge(crate::purge_view::PurgeMsg),
+    /// Application update (Réglages › « Mises à jour » and its dialog).
+    AppUpdate(crate::app_update::UpdateMsg),
     MoveTo(ProfileId, String),
     Moved(backend::Batch),
     // Groups.
@@ -431,6 +435,8 @@ pub(crate) struct App {
     /// Every trace was deleted: nothing may be read or written any more,
     /// the application only shows the report and closes.
     pub(crate) purged: bool,
+    /// Update lookup and installation (nothing persisted).
+    pub(crate) updates: crate::app_update::Updates,
 }
 
 pub(crate) const SEARCH_ID: &str = "profile-search";
@@ -504,6 +510,14 @@ impl App {
             tray: Tray::create(charts::icon_rgba(), charts::ICON_SIZE),
             busy_refresh: false,
             purged: false,
+            updates: crate::app_update::Updates {
+                check: if app_update::Target::current().is_some() {
+                    crate::app_update::CheckState::Checking
+                } else {
+                    crate::app_update::CheckState::Unsupported
+                },
+                ..Default::default()
+            },
         };
         let light = app.wants_light();
         app.theme_t = Tween::new(if light { 1.0 } else { 0.0 }, 450, Ease::InOutCubic);
@@ -522,6 +536,8 @@ impl App {
                 backend::blocking(native::startup_enabled),
                 Message::StartupLoaded,
             ),
+            // Background lookup at each opening; a failure stays silent.
+            crate::app_update::lookup(false),
         ]);
         (app, tasks)
     }
@@ -794,6 +810,12 @@ impl App {
             // while one is followed, rarely otherwise (one tiny file read).
             let every = if self.agent_job.is_some() { 500 } else { 1500 };
             subs.push(time::every(Duration::from_millis(every)).map(|_| Message::AgentTick));
+        }
+        if self.update_installing() {
+            subs.push(
+                time::every(Duration::from_millis(200))
+                    .map(|_| Message::AppUpdate(crate::app_update::UpdateMsg::Tick)),
+            );
         }
         Subscription::batch(subs)
     }

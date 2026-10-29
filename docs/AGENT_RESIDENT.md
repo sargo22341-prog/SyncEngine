@@ -177,7 +177,11 @@ Changer l'emplacement du dossier d'état crée une autre installation : retirer
 l'ancienne depuis l'ancien état. Changer seulement le répertoire des binaires
 actualise l'action à la prochaine préparation ; si l'ancien résident tourne,
 l'arrêter proprement avant de réenregistrer. Garder les trois exécutables
-ensemble. Aucun installateur ni mécanisme de mise à jour n'est ajouté.
+ensemble. Aucun installateur n'est ajouté. La mise à jour depuis Réglages
+(voir [le guide](GUIDE.md#mises-à-jour)) remplace les fichiers au même
+endroit : la tâche, dont le nom ne dépend pas du chemin de l'exécutable, est
+conservée. L'agent est arrêté avant le remplacement puis relancé par la tâche
+ordinaire ; un arrêt explicite antérieur reste en place.
 Retirer la dernière autorisation demande l'arrêt coopératif via
 `agent-retire.request` et retire uniquement les tâches vérifiées. Un nouvel
 horaire enlève ce marqueur automatique, jamais le marqueur d'arrêt explicite.
