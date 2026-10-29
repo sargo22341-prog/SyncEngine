@@ -5,6 +5,12 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Filtres
+- Assistant : catégorie « Fichiers de travail SQLite » (`*-wal`, `*-shm`,
+  `*-journal`), distincte de « Fichiers temporaires » car le `-wal` peut
+  contenir les dernières transactions ; le `.db` copié reflète alors le
+  dernier point de contrôle.
+
 ### Mises à jour depuis GitHub
 - Nouveau crate `crates/services/app-update` (sans interface) : lecture de
   `releases/latest` (ni brouillon ni pré-version), comparaison semver avec la

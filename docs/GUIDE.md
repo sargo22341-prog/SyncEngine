@@ -202,6 +202,16 @@ fichiers, ils ignorent toujours la casse (`Thumbs.db` exclut aussi
 `thumbs.db`), y compris pour les profils enregistrés avant ce changement ;
 ailleurs, l'option « Ignorer la casse des motifs » décide.
 
+L'étape Filtres propose des catégories prêtes à cocher. **Fichiers de
+travail SQLite** exclut `*-wal`, `*-shm` et `*-journal` : une base ouverte
+par une application (par exemple dans un conteneur Docker) crée et supprime
+ces fichiers en continu, d'où des erreurs « vu à l'analyse puis disparu ».
+Le `-shm` est un simple index recréé à l'ouverture. Le `-wal` et le
+`-journal` peuvent en revanche contenir les dernières écritures : sans eux,
+le `.db` copié est l'état du dernier point de contrôle de SQLite. Pour une
+copie complète, arrêter l'application (ou le conteneur) avant la
+synchronisation ; ces fichiers disparaissent alors d'eux-mêmes.
+
 Les listes longues (simulation, historique d'une exécution, corbeille)
 s'affichent par dossiers repliables : chaque dossier indique le nombre
 d'éléments qu'il contient par action (par exemple « 5 000 suppressions »)

@@ -452,7 +452,7 @@ pub(crate) struct Preset {
     pub(crate) directories: &'static [&'static str],
 }
 
-pub(crate) const PRESETS: [Preset; 4] = [
+pub(crate) const PRESETS: [Preset; 5] = [
     Preset {
         label: "Fichiers temporaires",
         hint: "*.tmp, ~$*, *.part…",
@@ -476,6 +476,15 @@ pub(crate) const PRESETS: [Preset; 4] = [
         hint: ".cache, $RECYCLE.BIN…",
         files: &[],
         directories: &[".cache", "$RECYCLE.BIN", "System Volume Information"],
+    },
+    // SQLite working files of a database in use: they appear and vanish
+    // between analysis and copy. Not merely temporary: `-wal` may hold the
+    // latest commits, so the copied `.db` is the state of the last checkpoint.
+    Preset {
+        label: "Fichiers de travail SQLite",
+        hint: "*-wal, *-shm, *-journal (bases ouvertes)",
+        files: &["*-wal", "*-shm", "*-journal"],
+        directories: &[],
     },
 ];
 
@@ -1310,6 +1319,36 @@ mod tests {
         f.remove(FilterList::ExcludeFiles, 0);
         f.remove(FilterList::ExcludeFiles, 9);
         assert_eq!(f.count(), 0);
+    }
+
+    #[test]
+    fn sqlite_preset_excludes_working_files_but_keeps_databases()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut f = FilterDraft::default();
+        f.toggle_preset(&PRESETS[4]);
+        let filter = sync_filter::Filter::new(f.rules())?;
+        let included = |name: &str| -> Result<bool, Box<dyn std::error::Error>> {
+            let path = sync_core::ResourcePath::parse(name)?;
+            Ok(filter
+                .evaluate(&path, sync_core::EntryKind::File)
+                .is_included())
+        };
+        for name in [
+            "data/app.db-wal",
+            "data/app.db-shm",
+            "data/app.sqlite-journal",
+        ] {
+            assert!(!included(name)?, "{name}");
+        }
+        for name in [
+            "data/app.db",
+            "data/app.sqlite",
+            "data/wal.txt",
+            "notes.journal",
+        ] {
+            assert!(included(name)?, "{name}");
+        }
+        Ok(())
     }
 
     #[test]
