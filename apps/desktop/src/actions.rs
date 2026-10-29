@@ -21,8 +21,7 @@ use sync_profiles::Profile;
 
 impl App {
     pub(crate) fn apply_theme(&mut self) {
-        let target = if self.wants_light() { 1.0 } else { 0.0 };
-        self.theme_t.go(target, self.now);
+        self.theme_t.go(self.theme_target(), self.now);
     }
 
     pub(crate) fn apply_workspace(&mut self, ws: Workspace) {

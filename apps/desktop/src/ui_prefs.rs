@@ -16,6 +16,8 @@ pub(crate) enum ThemeChoice {
     System,
     Dark,
     Light,
+    /// Full black backgrounds for OLED screens.
+    Amoled,
 }
 
 /// What the window close button (×) does.
@@ -102,6 +104,11 @@ mod tests {
         assert_eq!(legacy.close, CloseAction::Minimize);
         std::fs::write(dir.path().join(FILE), r#"{"version":99}"#).unwrap();
         assert!(UiPrefs::load(dir.path()).is_err());
+        std::fs::write(dir.path().join(FILE), r#"{"version":1,"theme":"amoled"}"#).unwrap();
+        assert_eq!(
+            UiPrefs::load(dir.path()).unwrap().theme,
+            ThemeChoice::Amoled
+        );
         std::fs::write(dir.path().join(FILE), "{").unwrap();
         assert!(UiPrefs::load(dir.path()).is_err());
     }

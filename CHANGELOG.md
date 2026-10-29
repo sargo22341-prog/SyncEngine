@@ -5,6 +5,17 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Apparence
+- Thème « AMOLED » (Réglages › Apparence) : fonds `#000000`, surfaces
+  à peine relevées (`#0a0a0a`) séparées par leur bordure. Persisté comme
+  `"theme": "amoled"` dans `desktop-ui.json` ; une version antérieure de
+  l'application signale ce fichier comme invalide et reprend les valeurs par
+  défaut. La bascule Ctrl+T depuis AMOLED passe au thème clair.
+- Fenêtre : sous Windows 11, coins arrondis demandés au gestionnaire de
+  fenêtres (`DWMWCP_ROUND`), quel que soit le thème ; sans effet sous
+  Windows 10, en plein écran agrandi et sous Linux (pas d'équivalent sans
+  fenêtre transparente).
+
 ### Filtres
 - Assistant : catégorie « Fichiers de travail SQLite » (`*-wal`, `*-shm`,
   `*-journal`), distincte de « Fichiers temporaires » car le `-wal` peut

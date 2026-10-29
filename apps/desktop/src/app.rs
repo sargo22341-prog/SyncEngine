@@ -519,8 +519,7 @@ impl App {
                 ..Default::default()
             },
         };
-        let light = app.wants_light();
-        app.theme_t = Tween::new(if light { 1.0 } else { 0.0 }, 450, Ease::InOutCubic);
+        app.theme_t = Tween::new(app.theme_target(), 450, Ease::InOutCubic);
         if let Some(e) = prefs_error {
             app.toast(ToastKind::Warning, "Préférences d’affichage", e);
         }
@@ -545,8 +544,17 @@ impl App {
     pub(crate) fn wants_light(&self) -> bool {
         match self.prefs.theme {
             ThemeChoice::Light => true,
-            ThemeChoice::Dark => false,
+            ThemeChoice::Dark | ThemeChoice::Amoled => false,
             ThemeChoice::System => !self.system_dark,
+        }
+    }
+
+    /// Position of the chosen theme on the `Palette::blend` axis.
+    pub(crate) fn theme_target(&self) -> f32 {
+        match self.prefs.theme {
+            ThemeChoice::Amoled => -1.0,
+            _ if self.wants_light() => 1.0,
+            _ => 0.0,
         }
     }
 

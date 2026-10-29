@@ -1,6 +1,7 @@
 # Notes de la prochaine version
 
 Écrire sous la ligne `<!-- notes -->
+- Apparence : nouveau thème « AMOLED » (fond noir intégral) et coins de fenêtre arrondis sous Windows 11.
 - Planification : une icône « i » explique simplement chaque option (échéances manquées, écritures, suppressions).
 - Planification : option « Afficher la fenêtre de suivi » (Windows) ; la fenêtre suit en direct toute synchronisation planifiée (pourcentage, débit, erreurs) et peut l'annuler.
 - Planification : un arrêt demandé à l'agent est signalé, avec un bouton « Reprendre les planifications ».

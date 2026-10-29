@@ -1,6 +1,7 @@
-//! Visual system: two hand-tuned palettes (dark « Frames X-like », light
-//! « classic Google-like ») blended continuously so that switching theme is an
-//! animated cross-fade. Every style function captures a `Palette` by value.
+//! Visual system: three hand-tuned palettes (AMOLED « full black », dark
+//! « Frames X-like », light « classic Google-like ») blended continuously so
+//! that switching theme is an animated cross-fade. Every style function
+//! captures a `Palette` by value.
 
 use iced::widget::{button, checkbox, container, scrollable, text_input, toggler};
 use iced::{Background, Border, Color, Shadow, Theme, Vector, border, color};
@@ -58,6 +59,29 @@ impl Palette {
         scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.65),
     };
 
+    /// Pure black backgrounds for OLED screens; surfaces stay just above
+    /// black so cards and dialogs remain distinguishable by their border.
+    pub(crate) const AMOLED: Self = Self {
+        rail: color!(0x000000),
+        sidebar: color!(0x000000),
+        bg: color!(0x000000),
+        surface: color!(0x0a0a0a),
+        surface_hi: color!(0x171717),
+        border: color!(0x222222),
+        text: color!(0xf2f2f2),
+        muted: color!(0x9e9e9e),
+        faint: color!(0x5e5e5e),
+        accent: color!(0x2f7cf6),
+        accent_hi: color!(0x1f66d9),
+        on_accent: color!(0xffffff),
+        success: color!(0x34c759),
+        warning: color!(0xf5a524),
+        danger: color!(0xef4444),
+        info: color!(0x4c9bff),
+        shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.8),
+        scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.75),
+    };
+
     pub(crate) const LIGHT: Self = Self {
         rail: color!(0xe9eef6),
         sidebar: color!(0xf3f6fc),
@@ -79,9 +103,17 @@ impl Palette {
         scrim: Color::from_rgba(0.12, 0.13, 0.15, 0.35),
     };
 
-    /// Linear blend: `t = 0` is dark, `t = 1` is light.
+    /// Piecewise linear blend: `t = -1` is AMOLED, `t = 0` is dark, `t = 1`
+    /// is light.
     pub(crate) fn blend(t: f32) -> Self {
-        let (a, b) = (Self::DARK, Self::LIGHT);
+        if t < 0.0 {
+            Self::lerp(Self::DARK, Self::AMOLED, -t)
+        } else {
+            Self::lerp(Self::DARK, Self::LIGHT, t)
+        }
+    }
+
+    fn lerp(a: Self, b: Self, t: f32) -> Self {
         let m = |x: Color, y: Color| mix(x, y, t);
         Self {
             rail: m(a.rail, b.rail),
@@ -698,7 +730,10 @@ mod tests {
     fn blend_endpoints_match_the_reference_palettes() {
         assert_eq!(Palette::blend(0.0), Palette::DARK);
         assert_eq!(Palette::blend(1.0), Palette::LIGHT);
+        assert_eq!(Palette::blend(-1.0), Palette::AMOLED);
         assert!(!Palette::DARK.is_light());
+        assert!(!Palette::AMOLED.is_light());
+        assert_eq!(Palette::AMOLED.bg, Color::BLACK);
         assert!(Palette::LIGHT.is_light());
     }
 

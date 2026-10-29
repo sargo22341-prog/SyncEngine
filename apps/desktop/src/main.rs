@@ -53,7 +53,23 @@ fn main() -> iced::Result {
             exit_on_close_request: false,
             // Title bar and border are drawn by the application (`titlebar`).
             decorations: false,
+            platform_specific: platform_window(),
             ..iced::window::Settings::default()
         })
         .run()
+}
+
+/// Windows 11 does not round undecorated windows by default: ask DWM for
+/// the system rounded corners (ignored by Windows 10, and while maximized).
+#[cfg(windows)]
+fn platform_window() -> iced::window::settings::PlatformSpecific {
+    iced::window::settings::PlatformSpecific {
+        corner_preference: iced::window::settings::platform::CornerPreference::Round,
+        ..Default::default()
+    }
+}
+
+#[cfg(not(windows))]
+fn platform_window() -> iced::window::settings::PlatformSpecific {
+    iced::window::settings::PlatformSpecific::default()
 }

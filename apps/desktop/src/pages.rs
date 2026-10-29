@@ -680,6 +680,7 @@ impl App {
         };
         let d = theme::Palette::DARK;
         let l = theme::Palette::LIGHT;
+        let o = theme::Palette::AMOLED;
         let section = |title: &'static str, body: El<'a, Message>| -> El<'a, Message> {
             column![
                 ui::eyebrow(p.muted, title),
@@ -821,6 +822,7 @@ impl App {
                         ),
                         theme_tile(ThemeChoice::Dark, "Sombre", d.rail, d.bg, Glyph::Moon),
                         theme_tile(ThemeChoice::Light, "Clair", l.rail, l.bg, Glyph::Sun),
+                        theme_tile(ThemeChoice::Amoled, "AMOLED", o.surface_hi, o.bg, Glyph::Moon),
                     ]
                     .spacing(12),
                     row![
