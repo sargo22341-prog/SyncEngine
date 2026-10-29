@@ -15,10 +15,4 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
-- Filtres : nouvelle catégorie « Fichiers de travail SQLite » (*-wal, *-shm, *-journal) pour les bases ouvertes, par exemple dans Docker.
-- Mises à jour : SyncEngine signale une nouvelle version à l'ouverture et l'installe sur demande (archive vérifiée par SHA-256, retour arrière en cas d'échec).
-- Profils : modifier les filtres, le nom, le groupe, la corbeille ou la comparaison ne décoche plus les autorisations de la planification.
-- Filtres : sous Windows, les motifs ignorent toujours la casse (Thumbs.db exclut aussi thumbs.db).
-- Copie : débit nettement plus élevé et courbe stable (vidage disque en arrière-plan, un seul gros fichier à la fois).
-- Groupes : « Synchroniser tout le groupe » au clic droit simule puis exécute chaque profil à la chaîne, avec un bilan.
-- Simulation, historique et corbeille : affichage par dossiers repliables avec le nombre d'éléments par action.
+

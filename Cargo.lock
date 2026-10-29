@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "app-update"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "flate2",
  "reqwest",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "connector-api"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "connector-ftp"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-ftp-transport",
@@ -668,7 +668,7 @@ dependencies = [
 
 [[package]]
 name = "connector-ftp-transport"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "connector-api",
@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "connector-ftps"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-ftp-transport",
@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "connector-local"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "cap-fs-ext",
  "cap-primitives",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "connector-memory"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "sync-core",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "connector-onedrive"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "connector-api",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "connector-registry"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-ftp",
@@ -739,7 +739,7 @@ dependencies = [
 
 [[package]]
 name = "connector-sftp"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-staging",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "connector-smb"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-local",
@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "connector-staging"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "sync-core",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "connector-webdav"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "connector-api",
@@ -3301,14 +3301,14 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-api"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "platform-linux"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "platform-api",
  "tempfile",
@@ -3316,7 +3316,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "platform-api",
  "tempfile",
@@ -4182,7 +4182,7 @@ dependencies = [
 
 [[package]]
 name = "sync-backup"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-memory",
  "sync-compare",
@@ -4195,7 +4195,7 @@ dependencies = [
 
 [[package]]
 name = "sync-bidirectional"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-memory",
@@ -4213,7 +4213,7 @@ dependencies = [
 
 [[package]]
 name = "sync-compare"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-memory",
@@ -4226,7 +4226,7 @@ dependencies = [
 
 [[package]]
 name = "sync-copy"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "blake3",
  "connector-api",
@@ -4238,7 +4238,7 @@ dependencies = [
 
 [[package]]
 name = "sync-core"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -4247,14 +4247,14 @@ dependencies = [
 
 [[package]]
 name = "sync-credentials"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "sync-core",
 ]
 
 [[package]]
 name = "sync-decisions"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-memory",
@@ -4269,7 +4269,7 @@ dependencies = [
 
 [[package]]
 name = "sync-errors"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -4279,7 +4279,7 @@ dependencies = [
 
 [[package]]
 name = "sync-events"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -4289,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "sync-executor"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-local",
@@ -4316,7 +4316,7 @@ dependencies = [
 
 [[package]]
 name = "sync-filter"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "globset",
  "serde",
@@ -4327,7 +4327,7 @@ dependencies = [
 
 [[package]]
 name = "sync-history"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "rusqlite",
  "serde",
@@ -4341,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "sync-journal"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -4354,7 +4354,7 @@ dependencies = [
 
 [[package]]
 name = "sync-mirror"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-memory",
@@ -4368,7 +4368,7 @@ dependencies = [
 
 [[package]]
 name = "sync-orchestrator"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-local",
@@ -4399,7 +4399,7 @@ dependencies = [
 
 [[package]]
 name = "sync-plan"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -4411,7 +4411,7 @@ dependencies = [
 
 [[package]]
 name = "sync-profiles"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "rusqlite",
  "serde",
@@ -4426,7 +4426,7 @@ dependencies = [
 
 [[package]]
 name = "sync-scanner"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "blake3",
  "connector-api",
@@ -4438,7 +4438,7 @@ dependencies = [
 
 [[package]]
 name = "sync-scheduler"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "platform-api",
  "rusqlite",
@@ -4452,7 +4452,7 @@ dependencies = [
 
 [[package]]
 name = "sync-session"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-local",
@@ -4478,7 +4478,7 @@ dependencies = [
 
 [[package]]
 name = "sync-verify"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "blake3",
  "connector-api",
@@ -4492,7 +4492,7 @@ dependencies = [
 
 [[package]]
 name = "sync-versioning"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "connector-api",
  "connector-memory",
@@ -4514,7 +4514,7 @@ dependencies = [
 
 [[package]]
 name = "syncengine-agent"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "ctrlc",
  "platform-api",
@@ -4530,14 +4530,14 @@ dependencies = [
 
 [[package]]
 name = "syncengine-architecture-tests"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "syncengine-cli"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "blake3",
  "connector-local",
@@ -4562,7 +4562,7 @@ dependencies = [
 
 [[package]]
 name = "syncengine-desktop"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "app-update",
  "blake3",
