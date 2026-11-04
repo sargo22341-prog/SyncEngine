@@ -1,3 +1,20 @@
+# Actualisation des dépendances — 4 novembre 2026
+
+Cause de l'échec de l'audit CI : `async-executor` 1.14.0 a été retirée de
+crates.io (« yanked »), ce qui bloque `cargo audit --deny warnings`. Un
+`cargo update` complet la remplace par 1.14.1 et met à jour 22 autres
+dépendances transitives (async-lock 3.5.0, cc 1.11.0, openssl 0.10.82 /
+openssl-sys 0.9.118, toml 1.2.0, zip 9.3.0, log 0.4.35, wasm-bindgen 0.2.130…).
+L'exigence de `zip` passe à 9.3.0. Dépendances directes, Rust 1.99.1,
+cargo-audit 0.22.2 et actions GitHub (checkout v7, setup-python v7,
+upload-artifact v7, download-artifact v8) étaient déjà aux dernières versions.
+Les six avis tolérés restent les mêmes (voir `docs/DEVELOPPEMENT.md`).
+
+Vérifié sous Windows x86_64 MSVC : `cargo fmt --check`, `cargo clippy` et
+`cargo test --workspace --all-features --locked` (659 tests) avec
+`RUSTFLAGS=-D warnings`, `cargo audit` et `cargo audit --deny warnings` avec
+les avis tolérés. Non exécutés localement : jobs Ubuntu et scripts réseau Python.
+
 # Actualisation des dépendances — 28 octobre 2026
 
 ## Périmètre et résultat
