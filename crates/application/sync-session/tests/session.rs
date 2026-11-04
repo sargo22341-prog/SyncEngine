@@ -490,3 +490,48 @@ fn local_sqlite_cycle_and_verified_versions_are_real_files() {
             .any(|o| o.target() == PlanSide::Source)
     );
 }
+
+#[test]
+fn a_resolved_conflict_is_executed_like_any_plan_and_the_reference_advances() {
+    let mut h = History::in_memory().unwrap();
+    let l = MemoryConnector::new("l")
+        .writable()
+        .file("f", b"old", ts(1));
+    let r = MemoryConnector::new("r")
+        .writable()
+        .file("f", b"old", ts(1));
+    let p = plan(&h, &l, &r);
+    run(&mut h, &l, &r, "initial", &p);
+    l.put_file("f", b"AAA", ts(1));
+    r.put_file("f", b"BBB", ts(99));
+    let conflict = plan(&h, &l, &r);
+    assert_eq!(conflict.summary().conflict, 1);
+    let op = conflict.get(&path("f")).unwrap();
+    let decision = sync_session::Resolutions::from([(
+        path("f"),
+        sync_session::ConflictResolution {
+            winner: PlanSide::Destination,
+            seen_source: op.source().cloned().unwrap(),
+            seen_destination: op.destination().cloned().unwrap(),
+        },
+    )]);
+    let resolved = sync_session::preview_resolved(
+        &h,
+        &l,
+        &r,
+        &context(),
+        &Filter::include_all(),
+        &policy(),
+        &CancellationToken::new(),
+        &|_, _, _| {},
+        &decision,
+    )
+    .unwrap();
+    assert_eq!(resolved.summary().replace, 1);
+    let report = run(&mut h, &l, &r, "resolved", &resolved);
+    assert!(report.baseline_updated);
+    // The right content won and both sides converged.
+    assert_eq!(l.content("f"), Some(b"BBB".to_vec()));
+    assert_eq!(r.content("f"), Some(b"BBB".to_vec()));
+    assert_eq!(plan(&h, &l, &r).summary().mutations(), 0);
+}

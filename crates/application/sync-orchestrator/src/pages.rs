@@ -2,6 +2,15 @@
 use crate::{AppError, Application, DeletionCeiling, error, io, lock};
 use sync_core::ProfileId;
 
+/// User choice for one conflicting file of the displayed preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictChoice {
+    /// Logical path of the conflict, as shown by the plan.
+    pub path: String,
+    /// `true` keeps the source (left) content, `false` the destination (right).
+    pub keep_source: bool,
+}
+
 impl Application {
     /// Lists bounded result summaries, without transferring saved plans/outcomes.
     /// # Errors
@@ -68,7 +77,74 @@ impl Application {
         ceiling: DeletionCeiling,
     ) -> Result<serde_json::Value, AppError> {
         let _gate = self.gate()?;
-        self.preview_locked(id, None, true, ceiling)
+        self.preview_locked(id, None, true, ceiling, &sync_session::Resolutions::new())
+    }
+
+    /// Simulates again a bidirectional profile, applying the user's choices on
+    /// the file conflicts of the **displayed** preview. The result is an
+    /// ordinary plan (the chosen files appear as replacements, reason
+    /// `ConflictResolved`) that still has to be confirmed before anything is
+    /// written. Each choice is bound to the contents shown in that preview:
+    /// if a file changed since, its conflict is kept and nothing is replaced.
+    ///
+    /// Refused unless the displayed preview belongs to `id`, every path is a
+    /// conflict between two files, and the profile trash is enabled (the
+    /// replaced version must stay recoverable).
+    /// # Errors
+    /// `stale`, `invalid_input` (unknown path, not a file conflict, not
+    /// bidirectional), `trash_required`, or the failures of `preview`.
+    pub fn preview_resolving(
+        &self,
+        id: ProfileId,
+        choices: Vec<ConflictChoice>,
+    ) -> Result<serde_json::Value, AppError> {
+        let _gate = self.gate()?;
+        let resolutions = {
+            let cache = lock(&self.cache)?;
+            let cached = cache
+                .as_ref()
+                .filter(|c| c.profile.id == id)
+                .ok_or_else(|| error("stale", "new preview required"))?;
+            if cached.profile.mode != sync_plan::SyncMode::Bidirectional {
+                return Err(error(
+                    "invalid_input",
+                    "les conflits ne se résolvent qu'en bidirectionnel",
+                ));
+            }
+            if !cached.profile.trash.enabled {
+                return Err(error(
+                    "trash_required",
+                    "activez la corbeille du profil : la version remplacée doit rester récupérable",
+                ));
+            }
+            let mut resolutions = sync_session::Resolutions::new();
+            for choice in choices {
+                let path = sync_core::ResourcePath::parse(&choice.path)
+                    .map_err(|_| error("invalid_input", "chemin invalide"))?;
+                let op = cached
+                    .plan
+                    .get(&path)
+                    .filter(|op| op.action() == sync_plan::Action::Conflict)
+                    .ok_or_else(|| error("invalid_input", "ce chemin n'est pas un conflit"))?;
+                let (Some(source), Some(destination)) = (op.source(), op.destination()) else {
+                    return Err(error("invalid_input", "conflit sans deux fichiers"));
+                };
+                resolutions.insert(
+                    path,
+                    sync_session::ConflictResolution {
+                        winner: if choice.keep_source {
+                            sync_plan::PlanSide::Source
+                        } else {
+                            sync_plan::PlanSide::Destination
+                        },
+                        seen_source: source.clone(),
+                        seen_destination: destination.clone(),
+                    },
+                );
+            }
+            resolutions
+        };
+        self.preview_locked(id, None, true, DeletionCeiling::Guarded, &resolutions)
     }
     /// Searches the exact cached plan, returning at most 100 operations.
     /// Stale plans and oversized search values are explicitly refused.

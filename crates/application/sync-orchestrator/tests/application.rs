@@ -1092,3 +1092,101 @@ fn plan_and_history_folder_views_aggregate_below_each_folder()
     assert_eq!(problems["total"], 0);
     Ok(())
 }
+
+#[test]
+fn a_chosen_conflict_becomes_a_confirmed_replacement_with_the_loser_in_the_trash()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_orchestrator::ConflictChoice;
+    let (temp, app, p) = fixture(SyncMode::Bidirectional)?;
+    fs::write(p.source.join("left"), b"left")?;
+    let first = app.preview(p.id.clone())?;
+    app.execute(
+        p.id.clone(),
+        first["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    fs::write(p.source.join("left"), b"aaa")?;
+    fs::write(p.destination.join("left"), b"bbb")?;
+    app.preview(p.id.clone())?;
+    // Unknown path: refused, nothing is simulated with a guess.
+    assert!(
+        app.preview_resolving(
+            p.id.clone(),
+            vec![ConflictChoice {
+                path: "missing".into(),
+                keep_source: true
+            }]
+        )
+        .is_err()
+    );
+    app.preview(p.id.clone())?;
+    let resolved = app.preview_resolving(
+        p.id.clone(),
+        vec![ConflictChoice {
+            path: "left".into(),
+            keep_source: true,
+        }],
+    )?;
+    assert_eq!(resolved["summary"]["conflict"], 0);
+    assert_eq!(resolved["summary"]["replace"], 1);
+    // Still nothing written before the confirmation.
+    assert_eq!(fs::read(p.destination.join("left"))?, b"bbb");
+    let report = app.execute(
+        p.id,
+        resolved["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    assert_eq!(report["baseline_updated"], true);
+    assert_eq!(fs::read(p.source.join("left"))?, b"aaa");
+    assert_eq!(fs::read(p.destination.join("left"))?, b"aaa");
+    // The replaced version stays recoverable.
+    let kept = walk(&temp.path().join("state").join("Corbeille"));
+    assert!(kept.iter().any(|f| fs::read(f).is_ok_and(|b| b == b"bbb")));
+    Ok(())
+}
+
+#[test]
+fn resolving_requires_the_profile_trash() -> Result<(), Box<dyn std::error::Error>> {
+    use sync_orchestrator::ConflictChoice;
+    let (_temp, app, mut p) = fixture(SyncMode::Bidirectional)?;
+    fs::write(p.source.join("f"), b"old")?;
+    let first = app.preview(p.id.clone())?;
+    app.execute(
+        p.id.clone(),
+        first["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    fs::write(p.source.join("f"), b"aaa")?;
+    fs::write(p.destination.join("f"), b"bbb")?;
+    let choice = || {
+        vec![ConflictChoice {
+            path: "f".into(),
+            keep_source: true,
+        }]
+    };
+    p.trash = sync_profiles::TrashPolicy::disabled();
+    app.profile_save(p.clone())?;
+    app.preview(p.id.clone())?;
+    let refused = app.preview_resolving(p.id.clone(), choice());
+    assert!(refused.is_err_and(|e| e.code == "trash_required"));
+    Ok(())
+}
+
+fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    found
+}

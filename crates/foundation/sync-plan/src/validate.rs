@@ -392,6 +392,16 @@ fn validate_operation(plan: &ExecutionPlan, index: usize, op: &Operation) -> Res
             .and_then(|b| b.entries().get(&op.path));
         match op.action {
             Action::Copy if previous.is_some() => return Err(PlanError::BaselineEvidence),
+            // A user-resolved conflict replaces a file that diverged from the
+            // reference: both sides must be present regular files (hash and
+            // size were checked above); the executor re-checks the losing side.
+            Action::Replace if matches!(op.reason, crate::Reason::ConflictResolved) => {
+                if !source.is_some_and(|e| e.kind() == EntryKind::File)
+                    || !destination.is_some_and(|e| e.kind() == EntryKind::File)
+                {
+                    return Err(PlanError::BaselineEvidence);
+                }
+            }
             Action::Replace | Action::Delete => {
                 let Some(Some(previous)) = previous else {
                     return Err(PlanError::BaselineEvidence);

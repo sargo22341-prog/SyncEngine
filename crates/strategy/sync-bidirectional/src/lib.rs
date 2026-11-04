@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sync_core::{EntryKind, FileEntry, HashAlgorithm};
+use sync_core::{EntryKind, FileEntry, HashAlgorithm, ResourcePath};
 use sync_decisions::PlanContext;
 use sync_errors::{ClassifiedError, ErrorClass};
 use sync_plan::{
@@ -68,6 +68,27 @@ pub fn binding(
     })
 }
 
+/// Winner of a still-valid decision on a plain two-file conflict.
+fn resolved_winner(
+    resolutions: &Resolutions,
+    path: &ResourcePath,
+    action: Action,
+    reason: &Reason,
+    source: &Option<EntrySnapshot>,
+    destination: &Option<EntrySnapshot>,
+) -> Option<PlanSide> {
+    if action != Action::Conflict || *reason != Reason::ConcurrentChange {
+        return None;
+    }
+    let decision = resolutions.get(path)?;
+    let (a, b) = (source.as_ref()?, destination.as_ref()?);
+    (a.kind() == EntryKind::File
+        && b.kind() == EntryKind::File
+        && same_content(a, &decision.seen_source)
+        && same_content(b, &decision.seen_destination))
+    .then_some(decision.winner)
+}
+
 fn snapshot(entry: Option<&FileEntry>) -> Option<EntrySnapshot> {
     entry.map(EntrySnapshot::from)
 }
@@ -85,6 +106,25 @@ fn reliable(entry: &FileEntry) -> bool {
                 .hash()
                 .is_some_and(|h| h.algorithm() == HashAlgorithm::Blake3))
 }
+
+/// Explicit user decision for one conflicting file.
+///
+/// It only applies if both sides still hold exactly the content the user
+/// saw (`seen_*`, compared by size and BLAKE3 hash); otherwise the conflict
+/// stays a conflict and nothing is written. The decision is visible in the
+/// plan as a `Replace` with [`Reason::ConflictResolved`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConflictResolution {
+    /// Side whose content is kept: `Source` is the left folder.
+    pub winner: PlanSide,
+    /// Left content when the user decided.
+    pub seen_source: EntrySnapshot,
+    /// Right content when the user decided.
+    pub seen_destination: EntrySnapshot,
+}
+
+/// Decisions by logical path.
+pub type Resolutions = BTreeMap<ResourcePath, ConflictResolution>;
 
 /// Stateless strategy; a baseline is supplied explicitly for every preview.
 #[derive(Debug, Default, Clone, Copy)]
@@ -105,6 +145,24 @@ impl BidirectionalStrategy {
         context: &PlanContext,
         baseline: Option<&Baseline>,
         policy: &PlanPolicy,
+    ) -> Result<ExecutionPlan, BidirectionalError> {
+        self.build_plan_resolved(left, right, context, baseline, policy, &Resolutions::new())
+    }
+
+    /// Same as [`Self::build_plan`], applying the user's decisions to
+    /// conflicts between two regular files. A decision that no longer matches
+    /// the observed contents is ignored (the conflict is kept).
+    ///
+    /// # Errors
+    /// Same as [`Self::build_plan`].
+    pub fn build_plan_resolved(
+        &self,
+        left: &Inventory,
+        right: &Inventory,
+        context: &PlanContext,
+        baseline: Option<&Baseline>,
+        policy: &PlanPolicy,
+        resolutions: &Resolutions,
     ) -> Result<ExecutionPlan, BidirectionalError> {
         let identity = binding(left, right, context)?;
         if baseline.is_some_and(|b| b.binding() != &identity) {
@@ -203,6 +261,16 @@ impl BidirectionalStrategy {
                         }
                         _ => (Action::Conflict, Reason::ConcurrentChange),
                     }
+                };
+            let (action, reason) =
+                match resolved_winner(resolutions, &path, action, &reason, &source, &destination) {
+                    Some(PlanSide::Destination) => {
+                        target = PlanSide::Source;
+                        std::mem::swap(&mut source, &mut destination);
+                        (Action::Replace, Reason::ConflictResolved)
+                    }
+                    Some(PlanSide::Source) => (Action::Replace, Reason::ConflictResolved),
+                    None => (action, reason),
                 };
             specs.insert(
                 path.clone(),

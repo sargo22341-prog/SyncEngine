@@ -80,6 +80,22 @@ n'attend que si plus de deux pas restent à vider, la lecture chevauche donc
 l'écriture ; le `sync_all` final reste la garantie de durabilité. Voir
 [le débit de copie](DEBIT_COPIE.md).
 
+## Résolution des conflits bidirectionnels
+
+`BidirectionalStrategy::build_plan_resolved` reçoit des décisions
+utilisateur (`ConflictResolution` : côté gagnant et contenus vus des deux
+côtés). Une décision ne s'applique qu'à un conflit entre deux fichiers dont les
+deux contenus (taille et BLAKE3) sont encore ceux qui ont été vus ; elle produit
+un `Replace` de motif `Reason::ConflictResolved`, visible dans le plan comme
+tout autre. La validation du plan n'exige pas, pour ce motif, que le côté
+remplacé égale la référence (c'est le sens d'un conflit) ; elle exige deux
+fichiers réguliers hachés, et la précondition de l'exécuteur porte sur le
+contenu observé du côté remplacé. `Application::preview_resolving` n'accepte
+que des conflits de l'aperçu affiché et exige la corbeille du profil. Le format
+du plan (schéma 2) gagne seulement une valeur de `Reason` : un plan qui la
+contient n'est pas lisible par une version antérieure (refus, jamais
+d'interprétation partielle).
+
 ## Vues par dossiers
 
 `Application::plan_tree`, `history_tree` et `trash_tree` regroupent une liste

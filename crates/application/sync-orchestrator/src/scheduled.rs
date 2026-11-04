@@ -132,6 +132,7 @@ impl Application {
                 Some(cancel),
                 true,
                 crate::DeletionCeiling::Guarded,
+                &sync_session::Resolutions::new(),
             )?;
             let id = view["plan"]["id"]
                 .as_str()

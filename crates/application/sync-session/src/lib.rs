@@ -4,6 +4,7 @@
 
 use connector_api::StorageConnector;
 use sync_bidirectional::{BidirectionalError, BidirectionalStrategy, binding, converged_baseline};
+pub use sync_bidirectional::{ConflictResolution, Resolutions};
 use sync_core::{CancellationToken, ExecutionId, ExecutionStatus, HashAlgorithm};
 use sync_decisions::PlanContext;
 use sync_events::EventEmitter;
@@ -106,10 +107,51 @@ pub fn preview_observed(
     cancel: &CancellationToken,
     observe: &(dyn Fn(bool, &sync_scanner::ScanStats, usize) + Sync),
 ) -> Result<ExecutionPlan, SessionError> {
+    preview_resolved(
+        history,
+        source,
+        destination,
+        context,
+        filter,
+        policy,
+        cancel,
+        observe,
+        &Resolutions::new(),
+    )
+}
+
+/// Same preview, applying the user's decisions on file conflicts. A decision
+/// made on contents that changed since is ignored: the conflict stays and
+/// nothing is written. The result is the ordinary plan the executor consumes.
+///
+/// # Errors
+/// Same as [`preview_observed`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "compatible extension of the observed preview API; resolutions are explicit user input"
+)]
+pub fn preview_resolved(
+    history: &History,
+    source: &dyn StorageConnector,
+    destination: &dyn StorageConnector,
+    context: &PlanContext,
+    filter: &Filter,
+    policy: &PlanPolicy,
+    cancel: &CancellationToken,
+    observe: &(dyn Fn(bool, &sync_scanner::ScanStats, usize) + Sync),
+    resolutions: &Resolutions,
+) -> Result<ExecutionPlan, SessionError> {
     let (left, right) = scan_both(source, destination, filter, cancel, observe)?;
     let identity = binding(&left, &right, context)?;
     let baseline = history.baseline(&identity)?;
-    Ok(BidirectionalStrategy.build_plan(&left, &right, context, baseline.as_ref(), policy)?)
+    Ok(BidirectionalStrategy.build_plan_resolved(
+        &left,
+        &right,
+        context,
+        baseline.as_ref(),
+        policy,
+        resolutions,
+    )?)
 }
 
 /// Hashed inventories of both endpoints, scanned concurrently. Each scan

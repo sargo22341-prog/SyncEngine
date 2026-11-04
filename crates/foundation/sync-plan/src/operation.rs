@@ -210,6 +210,11 @@ pub enum Reason {
     /// Contenu différent sans date exploitable, remplacé parce que la
     /// politique fait gagner la source.
     ContentDiffers,
+    /// Conflit bidirectionnel tranché explicitement par l'utilisateur : le
+    /// côté perdant (`destination` de l'opération) est remplacé par le côté
+    /// gagnant. Ce n'est pas une preuve de référence : la précondition de
+    /// l'exécuteur porte sur le contenu observé du côté perdant.
+    ConflictResolved,
     /// Contenu différent sans date exploitable (dates égales ou inconnues) :
     /// impossible de savoir quel côté a changé ⇒ conflit.
     AmbiguousChange,
@@ -263,7 +268,9 @@ impl Reason {
         match self {
             Self::ConcurrentChange => action == Action::Conflict,
             Self::MissingAtDestination => action == Action::Copy,
-            Self::SourceNewer | Self::ContentDiffers => action == Action::Replace,
+            Self::SourceNewer | Self::ContentDiffers | Self::ConflictResolved => {
+                action == Action::Replace
+            }
             Self::DestinationNewer => matches!(action, Action::Replace | Action::Conflict),
             Self::AmbiguousChange | Self::KindMismatch { .. } => action == Action::Conflict,
             Self::Equivalent { .. }
@@ -287,6 +294,7 @@ impl Reason {
             Self::SourceNewer
             | Self::DestinationNewer
             | Self::ContentDiffers
+            | Self::ConflictResolved
             | Self::AmbiguousChange
             | Self::KindMismatch { .. }
             | Self::Equivalent { .. }

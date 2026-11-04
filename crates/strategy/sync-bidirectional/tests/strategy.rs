@@ -6,13 +6,15 @@
 
 use connector_api::{CaseSensitivity, StorageErrorKind, StorageOperation};
 use connector_memory::{MemoryConnector, path, ts};
-use sync_bidirectional::{BidirectionalStrategy, converged_baseline};
+use sync_bidirectional::{
+    BidirectionalStrategy, ConflictResolution, Resolutions, converged_baseline,
+};
 use sync_core::{CancellationToken, HashAlgorithm, PlanId, ProfileId};
 use sync_decisions::PlanContext;
 use sync_filter::{Filter, FilterRules};
 use sync_plan::{
-    Action, Baseline, DeletionGuard, DeletionPolicy, ExecutionPlan, OverwritePolicy, PlanPolicy,
-    PlanSide,
+    Action, Baseline, DeletionGuard, DeletionPolicy, EntrySnapshot, ExecutionPlan, OverwritePolicy,
+    PlanPolicy, PlanSide, Reason,
 };
 use sync_scanner::{Inventory, ScanOptions, scan};
 
@@ -291,4 +293,65 @@ fn baseline_evidence_and_direction_tampering_are_rejected() {
     let mut json = serde_json::to_value(&p).unwrap();
     json["operations"][0]["target"] = "source".into();
     assert!(ExecutionPlan::from_json(&json.to_string()).is_err());
+}
+
+/// Decision of the user on the conflict of `f`, for the contents currently held.
+fn decision(l: &MemoryConnector, r: &MemoryConnector, winner: PlanSide) -> Resolutions {
+    let seen = |c: &MemoryConnector| EntrySnapshot::from(inventory(c).get(&path("f")).unwrap());
+    Resolutions::from([(
+        path("f"),
+        ConflictResolution {
+            winner,
+            seen_source: seen(l),
+            seen_destination: seen(r),
+        },
+    )])
+}
+fn resolved(l: &MemoryConnector, r: &MemoryConnector, d: &Resolutions) -> ExecutionPlan {
+    BidirectionalStrategy
+        .build_plan_resolved(&inventory(l), &inventory(r), &context(), None, &policy(), d)
+        .unwrap()
+}
+
+#[test]
+fn a_user_decision_turns_a_conflict_into_a_visible_replacement_in_the_chosen_direction() {
+    let l = MemoryConnector::new("l").file("f", b"LEFT", ts(10));
+    let r = MemoryConnector::new("r").file("f", b"RIGHT", ts(1));
+    assert_eq!(plan(&l, &r, None).summary().conflict, 1);
+    for (winner, target) in [
+        (PlanSide::Source, PlanSide::Destination),
+        (PlanSide::Destination, PlanSide::Source),
+    ] {
+        let p = resolved(&l, &r, &decision(&l, &r, winner));
+        let op = p.get(&path("f")).unwrap();
+        assert_eq!(p.summary().conflict, 0);
+        assert_eq!(p.summary().replace, 1);
+        assert_eq!(op.action(), Action::Replace);
+        assert_eq!(*op.reason(), Reason::ConflictResolved);
+        assert_eq!(op.target(), target);
+        // The plan stays valid after a JSON round trip (preview = execution).
+        assert_eq!(ExecutionPlan::from_json(&p.to_json().unwrap()).unwrap(), p);
+    }
+}
+
+#[test]
+fn a_decision_made_on_other_contents_is_ignored_and_the_conflict_is_kept() {
+    let l = MemoryConnector::new("l").file("f", b"LEFT", ts(10));
+    let r = MemoryConnector::new("r").file("f", b"RIGHT", ts(1));
+    let d = decision(&l, &r, PlanSide::Source);
+    // The right file changed after the user looked at it.
+    r.put_file("f", b"NEWER-RIGHT", ts(20));
+    let p = resolved(&l, &r, &d);
+    assert_eq!(p.summary().conflict, 1);
+    assert_eq!(p.summary().mutations(), 0);
+}
+
+#[test]
+fn a_decision_never_applies_to_a_path_that_is_not_a_conflict() {
+    let l = MemoryConnector::new("l").file("f", b"SAME", ts(1));
+    let r = MemoryConnector::new("r").file("f", b"SAME", ts(1));
+    let d = decision(&l, &r, PlanSide::Source);
+    let p = resolved(&l, &r, &d);
+    assert_eq!(p.summary().mutations(), 0);
+    assert_eq!(p.get(&path("f")).unwrap().action(), Action::Keep);
 }

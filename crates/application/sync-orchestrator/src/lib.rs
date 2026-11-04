@@ -20,6 +20,7 @@ pub use interrupted::{
 pub use sync_journal::OutcomeCode as JournalOutcome;
 mod pages;
 pub use history::HistoryFilter;
+pub use pages::ConflictChoice;
 mod runs;
 mod scheduled;
 pub use scheduled::{hold_execution_lock, user_lock_root};
@@ -616,7 +617,13 @@ impl Application {
     /// Busy, unavailable root, scan/planning/persistence failure or cancellation.
     pub fn preview(&self, id: ProfileId) -> Result<serde_json::Value, AppError> {
         let _gate = self.gate()?;
-        self.preview_locked(id, None, false, DeletionCeiling::Guarded)
+        self.preview_locked(
+            id,
+            None,
+            false,
+            DeletionCeiling::Guarded,
+            &sync_session::Resolutions::new(),
+        )
     }
     fn preview_locked(
         &self,
@@ -624,6 +631,7 @@ impl Application {
         token: Option<&CancellationToken>,
         paged: bool,
         ceiling: DeletionCeiling,
+        resolutions: &sync_session::Resolutions,
     ) -> Result<serde_json::Value, AppError> {
         *lock(&self.cache)? = None;
         let cancel = self.begin(&id, JobPhase::Scanning, token)?;
@@ -668,7 +676,7 @@ impl Application {
                 progress.publish(&mut snapshot);
             };
             let plan = if profile.mode == SyncMode::Bidirectional {
-                sync_session::preview_observed(
+                sync_session::preview_resolved(
                     &History::open(self.state.join("state.sqlite")).map_err(io)?,
                     left.as_ref(),
                     right.as_ref(),
@@ -677,6 +685,7 @@ impl Application {
                     &policy,
                     &cancel,
                     &observe,
+                    resolutions,
                 )
                 .map_err(io)?
             } else {
