@@ -5,6 +5,40 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Design « Flux » (première étape)
+- Palettes : sombre `#0b0c0e` / cartes `#131417`, clair `#f4f4f0` / cartes
+  blanches. Couleurs de mode : sauvegarde lime, miroir mandarine,
+  bidirectionnel violet ; chaque couleur a une teinte pour le texte
+  (`backup_ink`, `mirror_ink`) conforme 4.5:1. Cartes plates (filet, sans ombre),
+  rayon 20 px, bouton principal à encre pleine, plus de lueur colorée ni de halo.
+- Navigation : le rail d'icônes et la barre latérale des profils sont remplacés
+  par une colonne à libellés (Profils, Activité, Historique, Planification,
+  Réglages, état de l'agent, tâche en cours, thème). La liste des profils, la
+  recherche (Ctrl+F) et le glisser-déposer entre groupes sont dans l'accueil.
+- Accueil : cartes « En direct », « À surveiller », « Planifiés » ; lignes de
+  profil à tuile de mode et bouton « Simuler ».
+- Plan de simulation (vue par dossiers) : bouton « Exclure » par dossier. Il
+  ajoute le chemin aux dossiers exclus du profil puis relance la simulation.
+  Enregistrer le profil invalide ses autorisations de planification (« à
+  renouveler »). Les noms contenant `* ? [ ] { }` sont refusés (ajout à la main).
+- Fenêtre ouverte par l'agent (`--suivre-agent`) : mini-suivi 440×640 avec
+  « Agrandir » / « Réduire » ; l'interface complète s'ouvre, à la taille
+  normale, à la fin de l'opération (inchangé : elle ne peut pas s'ouvrir avant,
+  le verrou appartient à l'agent).
+- Corbeille : nouvelle page de navigation (Ctrl+5 ; Réglages passe à Ctrl+6)
+  listant la politique de chaque profil ; le contenu s'ouvre dans le dialogue
+  existant.
+- Plan : carte « suppressions à revoir » (inventaire complet, corbeille,
+  plafond) avec accès direct à la liste des suppressions.
+- Bidirectionnel : résolution des conflits entre deux fichiers (garder la
+  source ou la destination). Nouveau motif de plan `ConflictResolved`
+  (schéma 2, valeur de `Reason` ajoutée), `build_plan_resolved`,
+  `sync_session::preview_resolved`, `Application::preview_resolving`.
+  Exige la corbeille du profil ; un choix périmé (contenu modifié) est ignoré.
+- Non fait : assistant en
+  cinq étapes, courbes envoi/réception séparées, calendrier de planification,
+  réglages de performances, polices embarquées.
+
 ### Apparence
 - Refonte visuelle : deux thèmes seulement. Sombre = fond `#000000` et cartes
   `#1c1c1e` ; clair = fond quasi blanc `#fbfcfe` et cartes blanches. Rayons

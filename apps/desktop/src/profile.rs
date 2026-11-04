@@ -6,7 +6,7 @@ use crate::charts::{self, Flow, Ring};
 use crate::draft::{self, Provider};
 use crate::icons::{self, Glyph};
 use crate::model::{self, OpView};
-use crate::shell::{mode_color, mode_glyph, outcome_color};
+use crate::shell::{mode_color, mode_fill, mode_glyph, outcome_color};
 use crate::speed;
 use crate::theme::{self, Palette, Tone};
 use crate::tree::ListMode;
@@ -19,8 +19,8 @@ use sync_profiles::Profile;
 
 pub(crate) fn action_color(p: &Palette, action: Action) -> Color {
     match action {
-        Action::Copy => p.success,
-        Action::Replace => p.accent,
+        Action::Copy => p.backup,
+        Action::Replace => p.violet,
         Action::Delete => p.danger,
         Action::Conflict => p.warning,
         Action::Keep => p.faint,
@@ -204,22 +204,36 @@ impl App {
                 (!busy).then(|| Message::Simulate(id.clone())),
             ),
         };
-        // Mode as a small colored label above a large title (no big icon).
+        // Vivid mode tile, then the name with its mode chip.
+        let tile = container(icons::icon(
+            mode_glyph(profile.mode),
+            26.0,
+            if profile.mode == SyncMode::Bidirectional {
+                p.bg
+            } else {
+                Color::from_rgb(0.043, 0.047, 0.055)
+            },
+        ))
+        .width(Length::Fixed(56.0))
+        .height(Length::Fixed(56.0))
+        .center(Length::Fixed(56.0))
+        .style(theme::swatch(mode_fill(p, profile.mode)));
         let heading = row![
+            tile,
             column![
                 row![
-                    icons::icon(mode_glyph(profile.mode), 15.0, color),
-                    ui::strong(color, model::mode_label(profile.mode), 14.0),
+                    ui::title(p, profile.name.clone(), 32.0),
+                    container(ui::strong(color, model::mode_label(profile.mode), 12.0))
+                        .padding(Padding::from([3, 10]))
+                        .style(theme::pill(theme::alpha(color, 0.14), color)),
                 ]
-                .spacing(6)
+                .spacing(12)
                 .align_y(Alignment::Center),
-                ui::title(p, profile.name.clone(), 34.0),
             ]
-            .spacing(4)
             .width(Length::Fill),
             main_action,
         ]
-        .spacing(18)
+        .spacing(16)
         .align_y(Alignment::Center);
         let hero = column![heading, pills.wrap()].spacing(12);
 
@@ -907,6 +921,87 @@ impl App {
                 );
             }
         }
+        if s.delete > 0 {
+            let complete = preview.view.source_complete && preview.view.destination_complete;
+            let guard = |ok: bool, label: String| -> El<'a, Message> {
+                row![
+                    icons::icon(
+                        if ok { Glyph::Check } else { Glyph::Alert },
+                        14.0,
+                        if ok { p.success } else { p.warning }
+                    ),
+                    ui::colored(p.muted, label, 13.0)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into()
+            };
+            let trash_ok = s.trash.enabled && !s.trash.overflow;
+            col = col.push(
+                container(
+                    column![
+                        row![
+                            icons::icon(Glyph::Trash, 18.0, p.danger),
+                            column![
+                                ui::strong(
+                                    p.danger,
+                                    format!(
+                                        "{} suppression(s) à revoir avant d’exécuter",
+                                        model::count(s.delete)
+                                    ),
+                                    15.0
+                                ),
+                                ui::caption(
+                                    p,
+                                    "Elles ne seront appliquées qu’après votre confirmation séparée."
+                                ),
+                            ]
+                            .spacing(2)
+                            .width(Length::Fill),
+                            ui::action(
+                                p,
+                                Tone::Secondary,
+                                Some(Glyph::Eye),
+                                "Voir les suppressions",
+                                Some(Message::PlanFilter(Some(Action::Delete))),
+                            ),
+                        ]
+                        .spacing(12)
+                        .align_y(Alignment::Center),
+                        guard(
+                            complete,
+                            if complete {
+                                "Inventaire complet des deux côtés".to_owned()
+                            } else {
+                                "Inventaire incomplet : aucune suppression n’est déduite des chemins illisibles".to_owned()
+                            }
+                        ),
+                        guard(
+                            trash_ok,
+                            if trash_ok {
+                                "Les fichiers supprimés iront dans la corbeille du profil".to_owned()
+                            } else if s.trash.enabled {
+                                "Corbeille trop petite : suppression définitive".to_owned()
+                            } else {
+                                "Corbeille désactivée : suppression définitive".to_owned()
+                            }
+                        ),
+                        guard(
+                            !s.ceiling_lifted,
+                            if s.ceiling_lifted {
+                                "Plafond de suppressions levé pour cette simulation".to_owned()
+                            } else {
+                                "Sous le plafond de sécurité (50 % de la destination, 10 minimum)".to_owned()
+                            }
+                        ),
+                    ]
+                    .spacing(8),
+                )
+                .padding(Padding::from([14, 16]))
+                .width(Length::Fill)
+                .style(theme::outline(*p, p.danger, 0.8)),
+            );
+        }
         if s.conflict > 0 {
             col = col.push(ui::callout(
                 p,
@@ -915,6 +1010,9 @@ impl App {
                 &format!("{} conflit(s) préservé(s)", model::count(s.conflict)),
                 "Rien n’est écrit sur un conflit non résolu : les deux versions restent en place.",
             ));
+            if profile.mode == SyncMode::Bidirectional {
+                col = col.push(self.conflict_bar(p, profile));
+            }
         }
 
         let filter_chip = |label: &'static str, a: Option<Action>| -> El<'a, Message> {
@@ -990,7 +1088,9 @@ impl App {
         .vertical_spacing(8);
         let toolbar = column![actions, filters].spacing(10);
         let compact = self.ws.preferences.compact;
-        if self.list_mode == ListMode::Tree {
+        let arbitrating =
+            preview.filter == Some(Action::Conflict) && profile.mode == SyncMode::Bidirectional;
+        if self.list_mode == ListMode::Tree && !arbitrating {
             let pal = *p;
             let tree = crate::tree::view(
                 p,
@@ -998,6 +1098,15 @@ impl App {
                 Message::PlanTree,
                 &|op, indent| op_row(&pal, op, compact, Some(indent)),
                 &|folder| crate::tree::action_summary(&pal, folder),
+                &|folder| {
+                    Some(ui::action(
+                        &pal,
+                        Tone::Ghost,
+                        Some(Glyph::Close),
+                        "Exclure",
+                        (!self.busy()).then(|| Message::ExcludeFolder(folder.path.clone())),
+                    ))
+                },
                 "Aucune opération pour ce filtre.",
             );
             col = col.push(toolbar).push(
@@ -1020,7 +1129,11 @@ impl App {
         ]
         .spacing(2);
         for op in &preview.ops {
-            list = list.push(op_row(p, op, compact, None));
+            list = list.push(if arbitrating {
+                self.conflict_row(p, op)
+            } else {
+                op_row(p, op, compact, None)
+            });
         }
         if preview.ops.is_empty() && !preview.loading {
             list = list.push(
@@ -1061,6 +1174,102 @@ impl App {
                 .style(theme::card(*p, 0.0, false)),
         );
         container(col).width(Length::Fill).into()
+    }
+
+    /// Entry point and « apply » bar of the conflict arbitration.
+    fn conflict_bar<'a>(&'a self, p: &Palette, profile: &'a Profile) -> El<'a, Message> {
+        let chosen = self.conflict_choices.len();
+        let trash_ok = profile.trash.enabled;
+        let mut line = row![
+            ui::muted(
+                p,
+                if trash_ok {
+                    "Choisissez le contenu à garder pour chaque fichier : la version remplacée ira dans la corbeille du profil."
+                } else {
+                    "Activez la corbeille du profil (Modifier › Sécurité) pour résoudre : la version remplacée doit rester récupérable."
+                }
+            ),
+            ui::fill(),
+            ui::action(
+                p,
+                Tone::Secondary,
+                Some(Glyph::Eye),
+                "Voir les conflits",
+                Some(Message::PlanFilter(Some(Action::Conflict))),
+            ),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        if chosen > 0 {
+            line = line.push(ui::action(
+                p,
+                Tone::Primary,
+                Some(Glyph::Check),
+                format!("Appliquer {chosen} choix (nouvelle simulation)"),
+                (trash_ok && !self.busy()).then_some(Message::ResolveConflicts),
+            ));
+        }
+        container(line)
+            .padding(Padding::from([4, 4]))
+            .width(Length::Fill)
+            .into()
+    }
+
+    /// One conflicting file: both contents side by side and the two choices.
+    fn conflict_row<'a>(&'a self, p: &Palette, op: &'a OpView) -> El<'a, Message> {
+        let choice = self.conflict_choices.get(&op.path).copied();
+        let side =
+            |label: &'static str, obs: &Option<crate::model::Observation>| -> El<'a, Message> {
+                let detail = match obs {
+                    Some(o) => format!(
+                        "{} · {}",
+                        o.size.map_or("—".into(), model::bytes),
+                        o.modified.map_or("date inconnue".into(), model::utc_label)
+                    ),
+                    None => "absent".into(),
+                };
+                column![ui::eyebrow(p.muted, label), ui::caption(p, detail)]
+                    .spacing(2)
+                    .width(Length::Fill)
+                    .into()
+            };
+        let pick = |label: &'static str, keep_source: bool| -> El<'a, Message> {
+            let on = choice == Some(keep_source);
+            button(ui::colored(if on { p.text } else { p.muted }, label, 12.0))
+                .padding(Padding::from([5, 12]))
+                .style(theme::chip(*p, p.violet, on))
+                .on_press(Message::ConflictChoose(op.path.clone(), keep_source))
+                .into()
+        };
+        container(
+            column![
+                row![
+                    ui::mono(p.text, model::ellipsize(&op.path, 90), 13.0),
+                    ui::fill(),
+                    match choice {
+                        Some(true) => ui::pill(p.violet, "Garder la source"),
+                        Some(false) => ui::pill(p.violet, "Garder la destination"),
+                        None => ui::pill(p.warning, "À décider"),
+                    },
+                ]
+                .align_y(Alignment::Center),
+                row![
+                    side("Source", &op.sender),
+                    side("Destination", &op.receiver)
+                ]
+                .spacing(16),
+                row![
+                    pick("Garder la source", true),
+                    pick("Garder la destination", false)
+                ]
+                .spacing(8),
+            ]
+            .spacing(8),
+        )
+        .padding(Padding::from([10, 12]))
+        .width(Length::Fill)
+        .style(theme::card(*p, 0.0, choice.is_some()))
+        .into()
     }
 
     fn profile_footer<'a>(&'a self, p: &Palette, profile: &'a Profile) -> El<'a, Message> {

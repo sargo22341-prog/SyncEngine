@@ -338,10 +338,36 @@ impl App {
             return Task::none();
         }
         self.preview = None;
+        self.conflict_choices.clear();
         self.selected = Some(id.clone());
         self.go(Nav::Profiles);
         self.start_job(JobKind::Preview, id.clone(), None);
         Task::perform(backend::preview(&app, id.clone(), ceiling), move |r| {
+            Message::Previewed(id.clone(), r)
+        })
+    }
+
+    /// Simulates again with the chosen conflicts resolved. The result is the
+    /// ordinary plan: the chosen files appear as replacements and still need
+    /// the usual confirmation before anything is written.
+    pub(crate) fn resolve_conflicts(&mut self) -> Task<Message> {
+        let Some(app) = self.backend.clone() else {
+            return Task::none();
+        };
+        if self.busy() || self.conflict_choices.is_empty() {
+            return Task::none();
+        }
+        let Some(id) = self.selected.clone() else {
+            return Task::none();
+        };
+        let choices: Vec<_> = self
+            .conflict_choices
+            .drain()
+            .map(|(path, keep_source)| sync_orchestrator::ConflictChoice { path, keep_source })
+            .collect();
+        self.preview = None;
+        self.start_job(JobKind::Preview, id.clone(), None);
+        Task::perform(backend::resolve(&app, id.clone(), choices), move |r| {
             Message::Previewed(id.clone(), r)
         })
     }
@@ -671,6 +697,49 @@ impl App {
                 self.history_generation,
             ),
             Message::HistoryPage,
+        )
+    }
+
+    /// Excludes `path` (relative, `/`-separated) of the displayed plan from the
+    /// selected profile. Saving a profile invalidates its schedule approvals,
+    /// which the interface then shows as « à renouveler »: nothing is run here.
+    pub(crate) fn exclude_folder(&mut self, path: String) -> Task<Message> {
+        let Some(app) = self.backend.clone() else {
+            return Task::none();
+        };
+        if self.busy() {
+            return Task::none();
+        }
+        let Some(profile) = self.selected.as_ref().and_then(|id| self.profile(id)) else {
+            return Task::none();
+        };
+        // A path holding glob metacharacters would exclude more than the
+        // folder: refuse instead of guessing an escape.
+        if path.is_empty() || path.contains(['*', '?', '[', ']', '{', '}']) {
+            self.toast(
+                ToastKind::Warning,
+                "Dossier non exclu",
+                "Son nom contient un caractère de motif (* ? [ ] { }) : ajoutez le filtre à la main dans la modification du profil.",
+            );
+            return Task::none();
+        }
+        let mut profile = profile.clone();
+        if !profile
+            .filter
+            .exclude_directories()
+            .iter()
+            .any(|existing| existing == &path)
+        {
+            profile.filter = profile.filter.clone().exclude_directory(path.clone());
+        }
+        self.toast(
+            ToastKind::Info,
+            "Dossier exclu du profil",
+            format!("« {path} » est ignoré par ce profil. Nouvelle simulation en cours."),
+        );
+        Task::perform(
+            backend::save(&app, profile, backend::ScheduleChange::Keep),
+            |r| Message::Saved(r, true),
         )
     }
 

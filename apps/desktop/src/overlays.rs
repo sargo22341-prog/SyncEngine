@@ -701,7 +701,7 @@ fn shortcuts<'a>(p: &Palette) -> El<'a, Message> {
         ("Suppr", "Retirer le profil sélectionné"),
         ("↑ / ↓", "Changer de profil"),
         ("Ctrl+F", "Rechercher un profil"),
-        ("Ctrl+1…5", "Changer de section"),
+        ("Ctrl+1…6", "Changer de section"),
         ("Ctrl+T", "Basculer le thème"),
         ("Ctrl+R", "Actualiser"),
         ("Ctrl+Q", "Quitter SyncEngine"),

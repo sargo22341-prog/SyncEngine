@@ -31,15 +31,17 @@ pub(crate) enum Nav {
     Activity,
     History,
     Schedules,
+    Trash,
     Settings,
 }
 
 impl Nav {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Profiles,
         Self::Activity,
         Self::History,
         Self::Schedules,
+        Self::Trash,
         Self::Settings,
     ];
     pub(crate) fn index(self) -> usize {
@@ -267,6 +269,16 @@ pub(crate) enum Message {
     LiftDeletionCeiling(ProfileId),
     Previewed(ProfileId, Result<PreviewView, Failure>),
     PlanFilter(Option<Action>),
+    /// Adds a folder of the plan to the profile's excluded directories, then
+    /// simulates again (the filters stay identical in preview and execution).
+    ExcludeFolder(String),
+    /// Enlarges or shrinks the agent tracker card.
+    MiniToggle,
+    /// Keeps the source (`true`) or the destination (`false`) content of a
+    /// conflicting file; choosing the same side again clears the choice.
+    ConflictChoose(String, bool),
+    /// Simulates again with the chosen conflicts resolved (nothing is written).
+    ResolveConflicts,
     PlanQuery(String),
     PlanMore,
     PlanPage(u64, Result<PlanPage, Failure>),
@@ -377,6 +389,12 @@ pub(crate) struct App {
     pub(crate) backend: Option<Shared>,
     pub(crate) boot_error: Option<Failure>,
     pub(crate) boot_wait: Option<backend::StartupObservation>,
+    /// The tracker card is shown enlarged.
+    pub(crate) mini_large: bool,
+    /// Choices made on the conflicts of the displayed preview (path → keep source).
+    pub(crate) conflict_choices: std::collections::HashMap<String, bool>,
+    /// The window started as the compact tracker.
+    pub(crate) started_mini: bool,
     pub(crate) boot_polling: bool,
     pub(crate) boot_cancel_requested: bool,
     pub(crate) boot_control_error: Option<Failure>,
@@ -446,6 +464,11 @@ pub(crate) struct App {
     pub(crate) updates: crate::app_update::Updates,
 }
 
+/// Compact tracker size (window opened by the agent) and normal window size.
+pub(crate) const MINI_SIZE: iced::Size = iced::Size::new(440.0, 640.0);
+pub(crate) const FULL_SIZE: iced::Size = iced::Size::new(1280.0, 820.0);
+/// Enlarged tracker, still the agent card (the interface opens at the end).
+pub(crate) const MINI_LARGE_SIZE: iced::Size = iced::Size::new(1000.0, 760.0);
 pub(crate) const SEARCH_ID: &str = "profile-search";
 /// Command-line flag passed by `syncengine-agent` when it opens the window.
 pub(crate) const FOLLOW_AGENT_ARG: &str = "--suivre-agent";
@@ -465,6 +488,9 @@ impl App {
             backend: None,
             boot_error: None,
             boot_wait: None,
+            mini_large: false,
+            conflict_choices: std::collections::HashMap::new(),
+            started_mini: std::env::args().skip(1).any(|a| a == FOLLOW_AGENT_ARG),
             boot_polling: true,
             boot_cancel_requested: false,
             boot_control_error: None,
@@ -776,13 +802,14 @@ impl App {
                 ..
             }) => {
                 use keyboard::key::{Code, Physical};
-                // Physical digits so Ctrl+1…5 also work on AZERTY layouts.
+                // Physical digits so Ctrl+1…6 also work on AZERTY layouts.
                 let digit = match physical_key {
                     Physical::Code(Code::Digit1 | Code::Numpad1) => Some(0),
                     Physical::Code(Code::Digit2 | Code::Numpad2) => Some(1),
                     Physical::Code(Code::Digit3 | Code::Numpad3) => Some(2),
                     Physical::Code(Code::Digit4 | Code::Numpad4) => Some(3),
                     Physical::Code(Code::Digit5 | Code::Numpad5) => Some(4),
+                    Physical::Code(Code::Digit6 | Code::Numpad6) => Some(5),
                     _ => None,
                 };
                 Some(Message::Key(

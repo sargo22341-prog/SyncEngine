@@ -409,6 +409,7 @@ impl App {
             |msg| wrap(TrashMsg::Tree(msg)),
             &|file, indent| trash_file_row(&pal, file, indent, execution),
             &|folder| crate::tree::action_summary(&pal, folder),
+            &|_| None,
             "Aucun fichier dans cette synchronisation.",
         )
     }

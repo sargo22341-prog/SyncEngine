@@ -270,6 +270,19 @@ pub(crate) fn preview(
     })
 }
 
+/// Simulates again applying the user's choices on the displayed conflicts.
+pub(crate) fn resolve(
+    app: &Shared,
+    id: ProfileId,
+    choices: Vec<sync_orchestrator::ConflictChoice>,
+) -> impl Future<Output = Result<PreviewView, Failure>> + use<> {
+    let app = Arc::clone(app);
+    blocking(move || {
+        let value = app.preview_resolving(id, choices).map_err(Failure::from)?;
+        PreviewView::parse(&value).map_err(|m| Failure::new("format", m))
+    })
+}
+
 /// One page (≤ 100) of the exact cached plan.
 #[derive(Debug, Clone)]
 pub(crate) struct PlanPage {

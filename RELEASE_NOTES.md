@@ -1,6 +1,8 @@
 # Notes de la prochaine version
 
 Écrire sous la ligne `<!-- notes -->
+- Bidirectionnel : les conflits entre deux fichiers se résolvent depuis le plan (garder la source ou la destination) ; la version remplacée va dans la corbeille et rien n'est écrit avant l'exécution confirmée.
+- Nouveau design « Flux » : fond neutre clair ou sombre, couleurs réservées aux signaux (lime = sauvegarde, mandarine = miroir, violet = bidirectionnel), navigation à libellés, accueil avec cartes « En direct » et « À surveiller », profils en lignes à tuile colorée, boutons à encre pleine sans lueur. Dans le plan d'une simulation, chaque dossier se retire d'un clic (« Exclure ») : le filtre est ajouté au profil et la simulation est relancée. La fenêtre ouverte par l'agent devient un mini-suivi (« Agrandir » / « Réduire ») puis l'interface complète s'ouvre à la fin. Nouvelle page « Corbeille » dans la navigation et carte « suppressions à revoir » dans le plan.
 - Apparence : refonte clair/sombre façon iOS et macOS (fond noir ou blanc, cartes très arrondies, boutons en pastille avec lueur colorée, halo coloré en haut à droite selon le mode du profil), liste des profils en lignes, assistant de création avec barre d'étapes, carte de transfert aux chiffres colorés et anneau à point lumineux, icônes sans pastille ; le thème « AMOLED » est fusionné dans le sombre. Coins de fenêtre arrondis sous Windows 11.
 - Planification : une icône « i » explique simplement chaque option (échéances manquées, écritures, suppressions).
 - Planification : option « Afficher la fenêtre de suivi » (Windows) ; la fenêtre suit en direct toute synchronisation planifiée (pourcentage, débit, erreurs) et peut l'annuler.

@@ -1,10 +1,10 @@
 //! Overview dashboard, activity feed, history and settings pages.
 
-use crate::app::{App, MenuTarget, Message, Nav};
+use crate::app::{App, MenuTarget, Message, Nav, SEARCH_ID};
 use crate::draft;
 use crate::icons::{self, Glyph};
 use crate::model::{self, Outcome};
-use crate::shell::{mode_color, mode_glyph, outcome_color};
+use crate::shell::{mode_color, mode_fill, mode_glyph, outcome_color};
 use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
 use crate::ui_prefs::{CloseAction, ThemeChoice};
@@ -70,15 +70,6 @@ fn page<'a>(p: &Palette, content: impl Into<El<'a, Message>>, width: f32) -> El<
     .into()
 }
 
-/// Figure tile: colored label above a large number.
-fn stat<'a>(p: &Palette, color: Color, value: String, label: &'static str) -> El<'a, Message> {
-    container(column![ui::strong(color, label, 13.0), ui::title(p, value, 30.0)].spacing(4))
-        .padding(Padding::from([14, 18]))
-        .width(Length::Fill)
-        .style(theme::card(*p, 0.0, false))
-        .into()
-}
-
 impl App {
     pub(crate) fn overview<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         let total = self.ws.profiles.len();
@@ -108,44 +99,144 @@ impl App {
             Some(t) => format!("Dernière exécution {}.", model::relative(t, now)),
             None => "Aucune exécution pour l’instant.".into(),
         };
-        let mut col = column![
-            row![
+        let live = self.live_job();
+        let live_card: El<'_, Message> = match live {
+            Some(job) => {
+                let percent = job.progress().map(model::percent);
+                container(
+                    column![
+                        row![
+                            ui::eyebrow(p.info, "En direct"),
+                            ui::fill(),
+                            ui::pill(p.violet, "En cours")
+                        ]
+                        .align_y(Alignment::Center),
+                        ui::title(p, job.name.clone(), 20.0),
+                        ui::muted(p, percent.unwrap_or_else(|| "Analyse en cours…".into())),
+                        button(ui::colored(p.info, "Ouvrir l’activité ›", 13.0))
+                            .padding(0)
+                            .style(theme::btn(*p, Tone::Ghost))
+                            .on_press(Message::Nav(Nav::Activity)),
+                    ]
+                    .spacing(6),
+                )
+                .padding(20)
+                .width(Length::Fill)
+                .style(theme::outline(*p, p.violet, 0.8))
+                .into()
+            }
+            None => container(
                 column![
-                    ui::strong(p.accent, format!("{total} profils"), 14.0),
-                    ui::title(p, "Vos synchronisations", 34.0),
-                    ui::muted(p, summary),
+                    ui::eyebrow(p.muted, "En direct"),
+                    ui::title(p, "Rien en cours", 20.0),
+                    ui::muted(p, summary.clone()),
                 ]
-                .spacing(6)
-                .width(Length::Fill),
-                ui::action(
-                    p,
-                    Tone::Secondary,
-                    Some(Glyph::Layers),
-                    "Nouveau groupe",
-                    Some(Message::NewGroup(None))
-                ),
-                ui::action(
-                    p,
-                    Tone::Primary,
-                    Some(Glyph::Plus),
-                    "Nouveau profil",
-                    Some(Message::New(None))
-                ),
+                .spacing(6),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::card(*p, 0.0, false))
+            .into(),
+        };
+        let attention_card: El<'_, Message> = if attention > 0 {
+            container(
+                column![
+                    ui::eyebrow(p.warning, "À surveiller"),
+                    row![
+                        ui::title(p, attention.to_string(), 30.0),
+                        ui::muted(p, "élément(s) à vérifier")
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::End),
+                    ui::caption(p, format!("{ok} dernier(s) résultat(s) réussi(s)")),
+                ]
+                .spacing(6),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::outline(*p, p.warning, 0.8))
+            .into()
+        } else {
+            container(
+                column![
+                    ui::eyebrow(p.muted, "À surveiller"),
+                    row![ui::title(p, "0", 30.0), ui::muted(p, "tout est en ordre")]
+                        .spacing(10)
+                        .align_y(Alignment::End),
+                    ui::caption(p, format!("{ok} dernier(s) résultat(s) réussi(s)")),
+                ]
+                .spacing(6),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::card(*p, 0.0, false))
+            .into()
+        };
+        let scheduled_card: El<'_, Message> = container(
+            column![
+                ui::eyebrow(p.muted, "Planifiés"),
+                row![
+                    ui::title(p, scheduled.to_string(), 30.0),
+                    ui::muted(p, "sur l’agent")
+                ]
+                .spacing(10)
+                .align_y(Alignment::End),
+                button(ui::colored(p.info, "Ouvrir la planification ›", 13.0))
+                    .padding(0)
+                    .style(theme::btn(*p, Tone::Ghost))
+                    .on_press(Message::Nav(Nav::Schedules)),
             ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-            row![
-                stat(p, p.accent, total.to_string(), "profils"),
-                stat(p, p.violet, scheduled.to_string(), "planifiés"),
-                stat(p, p.success, ok.to_string(), "derniers résultats réussis"),
-                stat(
-                    p,
-                    if attention > 0 { p.warning } else { p.faint },
-                    attention.to_string(),
-                    "à surveiller"
-                ),
-            ]
-            .spacing(12),
+            .spacing(6),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .style(theme::card(*p, 0.0, false))
+        .into();
+        let mut col = column![
+            mouse_area(
+                row![
+                    column![
+                        ui::eyebrow(p.muted, &format!("{total} profils")),
+                        ui::title(p, "Vos synchronisations", 32.0),
+                    ]
+                    .spacing(4)
+                    .width(Length::Fill),
+                    container(
+                        row![
+                            icons::icon(Glyph::Search, 14.0, p.faint),
+                            text_input("Rechercher…", &self.search)
+                                .id(SEARCH_ID)
+                                .on_input(Message::Search)
+                                .padding(Padding::from([7, 4]))
+                                .size(13)
+                                .style(theme::search(*p)),
+                        ]
+                        .spacing(4)
+                        .align_y(Alignment::Center)
+                    )
+                    .padding(Padding::from([0, 12]))
+                    .width(Length::Fixed(260.0))
+                    .style(theme::card(*p, 0.0, false)),
+                    ui::action(
+                        p,
+                        Tone::Secondary,
+                        Some(Glyph::Layers),
+                        "Nouveau groupe",
+                        Some(Message::NewGroup(None))
+                    ),
+                    ui::action(
+                        p,
+                        Tone::Primary,
+                        Some(Glyph::Plus),
+                        "Nouveau profil",
+                        Some(Message::New(None))
+                    ),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+            )
+            .on_right_press(Message::OpenMenu(MenuTarget::Background)),
+            row![live_card, attention_card, scheduled_card].spacing(12),
         ]
         .spacing(24);
         if total == 0 {
@@ -153,6 +244,30 @@ impl App {
             return page(p, col, 1240.0);
         }
         let dragging = self.drag.as_ref().is_some_and(|d| d.active);
+        if dragging {
+            col = col.push(
+                mouse_area(
+                    container(
+                        row![
+                            icons::icon(Glyph::Plus, 16.0, p.accent),
+                            ui::colored(p.accent, "Déposer ici pour créer un groupe", 13.0)
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding(14)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill)
+                    .style(theme::drop_zone(
+                        *p,
+                        true,
+                        if self.drop_new { 1.0 } else { 0.0 },
+                    )),
+                )
+                .on_enter(Message::EnterNewZone)
+                .on_exit(Message::LeaveZone(String::new())),
+            );
+        }
         for group in self.groups() {
             let members = self.members(&group);
             let label = if group.is_empty() {
@@ -202,6 +317,76 @@ impl App {
         page(p, col, 1240.0)
     }
 
+    /// Trash overview: one line per profile with its policy; the content of a
+    /// profile trash opens in the existing dialog (sizes load there, not here).
+    pub(crate) fn trash_page<'a>(&'a self, p: &Palette) -> El<'a, Message> {
+        let mut list = column![].spacing(8);
+        for profile in &self.ws.profiles {
+            let color = mode_color(p, profile.mode);
+            let (policy, policy_color) = if profile.trash.enabled {
+                (
+                    format!("Activée · {}", model::bytes(profile.trash.max_bytes)),
+                    p.success,
+                )
+            } else {
+                ("Désactivée".to_owned(), p.faint)
+            };
+            list = list.push(
+                container(
+                    row![
+                        column![
+                            ui::strong(p.text, profile.name.clone(), 15.0),
+                            ui::strong(color, model::mode_label(profile.mode), 12.0),
+                        ]
+                        .spacing(2)
+                        .width(Length::Fill),
+                        ui::pill(policy_color, policy),
+                        ui::action(
+                            p,
+                            Tone::Secondary,
+                            Some(Glyph::Trash),
+                            "Voir la corbeille",
+                            Some(Message::Trash(crate::trash::TrashMsg::Open(
+                                profile.id.clone()
+                            ))),
+                        ),
+                    ]
+                    .spacing(16)
+                    .align_y(Alignment::Center),
+                )
+                .padding(Padding::from([12, 16]))
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false)),
+            );
+        }
+        if self.ws.profiles.is_empty() {
+            list = list.push(ui::callout(
+                p,
+                p.info,
+                Glyph::Trash,
+                "Aucun profil",
+                "Chaque profil a sa propre corbeille, réglée dans l’étape « Sécurité » de l’assistant.",
+            ));
+        }
+        page(
+            p,
+            column![
+                column![
+                    ui::eyebrow(p.muted, "Anciennes versions des fichiers remplacés ou supprimés"),
+                    ui::title(p, "Corbeille", 32.0),
+                ]
+                .spacing(4),
+                ui::muted(
+                    p,
+                    "Il n’y a pas de restauration en place : un miroir supprimerait de nouveau le fichier. Utilisez « Enregistrer sous… » dans la corbeille d’un profil."
+                ),
+                list,
+            ]
+            .spacing(18),
+            1100.0,
+        )
+    }
+
     fn profile_card<'a>(&'a self, p: &Palette, profile: &'a Profile) -> El<'a, Message> {
         let lift = self.lift.get(&profile.id).map_or(0.0, |t| t.at(self.now));
         let selected = self.selected.as_ref() == Some(&profile.id);
@@ -209,7 +394,7 @@ impl App {
         let now = model::now_secs();
         let running = self.running_on(&profile.id);
         let status: El<'a, Message> = if running {
-            ui::pill(p.accent, "En cours")
+            ui::pill(p.violet, "En cours")
         } else {
             match self.last_run(&profile.id) {
                 Some(run) => ui::pill(
@@ -235,29 +420,45 @@ impl App {
             .last_run(&profile.id)
             .and_then(|r| r.started)
             .map_or("jamais lancé".to_owned(), |t| model::relative(t, now));
+        let tile = container(icons::icon(
+            mode_glyph(profile.mode),
+            20.0,
+            if profile.mode == sync_plan::SyncMode::Bidirectional {
+                p.bg
+            } else {
+                Color::from_rgb(0.043, 0.047, 0.055)
+            },
+        ))
+        .width(Length::Fixed(44.0))
+        .height(Length::Fixed(44.0))
+        .center(Length::Fixed(44.0))
+        .style(theme::swatch(mode_fill(p, profile.mode)));
+        let chip = container(ui::strong(color, model::mode_label(profile.mode), 12.0))
+            .padding(Padding::from([3, 10]))
+            .style(theme::pill(theme::alpha(color, 0.14), color));
         let body = row![
-            ui::glyph_box(mode_glyph(profile.mode), color, 28.0),
+            tile,
             column![
-                ui::strong(p.text, model::ellipsize(&profile.name, 40), 16.0),
-                ui::caption(
-                    p,
+                ui::strong(p.text, model::ellipsize(&profile.name, 40), 15.0),
+                ui::mono(
+                    p.muted,
                     format!(
                         "{}  {}  {}",
-                        model::ellipsize(&model::source_of(profile), 26),
+                        model::ellipsize(&model::source_of(profile), 28),
                         if profile.mode == sync_plan::SyncMode::Bidirectional {
-                            "↔"
+                            "⇄"
                         } else {
                             "→"
                         },
-                        model::ellipsize(&model::destination_of(profile), 26)
-                    )
+                        model::ellipsize(&model::destination_of(profile), 28)
+                    ),
+                    12.0
                 ),
             ]
             .spacing(3)
             .width(Length::Fill),
-            container(ui::strong(color, model::mode_label(profile.mode), 13.0))
-                .width(Length::Fixed(104.0)),
-            container(status).width(Length::Fixed(100.0)),
+            container(chip).width(Length::Fixed(150.0)),
+            container(status).width(Length::Fixed(130.0)),
             container(
                 row![
                     icons::icon(Glyph::Clock, 13.0, schedule.0),
@@ -266,24 +467,24 @@ impl App {
                 .spacing(6)
                 .align_y(Alignment::Center)
             )
-            .width(Length::Fixed(150.0))
+            .width(Length::Fixed(140.0))
             .clip(true),
-            container(ui::caption(p, last)).width(Length::Fixed(84.0)),
-            ui::icon_button(
+            container(ui::caption(p, last)).width(Length::Fixed(90.0)),
+            ui::action(
                 p,
-                Glyph::Eye,
+                Tone::Primary,
+                None,
                 "Simuler",
                 (!self.busy()).then(|| Message::Simulate(profile.id.clone()))
             ),
-            icons::icon(Glyph::ChevronRight, 14.0, p.faint),
         ]
-        .spacing(14)
+        .spacing(16)
         .align_y(Alignment::Center);
         let lifted = container(body)
             .padding(Padding {
-                top: 16.0 - 2.0 * lift,
-                bottom: 14.0 + 2.0 * lift,
-                left: 20.0,
+                top: 12.0,
+                bottom: 12.0,
+                left: 16.0,
                 right: 16.0,
             })
             .width(Length::Fill)
@@ -560,6 +761,7 @@ impl App {
                 Message::HistoryTree,
                 &|r, indent| history_row(&pal, r, Some(indent)),
                 &|folder| crate::tree::action_summary(&pal, folder),
+                &|_| None,
                 empty,
             );
             return column![controls, tree]

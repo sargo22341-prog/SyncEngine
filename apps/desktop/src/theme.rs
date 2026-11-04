@@ -1,7 +1,9 @@
-//! Visual system: two hand-tuned palettes (dark « iOS-like » on a black base
-//! with gray cards, light « macOS-like » on near-white) blended continuously
-//! so that switching theme is an animated cross-fade. Every style function
-//! captures a `Palette` by value.
+//! Visual system « Flux » : deux palettes neutres (sombre quasi-noir, clair
+//! blanc cassé) où la couleur ne sert qu'à signaler (lime = sauvegarde et
+//! « à jour », mandarine = miroir, violet = bidirectionnel et « en cours »),
+//! mélangées en continu pour que le changement de thème soit un fondu animé.
+//! Chaque fonction de style capture une `Palette` par valeur. Source de
+//! vérité des valeurs : le design system SyncEngine (`tokens.json`).
 
 use iced::widget::{button, checkbox, container, scrollable, text_input, toggler};
 use iced::{Background, Border, Color, Shadow, Theme, Vector, border, color};
@@ -34,6 +36,11 @@ pub(crate) struct Palette {
     pub(crate) info: Color,
     /// Third mode color (bidirectional), distinct from the status colors.
     pub(crate) violet: Color,
+    /// Mode colors as fills (tiles, bars, dots) and as text-safe inks.
+    pub(crate) backup: Color,
+    pub(crate) backup_ink: Color,
+    pub(crate) mirror: Color,
+    pub(crate) mirror_ink: Color,
     pub(crate) shadow: Color,
     /// Modal backdrop.
     pub(crate) scrim: Color,
@@ -41,47 +48,55 @@ pub(crate) struct Palette {
 
 impl Palette {
     pub(crate) const DARK: Self = Self {
-        rail: color!(0x0b0b0d),
-        sidebar: color!(0x111113),
-        bg: color!(0x000000),
-        surface: color!(0x1c1c1e),
-        surface_hi: color!(0x2c2c2e),
-        border: color!(0x2c2c2e),
-        text: color!(0xf5f5f7),
-        muted: color!(0x98989d),
-        faint: color!(0x636366),
-        accent: color!(0x0a84ff),
-        accent_hi: color!(0x0070e0),
-        on_accent: color!(0xffffff),
-        success: color!(0x30d158),
-        warning: color!(0xff9f0a),
-        danger: color!(0xff453a),
-        info: color!(0x64b0ff),
-        violet: color!(0xbf5af2),
-        shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.6),
+        rail: color!(0x0b0c0e),
+        sidebar: color!(0x0b0c0e),
+        bg: color!(0x0b0c0e),
+        surface: color!(0x131417),
+        surface_hi: color!(0x1c1e22),
+        border: color!(0x26282d),
+        text: color!(0xf2f3f0),
+        muted: color!(0x9a9da5),
+        faint: color!(0x6e7179),
+        accent: color!(0x8e80ff),
+        accent_hi: color!(0xa99fff),
+        on_accent: color!(0x0b0c0e),
+        success: color!(0xc8f53c),
+        warning: color!(0xffc83d),
+        danger: color!(0xff5470),
+        info: color!(0xa99fff),
+        violet: color!(0x8e80ff),
+        backup: color!(0xc8f53c),
+        backup_ink: color!(0xc8f53c),
+        mirror: color!(0xff7a3d),
+        mirror_ink: color!(0xff9566),
+        shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.55),
         scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.7),
     };
 
     pub(crate) const LIGHT: Self = Self {
-        rail: color!(0xffffff),
-        sidebar: color!(0xfafbfe),
-        bg: color!(0xfbfcfe),
+        rail: color!(0xf4f4f0),
+        sidebar: color!(0xf4f4f0),
+        bg: color!(0xf4f4f0),
         surface: color!(0xffffff),
-        surface_hi: color!(0xf0f2f7),
-        border: color!(0xe5e5ea),
-        text: color!(0x1d1d1f),
-        muted: color!(0x6e6e73),
-        faint: color!(0x8e8e93),
-        accent: color!(0x0a78f0),
-        accent_hi: color!(0x0864c8),
+        surface_hi: color!(0xecece6),
+        border: color!(0xe1e1d9),
+        text: color!(0x0e0f11),
+        muted: color!(0x5e6068),
+        faint: color!(0x8a8c93),
+        accent: color!(0x5b4bf0),
+        accent_hi: color!(0x4a3bd8),
         on_accent: color!(0xffffff),
-        success: color!(0x1f9d3f),
-        warning: color!(0xc25e00),
-        danger: color!(0xd6204a),
-        info: color!(0x0a6ad6),
-        violet: color!(0x8e35c9),
-        shadow: Color::from_rgba(0.12, 0.24, 0.47, 0.12),
-        scrim: Color::from_rgba(0.12, 0.13, 0.15, 0.35),
+        success: color!(0x386c00),
+        warning: color!(0xa35f00),
+        danger: color!(0xc81e3a),
+        info: color!(0x4a3bd8),
+        violet: color!(0x5b4bf0),
+        backup: color!(0xb9ea1f),
+        backup_ink: color!(0x386c00),
+        mirror: color!(0xff6b2c),
+        mirror_ink: color!(0xa93a0b),
+        shadow: Color::from_rgba(0.055, 0.059, 0.067, 0.10),
+        scrim: Color::from_rgba(0.04, 0.05, 0.06, 0.45),
     };
 
     /// Linear blend: `t = 0` is dark, `t = 1` is light.
@@ -109,6 +124,10 @@ impl Palette {
             danger: m(a.danger, b.danger),
             info: m(a.info, b.info),
             violet: m(a.violet, b.violet),
+            backup: m(a.backup, b.backup),
+            backup_ink: m(a.backup_ink, b.backup_ink),
+            mirror: m(a.mirror, b.mirror),
+            mirror_ink: m(a.mirror_ink, b.mirror_ink),
             shadow: m(a.shadow, b.shadow),
             scrim: m(a.scrim, b.scrim),
         }
@@ -131,6 +150,10 @@ impl Palette {
             danger: f(self.danger),
             info: f(self.info),
             violet: f(self.violet),
+            backup: f(self.backup),
+            backup_ink: f(self.backup_ink),
+            mirror: f(self.mirror),
+            mirror_ink: f(self.mirror_ink),
             border: f(self.border),
             surface: mix(self.bg, self.surface, v),
             surface_hi: mix(self.bg, self.surface_hi, v),
@@ -184,7 +207,7 @@ fn luminance(c: Color) -> f32 {
 }
 
 /// Corner radii used across the application.
-pub(crate) const RADIUS: f32 = 18.0;
+pub(crate) const RADIUS: f32 = 20.0;
 pub(crate) const RADIUS_SM: f32 = 12.0;
 
 fn shadow(p: &Palette, y: f32, blur: f32) -> Shadow {
@@ -218,7 +241,8 @@ pub(crate) fn card(p: Palette, lift: f32, selected: bool) -> impl Fn(&Theme) -> 
             width: if selected { 2.0 } else { 1.0 },
             radius: RADIUS.into(),
         },
-        shadow: shadow(&p, 1.0 + 5.0 * lift, 4.0 + 14.0 * lift),
+        // Flat: a hairline separates cards, never a shadow.
+        shadow: Shadow::default(),
         snap: true,
     }
 }
@@ -249,6 +273,15 @@ pub(crate) fn drop_zone(p: Palette, active: bool, hot: f32) -> impl Fn(&Theme) -
             width: if active { 1.5 } else { 0.0 },
             radius: RADIUS.into(),
         },
+        ..container::Style::default()
+    }
+}
+
+/// Rounded square filled with a vivid color (mode tiles).
+pub(crate) fn swatch(color: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(color.into()),
+        border: border::rounded(RADIUS_SM),
         ..container::Style::default()
     }
 }
@@ -341,9 +374,13 @@ pub(crate) fn btn(p: Palette, tone: Tone) -> impl Fn(&Theme, button::Status) -> 
         let pressed = matches!(status, button::Status::Pressed);
         let disabled = matches!(status, button::Status::Disabled);
         let (base, hi, fg) = match tone {
-            Tone::Primary => (p.accent, p.accent_hi, p.on_accent),
+            Tone::Primary => (p.text, mix(p.text, p.muted, 0.2), p.bg),
             Tone::Danger => (p.danger, mix(p.danger, Color::BLACK, 0.18), Color::WHITE),
-            Tone::Success => (p.success, mix(p.success, Color::BLACK, 0.18), Color::WHITE),
+            Tone::Success => (
+                p.backup,
+                mix(p.backup, Color::BLACK, 0.12),
+                color!(0x0b0c0e),
+            ),
             Tone::Secondary => (p.surface_hi, mix(p.surface_hi, p.text, 0.08), p.text),
             Tone::Ghost => (Color::TRANSPARENT, alpha(p.text, 0.08), p.muted),
         };
@@ -377,16 +414,7 @@ pub(crate) fn btn(p: Palette, tone: Tone) -> impl Fn(&Theme, button::Status) -> 
                 // Pill shape; iced clamps the radius to half the height.
                 radius: 999.0.into(),
             },
-            // Colored glow under filled buttons, stronger on hover.
-            shadow: if !disabled && matches!(tone, Tone::Primary | Tone::Danger | Tone::Success) {
-                Shadow {
-                    color: alpha(base, if hover { 0.45 } else { 0.28 }),
-                    offset: Vector::new(0.0, if hover { 6.0 } else { 4.0 }),
-                    blur_radius: if hover { 18.0 } else { 14.0 },
-                }
-            } else {
-                Shadow::default()
-            },
+            shadow: Shadow::default(),
             snap: true,
         }
     }
@@ -457,8 +485,8 @@ pub(crate) fn tile(
     }
 }
 
-/// Rail navigation item: rounded square that becomes a squircle when active.
-pub(crate) fn rail_btn(
+/// Navigation item: ink pill when active, soft tint on hover.
+pub(crate) fn nav_btn(
     p: Palette,
     active: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
@@ -467,16 +495,16 @@ pub(crate) fn rail_btn(
         button::Style {
             background: Some(
                 if active {
-                    p.accent
+                    p.text
                 } else if hover {
-                    mix(p.surface_hi, p.accent, 0.25)
-                } else {
                     p.surface_hi
+                } else {
+                    Color::TRANSPARENT
                 }
                 .into(),
             ),
-            text_color: if active { p.on_accent } else { p.text },
-            border: border::rounded(if active || hover { 14 } else { 22 }),
+            text_color: if active { p.bg } else { p.muted },
+            border: border::rounded(999),
             shadow: Shadow::default(),
             snap: true,
         }
@@ -714,7 +742,7 @@ mod tests {
         assert_eq!(Palette::blend(-1.0), Palette::DARK);
         assert_eq!(Palette::blend(2.0), Palette::LIGHT);
         assert!(!Palette::DARK.is_light());
-        assert_eq!(Palette::DARK.bg, Color::BLACK);
+        assert_eq!(Palette::DARK.bg, color!(0x0b0c0e));
         assert!(Palette::LIGHT.is_light());
     }
 

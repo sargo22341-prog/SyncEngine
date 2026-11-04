@@ -40,6 +40,14 @@ impl App {
                         .flatten();
                 }
                 let lookup = crate::interrupted::lookup(&app);
+                let restore = if self.started_mini {
+                    self.started_mini = false;
+                    self.mini_large = false;
+                    self.window_id
+                        .map_or_else(Task::none, |id| window::resize(id, crate::app::FULL_SIZE))
+                } else {
+                    Task::none()
+                };
                 self.backend = Some(app);
                 self.apply_workspace(ws);
                 self.page_t.replay(0.0, 1.0, self.now);
@@ -61,10 +69,11 @@ impl App {
                             ),
                             lookup,
                             self.update_after_boot(),
+                            restore,
                         ]);
                     }
                 }
-                Task::batch([lookup, self.update_after_boot()])
+                Task::batch([lookup, self.update_after_boot(), restore])
             }
             Message::Booted(Ok(Opening::Waiting(observation))) => {
                 self.boot_polling = false;
@@ -406,6 +415,30 @@ impl App {
                     }
                 }
                 Task::none()
+            }
+            Message::ExcludeFolder(path) => self.exclude_folder(path),
+            Message::ConflictChoose(path, keep_source) => {
+                if self.conflict_choices.get(&path) == Some(&keep_source) {
+                    self.conflict_choices.remove(&path);
+                } else {
+                    self.conflict_choices.insert(path, keep_source);
+                }
+                Task::none()
+            }
+            Message::ResolveConflicts => self.resolve_conflicts(),
+            Message::MiniToggle => {
+                self.mini_large = !self.mini_large;
+                match self.window_id {
+                    Some(id) => window::resize(
+                        id,
+                        if self.mini_large {
+                            crate::app::MINI_LARGE_SIZE
+                        } else {
+                            crate::app::MINI_SIZE
+                        },
+                    ),
+                    None => Task::none(),
+                }
             }
             Message::PlanTree(msg) => {
                 let request = self.preview.as_mut().and_then(|p| p.tree.update(msg));

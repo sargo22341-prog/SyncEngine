@@ -99,7 +99,11 @@ pub(crate) fn action<'a, M: Clone + 'a>(
     on: Option<M>,
 ) -> El<'a, M> {
     let fg = match tone {
-        Tone::Primary | Tone::Danger | Tone::Success => p.on_accent,
+        // Primary is the ink button (text color on the page color); lime
+        // takes dark ink; danger keeps white.
+        Tone::Primary => p.bg,
+        Tone::Success => Color::from_rgb(0.043, 0.047, 0.055),
+        Tone::Danger => Color::WHITE,
         Tone::Secondary => p.text,
         Tone::Ghost => p.muted,
     };

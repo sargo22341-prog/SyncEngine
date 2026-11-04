@@ -51,8 +51,9 @@ reprise après redémarrage. Avec l’agent, comptez le délai d’observation (
   de référence). Ensuite, un fichier modifié d'un seul côté est propagé, un
   fichier supprimé d'un côté est supprimé de l'autre (une *tombstone* garde la
   trace de la suppression), un fichier modifié des deux côtés devient un
-  **conflit** : les deux versions restent en place, à résoudre à la main. Les
-  dates ne désignent jamais un gagnant.
+  **conflit** : les deux versions restent en place. Les dates ne désignent
+  jamais un gagnant. Pour deux fichiers en conflit, la simulation permet de
+  choisir le contenu à garder (voir ci-dessous).
 
 ## Progression de l’analyse réseau
 
@@ -95,6 +96,21 @@ La simulation produit un plan, une ligne par chemin, avec son motif :
 Le plan affiché est celui qui sera exécuté. Si les dossiers changent entre la
 simulation et l'exécution, l'opération concernée est refusée plutôt
 qu'appliquée à l'aveugle.
+
+### Résoudre un conflit (bidirectionnel)
+
+Dans le plan, la carte « conflits préservés » propose **Voir les conflits** :
+chaque fichier montre les deux contenus (taille, date) et deux choix, **Garder
+la source** ou **Garder la destination**. **Appliquer N choix** relance une
+simulation : les fichiers choisis apparaissent comme remplacements, rien n'est
+écrit avant l'exécution confirmée. Garde-fous : la corbeille du profil doit
+être activée (la version remplacée y est gardée) ; un choix est lié aux
+contenus que vous avez vus, et si un fichier a changé depuis, le conflit reste
+un conflit ; seuls les conflits entre deux fichiers sont concernés (fichier
+contre dossier, suppression contre modification : à régler à la main).
+Exemple : `notes.md` modifié des deux côtés › « Garder la destination » ›
+Appliquer › Exécuter : la source reçoit le contenu de la destination, l'ancien
+contenu de la source est dans la corbeille.
 
 ## Garde-fous
 
@@ -186,10 +202,11 @@ interrompues, elles sont présentées l'une après l'autre.
 
 ## L'interface
 
-- **Rail** à gauche : Profils, Activité, Historique, Planification, thème,
-  Réglages.
-- **Barre des profils** : recherche, groupes repliables, état du dernier
-  résultat ; un profil se déplace d'un groupe à l'autre par glisser-déposer.
+- **Navigation** à gauche : Profils, Activité, Historique, Planification,
+  Réglages, état de l'agent, tâche en cours et thème.
+- **Accueil (Profils)** : recherche, groupes, état du dernier résultat ; un
+  profil se déplace d'un groupe à l'autre par glisser-déposer. Clic droit sur
+  l'en-tête : nouveau profil ou groupe.
 - **Page profil** : source → destination, simulation, résultat, dernières
   exécutions, planification.
 
@@ -226,6 +243,15 @@ la raison pour laquelle il a été laissé de côté. Les suppressions ne sont
 appliquées que si la case dédiée est cochée ; un profil dont la corbeille ne
 peut pas garder les fichiers remplacés ou supprimés est laissé de côté sans
 écriture. « Annuler » arrête le profil en cours et les suivants.
+
+Dans la vue par dossiers du plan, **Exclure** retire un dossier de façon
+durable : le chemin est ajouté aux dossiers exclus du profil et la simulation
+est relancée (les filtres restent identiques en simulation et en exécution).
+La planification du profil devra être renouvelée.
+
+Une fenêtre ouverte par l'agent pendant une synchronisation planifiée est un
+mini-suivi (« Agrandir » / « Réduire », pause, annulation). L'interface complète
+s'ouvre toute seule à la fin de l'opération.
 
 Le bouton d'exécution est rouge si le plan contient des suppressions, et ces
 suppressions demandent une case de confirmation distincte. Une tâche en cours
@@ -281,7 +307,7 @@ classique).
 | `Suppr` | retirer le profil sélectionné |
 | `↑` `↓` | changer de profil |
 | `Ctrl+F` | rechercher |
-| `Ctrl+1…5` | changer de section |
+| `Ctrl+1…6` | changer de section |
 | `Ctrl+T` / `Ctrl+,` | basculer le thème / réglages |
 | `Ctrl+R` | relire l'état |
 | `Ctrl+Q` | quitter |

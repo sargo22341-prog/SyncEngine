@@ -172,6 +172,7 @@ pub(crate) fn view<'a, T, M: Clone + 'a>(
     on: fn(TreeMsg) -> M,
     entry: &dyn Fn(&'a T, f32) -> El<'a, M>,
     summary: &dyn Fn(&TreeFolder) -> El<'a, M>,
+    extra: &dyn Fn(&TreeFolder) -> Option<El<'a, M>>,
     empty: &'a str,
 ) -> El<'a, M> {
     let mut col = column![].spacing(2);
@@ -187,7 +188,7 @@ pub(crate) fn view<'a, T, M: Clone + 'a>(
                     .center_x(Length::Fill),
             );
         }
-        Some(_) => col = level_rows(p, tree, "", 0, on, entry, summary, col),
+        Some(_) => col = level_rows(p, tree, "", 0, on, entry, summary, extra, col),
     }
     col.into()
 }
@@ -201,6 +202,7 @@ fn level_rows<'a, T, M: Clone + 'a>(
     on: fn(TreeMsg) -> M,
     entry: &dyn Fn(&'a T, f32) -> El<'a, M>,
     summary: &dyn Fn(&TreeFolder) -> El<'a, M>,
+    extra: &dyn Fn(&TreeFolder) -> Option<El<'a, M>>,
     mut col: iced::widget::Column<'a, M>,
 ) -> iced::widget::Column<'a, M> {
     let indent = depth as f32 * INDENT;
@@ -256,9 +258,22 @@ fn level_rows<'a, T, M: Clone + 'a>(
         .width(Length::Fill)
         .style(theme::row_btn(*p, open))
         .on_press(on(TreeMsg::Toggle(node.path.clone())));
-        col = col.push(row_el);
+        col = match extra(node) {
+            Some(action) => col.push(row![row_el, action].spacing(4).align_y(Alignment::Center)),
+            None => col.push(row_el),
+        };
         if open {
-            col = level_rows(p, tree, &node.path, depth + 1, on, entry, summary, col);
+            col = level_rows(
+                p,
+                tree,
+                &node.path,
+                depth + 1,
+                on,
+                entry,
+                summary,
+                extra,
+                col,
+            );
         }
     }
     if level.folders.len() > SHOWN_FOLDERS {

@@ -13,7 +13,6 @@ mod backend;
 mod charts;
 mod draft;
 mod group_run;
-mod halo;
 mod icons;
 mod interrupted;
 mod model;
@@ -40,7 +39,13 @@ mod wizard;
 
 use app::App;
 
+/// Window opened by the agent to follow a run starts as a compact tracker.
+fn follows_agent() -> bool {
+    std::env::args().skip(1).any(|a| a == app::FOLLOW_AGENT_ARG)
+}
+
 fn main() -> iced::Result {
+    let mini = follows_agent();
     iced::application(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
@@ -48,8 +53,12 @@ fn main() -> iced::Result {
         .default_font(ui::base_font())
         .antialiasing(true)
         .window(iced::window::Settings {
-            size: iced::Size::new(1280.0, 820.0),
-            min_size: Some(iced::Size::new(980.0, 640.0)),
+            size: if mini { app::MINI_SIZE } else { app::FULL_SIZE },
+            min_size: Some(if mini {
+                iced::Size::new(380.0, 460.0)
+            } else {
+                iced::Size::new(980.0, 640.0)
+            }),
             icon: charts::window_icon(),
             exit_on_close_request: false,
             // Title bar and border are drawn by the application (`titlebar`).
