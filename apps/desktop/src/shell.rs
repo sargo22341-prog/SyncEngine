@@ -3,6 +3,7 @@
 
 use crate::app::{App, JobKind, MenuTarget, Message, Nav, SEARCH_ID};
 use crate::charts::{self, Mark};
+use crate::halo;
 use crate::icons::{self, Glyph};
 use crate::model::{self, Outcome};
 use crate::theme::{self, Palette, Tone};
@@ -26,9 +27,9 @@ pub(crate) fn mode_glyph(mode: SyncMode) -> Glyph {
 
 pub(crate) fn mode_color(p: &Palette, mode: SyncMode) -> Color {
     match mode {
-        SyncMode::Backup => p.success,
-        SyncMode::Mirror => p.accent,
-        _ => p.warning,
+        SyncMode::Backup => p.accent,
+        SyncMode::Mirror => p.warning,
+        _ => p.violet,
     }
 }
 
@@ -724,14 +725,33 @@ impl App {
             Nav::Schedules => self.schedules_page(&faded),
             Nav::Settings => self.settings_page(&faded),
         };
-        container(page)
+        // Halo color follows what the page is about: the mode of the selected
+        // profile, the accent everywhere else.
+        let tint = match (
+            self.nav,
+            self.selected.as_ref().and_then(|id| self.profile(id)),
+        ) {
+            (Nav::Profiles, Some(profile)) => mode_color(p, profile.mode),
+            _ => p.accent,
+        };
+        let strength = if p.is_light() { 0.26 } else { 0.34 };
+        let page = container(page)
             .padding(Padding {
                 top: 14.0 * (1.0 - t),
                 ..Padding::ZERO
             })
             .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+        stack![
+            halo::halo(halo::Halo {
+                color: tint,
+                strength
+            }),
+            page
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn ghost(&self, p: &Palette) -> Option<El<'_, Message>> {

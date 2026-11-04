@@ -544,18 +544,14 @@ impl App {
     pub(crate) fn wants_light(&self) -> bool {
         match self.prefs.theme {
             ThemeChoice::Light => true,
-            ThemeChoice::Dark | ThemeChoice::Amoled => false,
+            ThemeChoice::Dark => false,
             ThemeChoice::System => !self.system_dark,
         }
     }
 
     /// Position of the chosen theme on the `Palette::blend` axis.
     pub(crate) fn theme_target(&self) -> f32 {
-        match self.prefs.theme {
-            ThemeChoice::Amoled => -1.0,
-            _ if self.wants_light() => 1.0,
-            _ => 0.0,
-        }
+        if self.wants_light() { 1.0 } else { 0.0 }
     }
 
     pub(crate) fn palette(&self) -> Palette {

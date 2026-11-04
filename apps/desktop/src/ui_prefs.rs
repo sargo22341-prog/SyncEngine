@@ -14,10 +14,11 @@ const VERSION: u32 = 1;
 pub(crate) enum ThemeChoice {
     #[default]
     System,
+    /// Black base with gray cards. Files written while the removed « AMOLED »
+    /// theme existed (`"amoled"`) still load and map here.
+    #[serde(alias = "amoled")]
     Dark,
     Light,
-    /// Full black backgrounds for OLED screens.
-    Amoled,
 }
 
 /// What the window close button (×) does.
@@ -105,10 +106,8 @@ mod tests {
         std::fs::write(dir.path().join(FILE), r#"{"version":99}"#).unwrap();
         assert!(UiPrefs::load(dir.path()).is_err());
         std::fs::write(dir.path().join(FILE), r#"{"version":1,"theme":"amoled"}"#).unwrap();
-        assert_eq!(
-            UiPrefs::load(dir.path()).unwrap().theme,
-            ThemeChoice::Amoled
-        );
+        // The removed AMOLED theme falls back to the dark theme.
+        assert_eq!(UiPrefs::load(dir.path()).unwrap().theme, ThemeChoice::Dark);
         std::fs::write(dir.path().join(FILE), "{").unwrap();
         assert!(UiPrefs::load(dir.path()).is_err());
     }

@@ -6,11 +6,16 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 ## [Non publié]
 
 ### Apparence
-- Thème « AMOLED » (Réglages › Apparence) : fonds `#000000`, surfaces
-  à peine relevées (`#0a0a0a`) séparées par leur bordure. Persisté comme
-  `"theme": "amoled"` dans `desktop-ui.json` ; une version antérieure de
-  l'application signale ce fichier comme invalide et reprend les valeurs par
-  défaut. La bascule Ctrl+T depuis AMOLED passe au thème clair.
+- Refonte visuelle : deux thèmes seulement. Sombre = fond `#000000` et cartes
+  `#1c1c1e` ; clair = fond quasi blanc `#fbfcfe` et cartes blanches. Rayons
+  18 px (cartes) et 12 px (champs), boutons pleins en pastille avec lueur
+  colorée, halo coloré en haut à droite du contenu (cercles translucides en
+  canvas, statique : aucun rafraîchissement continu). Couleurs de mode :
+  sauvegarde bleu, miroir orange, bidirectionnel violet (le vert ne signale
+  plus que le succès).
+- Le thème « AMOLED » est retiré. Un `desktop-ui.json` contenant
+  `"theme": "amoled"` reste valide et est lu comme `"dark"` ; il est réécrit
+  en `"dark"` à la prochaine sauvegarde des préférences.
 - Fenêtre : sous Windows 11, coins arrondis demandés au gestionnaire de
   fenêtres (`DWMWCP_ROUND`), quel que soit le thème ; sans effet sous
   Windows 10, en plein écran agrandi et sous Linux (pas d'équivalent sans

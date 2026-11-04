@@ -13,6 +13,7 @@ mod backend;
 mod charts;
 mod draft;
 mod group_run;
+mod halo;
 mod icons;
 mod interrupted;
 mod model;

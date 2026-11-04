@@ -1,6 +1,6 @@
-//! Visual system: three hand-tuned palettes (AMOLED « full black », dark
-//! « Frames X-like », light « classic Google-like ») blended continuously so
-//! that switching theme is an animated cross-fade. Every style function
+//! Visual system: two hand-tuned palettes (dark « iOS-like » on a black base
+//! with gray cards, light « macOS-like » on near-white) blended continuously
+//! so that switching theme is an animated cross-fade. Every style function
 //! captures a `Palette` by value.
 
 use iced::widget::{button, checkbox, container, scrollable, text_input, toggler};
@@ -32,6 +32,8 @@ pub(crate) struct Palette {
     pub(crate) warning: Color,
     pub(crate) danger: Color,
     pub(crate) info: Color,
+    /// Third mode color (bidirectional), distinct from the status colors.
+    pub(crate) violet: Color,
     pub(crate) shadow: Color,
     /// Modal backdrop.
     pub(crate) scrim: Color,
@@ -39,78 +41,52 @@ pub(crate) struct Palette {
 
 impl Palette {
     pub(crate) const DARK: Self = Self {
-        rail: color!(0x111111),
-        sidebar: color!(0x171717),
-        bg: color!(0x1a1a1a),
-        surface: color!(0x1f1f1f),
-        surface_hi: color!(0x2a2a2a),
-        border: color!(0x2e2e2e),
-        text: color!(0xf2f2f2),
-        muted: color!(0xa3a3a3),
-        faint: color!(0x6b6b6b),
-        accent: color!(0x2f7cf6),
-        accent_hi: color!(0x1f66d9),
-        on_accent: color!(0xffffff),
-        success: color!(0x34c759),
-        warning: color!(0xf5a524),
-        danger: color!(0xef4444),
-        info: color!(0x4c9bff),
-        shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
-        scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.65),
-    };
-
-    /// Pure black backgrounds for OLED screens; surfaces stay just above
-    /// black so cards and dialogs remain distinguishable by their border.
-    pub(crate) const AMOLED: Self = Self {
-        rail: color!(0x000000),
-        sidebar: color!(0x000000),
+        rail: color!(0x0b0b0d),
+        sidebar: color!(0x111113),
         bg: color!(0x000000),
-        surface: color!(0x0a0a0a),
-        surface_hi: color!(0x171717),
-        border: color!(0x222222),
-        text: color!(0xf2f2f2),
-        muted: color!(0x9e9e9e),
-        faint: color!(0x5e5e5e),
-        accent: color!(0x2f7cf6),
-        accent_hi: color!(0x1f66d9),
+        surface: color!(0x1c1c1e),
+        surface_hi: color!(0x2c2c2e),
+        border: color!(0x2c2c2e),
+        text: color!(0xf5f5f7),
+        muted: color!(0x98989d),
+        faint: color!(0x636366),
+        accent: color!(0x0a84ff),
+        accent_hi: color!(0x0070e0),
         on_accent: color!(0xffffff),
-        success: color!(0x34c759),
-        warning: color!(0xf5a524),
-        danger: color!(0xef4444),
-        info: color!(0x4c9bff),
-        shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.8),
-        scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.75),
+        success: color!(0x30d158),
+        warning: color!(0xff9f0a),
+        danger: color!(0xff453a),
+        info: color!(0x64b0ff),
+        violet: color!(0xbf5af2),
+        shadow: Color::from_rgba(0.0, 0.0, 0.0, 0.6),
+        scrim: Color::from_rgba(0.0, 0.0, 0.0, 0.7),
     };
 
     pub(crate) const LIGHT: Self = Self {
-        rail: color!(0xe9eef6),
-        sidebar: color!(0xf3f6fc),
-        bg: color!(0xffffff),
+        rail: color!(0xffffff),
+        sidebar: color!(0xfafbfe),
+        bg: color!(0xfbfcfe),
         surface: color!(0xffffff),
-        surface_hi: color!(0xf1f3f4),
-        border: color!(0xdadce0),
-        text: color!(0x1f1f1f),
-        muted: color!(0x5f6368),
-        faint: color!(0x80868b),
-        accent: color!(0x1a73e8),
-        accent_hi: color!(0x1765cc),
+        surface_hi: color!(0xf0f2f7),
+        border: color!(0xe5e5ea),
+        text: color!(0x1d1d1f),
+        muted: color!(0x6e6e73),
+        faint: color!(0x8e8e93),
+        accent: color!(0x0a78f0),
+        accent_hi: color!(0x0864c8),
         on_accent: color!(0xffffff),
-        success: color!(0x188038),
-        warning: color!(0xe37400),
-        danger: color!(0xd93025),
-        info: color!(0x1a73e8),
-        shadow: Color::from_rgba(0.24, 0.25, 0.26, 0.18),
+        success: color!(0x1f9d3f),
+        warning: color!(0xc25e00),
+        danger: color!(0xd6204a),
+        info: color!(0x0a6ad6),
+        violet: color!(0x8e35c9),
+        shadow: Color::from_rgba(0.12, 0.24, 0.47, 0.12),
         scrim: Color::from_rgba(0.12, 0.13, 0.15, 0.35),
     };
 
-    /// Piecewise linear blend: `t = -1` is AMOLED, `t = 0` is dark, `t = 1`
-    /// is light.
+    /// Linear blend: `t = 0` is dark, `t = 1` is light.
     pub(crate) fn blend(t: f32) -> Self {
-        if t < 0.0 {
-            Self::lerp(Self::DARK, Self::AMOLED, -t)
-        } else {
-            Self::lerp(Self::DARK, Self::LIGHT, t)
-        }
+        Self::lerp(Self::DARK, Self::LIGHT, t.clamp(0.0, 1.0))
     }
 
     fn lerp(a: Self, b: Self, t: f32) -> Self {
@@ -132,6 +108,7 @@ impl Palette {
             warning: m(a.warning, b.warning),
             danger: m(a.danger, b.danger),
             info: m(a.info, b.info),
+            violet: m(a.violet, b.violet),
             shadow: m(a.shadow, b.shadow),
             scrim: m(a.scrim, b.scrim),
         }
@@ -153,6 +130,7 @@ impl Palette {
             warning: f(self.warning),
             danger: f(self.danger),
             info: f(self.info),
+            violet: f(self.violet),
             border: f(self.border),
             surface: mix(self.bg, self.surface, v),
             surface_hi: mix(self.bg, self.surface_hi, v),
@@ -206,8 +184,8 @@ fn luminance(c: Color) -> f32 {
 }
 
 /// Corner radii used across the application.
-pub(crate) const RADIUS: f32 = 10.0;
-pub(crate) const RADIUS_SM: f32 = 6.0;
+pub(crate) const RADIUS: f32 = 18.0;
+pub(crate) const RADIUS_SM: f32 = 12.0;
 
 fn shadow(p: &Palette, y: f32, blur: f32) -> Shadow {
     Shadow {
@@ -291,7 +269,7 @@ pub(crate) fn dialog(p: Palette) -> impl Fn(&Theme) -> container::Style {
         border: Border {
             color: p.border,
             width: 1.0,
-            radius: 14.0.into(),
+            radius: 24.0.into(),
         },
         shadow: shadow(&p, 18.0, 48.0),
         snap: true,
@@ -305,7 +283,7 @@ pub(crate) fn menu_surface(p: Palette) -> impl Fn(&Theme) -> container::Style {
         border: Border {
             color: p.border,
             width: 1.0,
-            radius: 8.0.into(),
+            radius: 14.0.into(),
         },
         shadow: shadow(&p, 8.0, 24.0),
         snap: true,
@@ -396,13 +374,15 @@ pub(crate) fn btn(p: Palette, tone: Tone) -> impl Fn(&Theme, button::Status) -> 
                     Color::TRANSPARENT
                 },
                 width: if tone == Tone::Secondary { 1.0 } else { 0.0 },
-                radius: RADIUS_SM.into(),
+                // Pill shape; iced clamps the radius to half the height.
+                radius: 999.0.into(),
             },
-            shadow: if hover && matches!(tone, Tone::Primary | Tone::Danger | Tone::Success) {
+            // Colored glow under filled buttons, stronger on hover.
+            shadow: if !disabled && matches!(tone, Tone::Primary | Tone::Danger | Tone::Success) {
                 Shadow {
-                    color: alpha(base, 0.35),
-                    offset: Vector::new(0.0, 3.0),
-                    blur_radius: 10.0,
+                    color: alpha(base, if hover { 0.45 } else { 0.28 }),
+                    offset: Vector::new(0.0, if hover { 6.0 } else { 4.0 }),
+                    blur_radius: if hover { 18.0 } else { 14.0 },
                 }
             } else {
                 Shadow::default()
@@ -730,10 +710,11 @@ mod tests {
     fn blend_endpoints_match_the_reference_palettes() {
         assert_eq!(Palette::blend(0.0), Palette::DARK);
         assert_eq!(Palette::blend(1.0), Palette::LIGHT);
-        assert_eq!(Palette::blend(-1.0), Palette::AMOLED);
+        // Out-of-range positions clamp instead of extrapolating.
+        assert_eq!(Palette::blend(-1.0), Palette::DARK);
+        assert_eq!(Palette::blend(2.0), Palette::LIGHT);
         assert!(!Palette::DARK.is_light());
-        assert!(!Palette::AMOLED.is_light());
-        assert_eq!(Palette::AMOLED.bg, Color::BLACK);
+        assert_eq!(Palette::DARK.bg, Color::BLACK);
         assert!(Palette::LIGHT.is_light());
     }
 
