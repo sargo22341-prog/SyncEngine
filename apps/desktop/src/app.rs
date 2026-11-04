@@ -223,6 +223,9 @@ pub(crate) enum Dialog {
     Update,
 }
 
+/// Runs added to the global history per page.
+pub(crate) const HISTORY_PAGE: usize = 30;
+
 /// Messages of the whole application.
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
@@ -331,6 +334,8 @@ pub(crate) enum Message {
     ScheduleRemoved(Result<(), Failure>),
     // History.
     ShowHistory(ProfileId),
+    /// Shows the next page of the global history.
+    HistoryMore,
     ShowRunProblems(ProfileId, String),
     HistoryFilter(sync_orchestrator::HistoryFilter),
     HistoryQuery(String),
@@ -404,6 +409,8 @@ pub(crate) struct App {
     pub(crate) plan_generation: u64,
     pub(crate) last_run: Option<LastRun>,
     pub(crate) expanded_run: Option<String>,
+    /// Runs shown in the global history (grows by one page at a time).
+    pub(crate) history_limit: usize,
     pub(crate) history: Option<HistoryPage>,
     /// Folder view of the expanded run, with the same filter and search.
     pub(crate) history_tree: crate::tree::Tree<model::HistoryRow>,
@@ -486,6 +493,7 @@ impl App {
             plan_generation: 0,
             last_run: None,
             expanded_run: None,
+            history_limit: crate::app::HISTORY_PAGE,
             history: None,
             history_tree: crate::tree::Tree::default(),
             list_mode: crate::tree::ListMode::default(),

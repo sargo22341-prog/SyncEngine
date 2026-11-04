@@ -765,6 +765,16 @@ pub(crate) fn pretty_path(value: &str) -> String {
         .unwrap_or_else(|| value.to_owned())
 }
 
+/// Cuts a label at `max` characters and appends « … » (names keep their start).
+pub(crate) fn truncate_end(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        return value.to_owned();
+    }
+    let mut out: String = value.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
 /// Shortens a long path keeping both ends visible.
 pub(crate) fn ellipsize(value: &str, max: usize) -> String {
     let chars: Vec<char> = value.chars().collect();

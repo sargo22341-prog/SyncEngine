@@ -15,4 +15,7 @@ la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes
 liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Liste des profils : le nom long est coupé par « … » et l'icône de planification et la pastille de résultat restent fixes à droite.
+- Vue d'ensemble : le libellé de planification est raccourci (« Connexion + 2 min », « Toutes les 2 h ») et n'est plus tronqué.
+- Historique : la vue globale liste les dernières exécutions de tous les profils, de la plus récente à la plus ancienne, 30 à la fois (« Afficher plus »).
 

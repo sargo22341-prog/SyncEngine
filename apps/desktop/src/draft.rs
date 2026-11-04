@@ -805,6 +805,29 @@ pub(crate) fn trigger_label(trigger: &Trigger) -> String {
     }
 }
 
+/// Compact variant of [`trigger_label`] for narrow table cells.
+pub(crate) fn trigger_short(trigger: &Trigger) -> String {
+    match trigger {
+        Trigger::Interval { seconds } => {
+            let m = seconds / 60;
+            if m % 1440 == 0 {
+                match m / 1440 {
+                    1 => "Chaque jour".to_owned(),
+                    d => format!("Tous les {d} j"),
+                }
+            } else if m % 60 == 0 {
+                format!("Toutes les {} h", m / 60)
+            } else {
+                format!("Toutes les {m} min")
+            }
+        }
+        Trigger::DailyUtc { hour, minute } => format!("Chaque jour {hour:02}:{minute:02}"),
+        Trigger::Logon => "À la connexion".into(),
+        Trigger::LogonDelayed { seconds } => format!("Connexion + {} min", seconds / 60),
+        Trigger::UserManagerStart => "Au démarrage".into(),
+    }
+}
+
 /// Next timed occurrence in Unix seconds (presentation only; the agent
 /// remains the authority and polls about once a minute).
 pub(crate) fn next_occurrence(trigger: &Trigger, created_at: i64, now: i64) -> Option<i64> {
@@ -1058,6 +1081,23 @@ pub(crate) fn regrouped(profile: &Profile, group: &str) -> Option<Profile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_trigger_labels_stay_compact() {
+        assert_eq!(
+            trigger_short(&Trigger::LogonDelayed { seconds: 120 }),
+            "Connexion + 2 min"
+        );
+        assert_eq!(
+            trigger_short(&Trigger::Interval { seconds: 7200 }),
+            "Toutes les 2 h"
+        );
+        assert_eq!(
+            trigger_short(&Trigger::Interval { seconds: 86_400 }),
+            "Chaque jour"
+        );
+        assert!(trigger_short(&Trigger::UserManagerStart).chars().count() <= 20);
+    }
 
     fn local(path: &str) -> EndpointDraft {
         let mut d = EndpointDraft::default();

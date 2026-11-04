@@ -568,24 +568,35 @@ impl App {
             .is_some_and(|d| d.active && d.profile == profile.id);
         let running = self.running_on(&profile.id);
         let color = mode_color(p, profile.mode);
-        let mut right = row![].spacing(6).align_y(Alignment::Center);
-        if self.schedule_of(&profile.id).is_some() {
+        // Two fixed slots (clock, status) so the icons stay aligned on the right
+        // whatever the length of the name or the presence of a schedule.
+        let clock: El<'a, Message> = if self.schedule_of(&profile.id).is_some() {
             let valid = self.schedule_valid(&profile.id) == Some(true);
-            right = right.push(icons::icon(
-                Glyph::Clock,
-                13.0,
-                if valid { p.faint } else { p.danger },
-            ));
-        }
-        if running {
+            icons::icon(Glyph::Clock, 13.0, if valid { p.faint } else { p.danger })
+        } else {
+            Space::new().into()
+        };
+        let status: El<'a, Message> = if running {
             let turn = self
                 .now
                 .saturating_duration_since(self.started)
                 .as_secs_f32();
-            right = right.push(icons::spinning(Glyph::Sync, 14.0, p.accent, turn));
+            icons::spinning(Glyph::Sync, 14.0, p.accent, turn)
         } else if let Some(run) = self.last_run(&profile.id) {
-            right = right.push(ui::dot(outcome_color(p, run.outcome), 8.0));
-        }
+            ui::dot(outcome_color(p, run.outcome), 8.0)
+        } else {
+            Space::new().into()
+        };
+        let right = row![
+            container(clock)
+                .width(Length::Fixed(16.0))
+                .align_x(Alignment::Center),
+            container(status)
+                .width(Length::Fixed(16.0))
+                .align_x(Alignment::Center),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
         let fg = if selected {
             p.text
         } else {
@@ -603,12 +614,13 @@ impl App {
                     16.0,
                     if dragged { p.faint } else { color }
                 ),
-                ui::colored(
+                container(ui::colored(
                     if dragged { p.faint } else { fg },
-                    model::ellipsize(&profile.name, 26),
+                    model::truncate_end(&profile.name, 21),
                     14.0
-                ),
-                ui::fill(),
+                ))
+                .width(Length::Fill)
+                .clip(true),
                 right,
             ]
             .spacing(10)

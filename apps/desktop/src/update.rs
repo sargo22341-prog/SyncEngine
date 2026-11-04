@@ -222,6 +222,7 @@ impl App {
             Message::Nav(nav) => {
                 self.go(nav);
                 if nav == Nav::History {
+                    self.history_limit = crate::app::HISTORY_PAGE;
                     self.expanded_run = None;
                     self.history = None;
                 }
@@ -892,6 +893,10 @@ impl App {
                 self.expanded_run = None;
                 self.history = None;
                 self.go(Nav::History);
+                Task::none()
+            }
+            Message::HistoryMore => {
+                self.history_limit += crate::app::HISTORY_PAGE;
                 Task::none()
             }
             Message::ShowRunProblems(id, execution) => {

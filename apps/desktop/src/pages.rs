@@ -9,10 +9,51 @@ use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
 use crate::ui_prefs::{CloseAction, ThemeChoice};
 use iced::widget::{
-    Space, button, column, container, grid, mouse_area, row, scrollable, text_input, toggler,
+    Space, button, column, container, mouse_area, row, scrollable, text_input, toggler,
 };
 use iced::{Alignment, Color, Length, Padding};
 use sync_profiles::Profile;
+
+/// One « last results » line: profile, outcome label and age; opens its history.
+fn feed_row<'a>(
+    p: &Palette,
+    profile: &'a Profile,
+    run: &'a model::RunView,
+    now: i64,
+) -> El<'a, Message> {
+    let c = outcome_color(p, run.outcome);
+    button(
+        row![
+            ui::glyph_box(
+                if run.outcome == Outcome::Success {
+                    Glyph::Check
+                } else {
+                    Glyph::Alert
+                },
+                c,
+                32.0
+            ),
+            column![
+                ui::strong(p.text, profile.name.clone(), 14.0),
+                ui::colored(c, run.label.clone(), 12.0)
+            ]
+            .spacing(1)
+            .width(Length::Fill),
+            ui::caption(
+                p,
+                run.started.map_or("—".into(), |s| model::relative(s, now))
+            ),
+            icons::icon(Glyph::ChevronRight, 14.0, p.faint),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([8, 10]))
+    .width(Length::Fill)
+    .style(theme::row_btn(*p, false))
+    .on_press(Message::ShowHistory(profile.id.clone()))
+    .into()
+}
 
 fn page<'a>(p: &Palette, content: impl Into<El<'a, Message>>, width: f32) -> El<'a, Message> {
     scrollable(
@@ -186,8 +227,8 @@ impl App {
             self.schedule_of(&profile.id),
             self.schedule_valid(&profile.id),
         ) {
-            (Some(s), Some(true)) => (p.info, draft::trigger_label(&s.schedule.trigger)),
-            (Some(_), _) => (p.danger, "Planification à renouveler".to_owned()),
+            (Some(s), Some(true)) => (p.info, draft::trigger_short(&s.schedule.trigger)),
+            (Some(_), _) => (p.danger, "À renouveler".to_owned()),
             _ => (p.faint, "Manuel".to_owned()),
         };
         let last = self
@@ -220,12 +261,13 @@ impl App {
             container(
                 row![
                     icons::icon(Glyph::Clock, 13.0, schedule.0),
-                    ui::colored(schedule.0, model::ellipsize(&schedule.1, 20), 12.0)
+                    ui::colored(schedule.0, model::truncate_end(&schedule.1, 20), 12.0)
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center)
             )
-            .width(Length::Fixed(150.0)),
+            .width(Length::Fixed(150.0))
+            .clip(true),
             container(ui::caption(p, last)).width(Length::Fixed(84.0)),
             ui::icon_button(
                 p,
@@ -312,39 +354,7 @@ impl App {
         ]
         .spacing(4);
         for (profile, run) in feed.iter().take(15) {
-            let c = outcome_color(p, run.outcome);
-            list = list.push(
-                button(
-                    row![
-                        ui::glyph_box(
-                            if run.outcome == Outcome::Success {
-                                Glyph::Check
-                            } else {
-                                Glyph::Alert
-                            },
-                            c,
-                            32.0
-                        ),
-                        column![
-                            ui::strong(p.text, profile.name.clone(), 14.0),
-                            ui::colored(c, run.label.clone(), 12.0)
-                        ]
-                        .spacing(1)
-                        .width(Length::Fill),
-                        ui::caption(
-                            p,
-                            run.started.map_or("—".into(), |s| model::relative(s, now))
-                        ),
-                        icons::icon(Glyph::ChevronRight, 14.0, p.faint),
-                    ]
-                    .spacing(12)
-                    .align_y(Alignment::Center),
-                )
-                .padding(Padding::from([8, 10]))
-                .width(Length::Fill)
-                .style(theme::row_btn(*p, false))
-                .on_press(Message::ShowHistory(profile.id.clone())),
-            );
+            list = list.push(feed_row(p, profile, run, now));
         }
         if feed.is_empty() {
             list = list.push(ui::muted(p, "Aucun résultat enregistré."));
@@ -359,31 +369,55 @@ impl App {
 
     pub(crate) fn history_page<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         let Some(profile) = self.selected.as_ref().and_then(|id| self.profile(id)) else {
-            let picks = self.ws.profiles.iter().map(|pr| {
-                button(
-                    row![
-                        icons::icon(mode_glyph(pr.mode), 16.0, mode_color(p, pr.mode)),
-                        ui::colored(p.text, pr.name.clone(), 14.0)
-                    ]
-                    .spacing(10)
-                    .align_y(Alignment::Center),
-                )
-                .padding(12)
-                .width(Length::Fill)
-                .style(theme::tile(*p, false, true))
-                .on_press(Message::ShowHistory(pr.id.clone()))
-                .into()
-            });
-            return page(
-                p,
-                column![
-                    ui::title(p, "Historique", 26.0),
-                    ui::muted(p, "Choisissez un profil pour consulter ses exécutions, y compris les états partiels et interruptions."),
-                    grid(picks).fluid(260.0).spacing(10).height(iced::widget::grid::Sizing::EvenlyDistribute(Length::Shrink)),
-                ]
-                .spacing(16),
-                1100.0,
-            );
+            let now = model::now_secs();
+            let mut feed: Vec<(&Profile, &model::RunView)> = self
+                .ws
+                .profiles
+                .iter()
+                .flat_map(|pr| {
+                    self.ws
+                        .runs
+                        .get(&pr.id)
+                        .into_iter()
+                        .flatten()
+                        .map(move |r| (pr, r))
+                })
+                .collect();
+            feed.sort_by_key(|(_, r)| std::cmp::Reverse(r.started.unwrap_or(0)));
+            let total = feed.len();
+            let shown = self.history_limit.min(total);
+            let mut list = column![].spacing(4);
+            for (profile, run) in feed.iter().take(shown) {
+                list = list.push(feed_row(p, profile, run, now));
+            }
+            if total == 0 {
+                list = list.push(ui::muted(p, "Aucune exécution enregistrée."));
+            }
+            let mut col = column![
+                ui::title(p, "Historique", 26.0),
+                ui::muted(
+                    p,
+                    "Dernières exécutions de tous les profils, de la plus récente à la plus ancienne. Sélectionnez un profil pour voir son détail."
+                ),
+                container(list).padding(14).style(theme::card(*p, 0.0, false)),
+            ]
+            .spacing(16);
+            if total > 0 {
+                let mut footer = row![ui::caption(p, format!("{shown} sur {total} exécutions"))]
+                    .spacing(14)
+                    .align_y(Alignment::Center);
+                if shown < total {
+                    footer = footer.push(ui::action(
+                        p,
+                        Tone::Secondary,
+                        None,
+                        "Afficher plus",
+                        Some(Message::HistoryMore),
+                    ));
+                }
+                col = col.push(footer);
+            }
+            return page(p, col, 1100.0);
         };
         let now = model::now_secs();
         let runs = self
