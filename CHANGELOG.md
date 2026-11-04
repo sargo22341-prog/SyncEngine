@@ -35,8 +35,11 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
   (schéma 2, valeur de `Reason` ajoutée), `build_plan_resolved`,
   `sync_session::preview_resolved`, `Application::preview_resolving`.
   Exige la corbeille du profil ; un choix périmé (contenu modifié) est ignoré.
+- Courbe de débit à deux séries en bidirectionnel (vers la destination / vers
+  la source) : `JobSnapshot::bytes_to_source` (champ ajouté, `serde(default)`,
+  `agent-live.json` ancien toujours lisible). Fonds de courbe plats.
 - Non fait : assistant en
-  cinq étapes, courbes envoi/réception séparées, calendrier de planification,
+  cinq étapes, calendrier de planification,
   réglages de performances, polices embarquées.
 
 ### Apparence

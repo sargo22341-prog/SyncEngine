@@ -270,6 +270,12 @@ gros fichiers écrits ensemble sur un disque dur ralentissent tout. Voir
 affiché à côté (création de dossiers, petits fichiers). La relecture de
 vérification d'un fichier n'est pas comptée comme débit.
 
+En bidirectionnel, la courbe en trace deux : le débit **vers la destination**
+(lime) et le débit **vers la source** (violet), sur la même échelle ; le chiffre
+affiché est leur somme. Les octets vers la source sont comptés par opération à
+partir des événements de transfert (un transfert échoué n'est pas retranché).
+Sauvegarde et miroir n'écrivent que vers la destination : une seule courbe.
+
 Sous la courbe, jusqu'à quatre lignes montrent les fichiers en cours de copie
 (une par copie parallèle) : chemin, barre de progression du fichier, octets
 copiés sur sa taille et débit moyen de ce fichier. Un fichier n'apparaît qu'au

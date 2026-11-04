@@ -62,6 +62,8 @@ pub(crate) struct Sample {
     pub(crate) at: Instant,
     /// Bytes transferred block by block (not only validated files).
     pub(crate) bytes: u64,
+    /// Part of `bytes` written toward the source folder (bidirectional).
+    pub(crate) to_source: u64,
     /// Completed operations (folders created, files validated, deletions).
     pub(crate) operations: u64,
     pub(crate) scanned: u64,

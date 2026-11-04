@@ -1190,3 +1190,38 @@ fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     found
 }
+
+#[test]
+fn bidirectional_counts_bytes_written_toward_the_source_separately()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_temp, app, p) = fixture(SyncMode::Bidirectional)?;
+    fs::write(p.source.join("left"), b"1234")?;
+    fs::write(p.destination.join("right"), b"abcdefg")?;
+    let preview = app.preview(p.id.clone())?;
+    app.execute(
+        p.id.clone(),
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    let snapshot = app.snapshot()?;
+    // Only « right » (7 bytes) was written into the source folder.
+    assert_eq!(snapshot.bytes_to_source, 7);
+    assert!(snapshot.bytes_transferred >= 11);
+    Ok(())
+}
+
+#[test]
+fn backup_never_reports_bytes_toward_the_source() -> Result<(), Box<dyn std::error::Error>> {
+    let (_temp, app, p) = fixture(SyncMode::Backup)?;
+    fs::write(p.source.join("f"), b"data")?;
+    let preview = app.preview(p.id.clone())?;
+    app.execute(
+        p.id,
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    assert_eq!(app.snapshot()?.bytes_to_source, 0);
+    Ok(())
+}

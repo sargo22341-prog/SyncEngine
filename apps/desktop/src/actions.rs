@@ -79,6 +79,7 @@ impl App {
                 // it: a late frame would otherwise skew the windowed rate.
                 at: Instant::now(),
                 bytes: snapshot.bytes_transferred,
+                to_source: snapshot.bytes_to_source,
                 operations: snapshot.entries_done,
                 // Listing and content reading both count as analysis work.
                 scanned: snapshot
@@ -155,6 +156,7 @@ impl App {
         let sample = Sample {
             at: self.now,
             bytes: s.bytes_transferred,
+            to_source: s.bytes_to_source,
             operations: s.entries_done,
             scanned: s.entries_scanned.saturating_add(s.entries_hashed),
             quick: s.quick_transfers,
@@ -313,6 +315,7 @@ impl App {
             samples: VecDeque::from([Sample {
                 at: self.now,
                 bytes: 0,
+                to_source: 0,
                 operations: 0,
                 scanned: 0,
                 quick: 0,

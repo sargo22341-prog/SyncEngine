@@ -468,10 +468,19 @@ impl App {
                 job.samples.iter().map(|s| (s.at, count(s))).collect();
             speed::rates(&counts, job.started)
         };
+        // Bidirectional runs draw the two directions apart: toward the
+        // destination (the left folder's changes) and toward the source.
+        let two_ways = job.kind == JobKind::Execute
+            && (s.bytes_to_source > 0
+                || self
+                    .profile(&job.profile)
+                    .is_some_and(|pr| pr.mode == SyncMode::Bidirectional));
         let values = match job.kind {
+            JobKind::Execute if two_ways => series(|s| s.bytes.saturating_sub(s.to_source)),
             JobKind::Execute => series(|s| s.bytes),
             JobKind::Preview => series(|s| s.scanned),
         };
+        let reverse = two_ways.then(|| series(|s| s.to_source));
         // Many small items (folders, thumbnails) move few bytes: show the
         // operation rate next to the byte rate, as FreeFileSync does.
         let operations = match job.kind {
@@ -481,6 +490,17 @@ impl App {
         let rate_label = match (values.last(), job.kind) {
             // Not estimated during the first second: no misleading 0.
             (None, _) => "mesure…".to_owned(),
+            (Some(rate), JobKind::Execute) if two_ways => format!(
+                "{}/s",
+                model::bytes(
+                    (*rate
+                        + reverse
+                            .as_ref()
+                            .and_then(|r| r.last())
+                            .copied()
+                            .unwrap_or(0.0)) as u64
+                )
+            ),
             (Some(rate), JobKind::Execute) => format!("{}/s", model::bytes(*rate as u64)),
             (Some(rate), JobKind::Preview) => {
                 format!("{} éléments/s", model::count(*rate as u64))
@@ -611,9 +631,32 @@ impl App {
             ));
         }
         if large {
+            if let Some(reverse) = &reverse {
+                let rate = |v: &[f32]| {
+                    v.last().map_or("—".to_owned(), |r| {
+                        format!("{}/s", model::bytes(*r as u64))
+                    })
+                };
+                body = body.push(
+                    row![
+                        ui::dot(p.backup, 8.0),
+                        ui::colored(
+                            p.muted,
+                            format!("Vers la destination {}", rate(&values)),
+                            12.0
+                        ),
+                        ui::hspace(12.0),
+                        ui::dot(p.violet, 8.0),
+                        ui::colored(p.muted, format!("Vers la source {}", rate(reverse)), 12.0),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                );
+            }
             body = body.push(charts::spark(
                 values,
-                color,
+                if reverse.is_some() { p.backup } else { color },
+                reverse.map(|r| (r, p.violet)),
                 theme::alpha(p.text, 0.06),
                 70.0,
             ));

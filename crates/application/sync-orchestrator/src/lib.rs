@@ -147,6 +147,12 @@ pub struct JobSnapshot {
     /// Auxiliary bytes archived before replacement/deletion.
     #[serde(default)]
     pub bytes_versioned: u64,
+    /// Part of [`Self::bytes_transferred`] written toward the **source**
+    /// folder (bidirectional only; always 0 otherwise). The rest went toward
+    /// the destination. Counted per operation from the transfer events, so a
+    /// failed transfer is not subtracted; presentation only.
+    #[serde(default)]
+    pub bytes_to_source: u64,
     /// Entries observed during preview, including directories (both endpoints).
     pub entries_scanned: u64,
     /// Read/listing anomalies excluding consistency warnings. Unknown coverage
@@ -326,6 +332,55 @@ impl LiveFiles {
     }
 }
 
+/// Bytes written toward the source folder, counted per operation from the
+/// transfer events (only operations of the plan that target the source are
+/// known here). Presentation only: nothing decides from it.
+struct ReverseBytes {
+    total: Arc<AtomicU64>,
+    /// Planned size of each operation that writes toward the source.
+    sizes: std::collections::HashMap<sync_core::OperationId, u64>,
+    /// Bytes already counted per operation.
+    counted: Mutex<std::collections::HashMap<sync_core::OperationId, u64>>,
+}
+impl ReverseBytes {
+    fn new(total: Arc<AtomicU64>, plan: &ExecutionPlan) -> Self {
+        let sizes = plan
+            .operations()
+            .iter()
+            .filter(|op| op.target() == sync_plan::PlanSide::Source && op.action().is_mutation())
+            .map(|op| (op.id().clone(), op.bytes().unwrap_or(0)))
+            .collect();
+        Self {
+            total,
+            sizes,
+            counted: Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+    /// Counts up to `done` bytes (capped by the planned size) for `operation`.
+    fn reach(&self, operation: &sync_core::OperationId, done: u64) {
+        let Some(size) = self.sizes.get(operation) else {
+            return;
+        };
+        let mut counted = self
+            .counted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let seen = counted.entry(operation.clone()).or_insert(0);
+        let reached = done.min(*size);
+        if reached > *seen {
+            self.total.fetch_add(reached - *seen, Relaxed);
+            *seen = reached;
+        }
+    }
+    /// A transfer ended: a file shorter than the progress interval never
+    /// reported its bytes, so the planned size is counted.
+    fn ended(&self, operation: &sync_core::OperationId) {
+        if let Some(size) = self.sizes.get(operation).copied() {
+            self.reach(operation, size);
+        }
+    }
+}
+
 /// Keeps only the latest transferred-byte count from executor progress
 /// events, and the files in flight: no queue, nothing grows with the
 /// transfer size.
@@ -334,6 +389,7 @@ struct LiveTransfer {
     verified: Arc<AtomicU64>,
     versioned: Arc<AtomicU64>,
     files: Arc<LiveFiles>,
+    reverse: ReverseBytes,
 }
 impl EventSink for LiveTransfer {
     fn emit(&self, event: Event) -> EmitOutcome {
@@ -346,10 +402,15 @@ impl EventSink for LiveTransfer {
                 path,
                 bytes_done,
                 bytes_total,
-            } => self
-                .files
-                .progress(operation, path, *bytes_done, *bytes_total),
-            EventKind::TransferEnded { operation } => self.files.ended(operation),
+            } => {
+                self.reverse.reach(operation, *bytes_done);
+                self.files
+                    .progress(operation, path, *bytes_done, *bytes_total);
+            }
+            EventKind::TransferEnded { operation } => {
+                self.reverse.ended(operation);
+                self.files.ended(operation);
+            }
             _ => {}
         }
         if let EventKind::IoActivity {
@@ -378,6 +439,8 @@ pub struct Application {
     transferred: Arc<AtomicU64>,
     verified: Arc<AtomicU64>,
     versioned: Arc<AtomicU64>,
+    /// Bytes of the current execution written toward the source folder.
+    to_source: Arc<AtomicU64>,
     /// Files being copied by the current execution.
     files: Arc<LiveFiles>,
 }
@@ -434,6 +497,7 @@ impl Application {
             transferred: Arc::new(AtomicU64::new(0)),
             verified: Arc::new(AtomicU64::new(0)),
             versioned: Arc::new(AtomicU64::new(0)),
+            to_source: Arc::new(AtomicU64::new(0)),
             files: Arc::new(LiveFiles::default()),
         })
     }
@@ -586,6 +650,7 @@ impl Application {
         self.transferred.store(0, Relaxed);
         self.verified.store(0, Relaxed);
         self.versioned.store(0, Relaxed);
+        self.to_source.store(0, Relaxed);
         self.files.reset();
         *lock(&self.snapshot)? = JobSnapshot {
             active: true,
@@ -973,6 +1038,7 @@ impl Application {
                 verified: Arc::clone(&self.verified),
                 versioned: Arc::clone(&self.versioned),
                 files: Arc::clone(&self.files),
+                reverse: ReverseBytes::new(Arc::clone(&self.to_source), &cached.plan),
             }),
         );
         let result = if cached.profile.mode == SyncMode::Bidirectional {
@@ -1066,6 +1132,7 @@ impl Application {
         snapshot.bytes_transferred = self.transferred.load(Relaxed).max(snapshot.bytes_done);
         snapshot.bytes_verified = self.verified.load(Relaxed);
         snapshot.bytes_versioned = self.versioned.load(Relaxed);
+        snapshot.bytes_to_source = self.to_source.load(Relaxed).min(snapshot.bytes_transferred);
         if snapshot.active {
             self.files.publish(&mut snapshot);
         }
@@ -1275,10 +1342,15 @@ mod scan_progress_tests {
             .as_object_mut()
             .ok_or("not an object")?
             .remove("bytes_versioned");
+        value
+            .as_object_mut()
+            .ok_or("not an object")?
+            .remove("bytes_to_source");
         let snapshot: JobSnapshot = serde_json::from_value(value)?;
         assert_eq!(snapshot.scan_consistency_warnings, 0);
         assert_eq!(snapshot.bytes_verified, 0);
         assert_eq!(snapshot.bytes_versioned, 0);
+        assert_eq!(snapshot.bytes_to_source, 0);
         Ok(())
     }
 }

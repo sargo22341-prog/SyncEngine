@@ -7,12 +7,57 @@ use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineDash, Path, Strok
 use iced::{Color, Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme};
 use std::f32::consts::PI;
 
-/// Filled area chart of the latest samples (values are already scaled).
+/// Area chart of the latest samples (values are already scaled). An optional
+/// second series shares the vertical scale, so the two directions stay
+/// comparable. Flat translucent fills, no gradient.
 #[derive(Debug, Clone)]
 pub(crate) struct Spark {
     pub(crate) values: Vec<f32>,
     pub(crate) color: Color,
+    /// Second series (rate toward the source) and its color.
+    pub(crate) second: Option<(Vec<f32>, Color)>,
     pub(crate) grid: Color,
+}
+
+impl Spark {
+    fn draw_series(frame: &mut Frame, (w, h): (f32, f32), max: f32, values: &[f32], color: Color) {
+        if values.len() < 2 {
+            return;
+        }
+        let step = w / (values.len() - 1) as f32;
+        let point =
+            |i: usize, v: f32| Point::new(i as f32 * step, h - 4.0 - (v / max) * (h - 10.0));
+        let line = Path::new(|b| {
+            for (i, v) in values.iter().enumerate() {
+                if i == 0 {
+                    b.move_to(point(i, *v));
+                } else {
+                    b.line_to(point(i, *v));
+                }
+            }
+        });
+        let area = Path::new(|b| {
+            b.move_to(Point::new(0.0, h));
+            for (i, v) in values.iter().enumerate() {
+                b.line_to(point(i, *v));
+            }
+            b.line_to(Point::new(w, h));
+            b.close();
+        });
+        frame.fill(&area, Color { a: 0.14, ..color });
+        frame.stroke(
+            &line,
+            Stroke::default()
+                .with_color(color)
+                .with_width(2.0)
+                .with_line_cap(LineCap::Round),
+        );
+        if let Some(last) = values.last() {
+            let p = point(values.len() - 1, *last);
+            frame.fill(&Path::circle(p, 4.0), color);
+            frame.fill(&Path::circle(p, 8.0), Color { a: 0.2, ..color });
+        }
+    }
 }
 
 impl<M> canvas::Program<M> for Spark {
@@ -34,63 +79,16 @@ impl<M> canvas::Program<M> for Spark {
                 Stroke::default().with_color(self.grid).with_width(1.0),
             );
         }
-        if self.values.len() >= 2 {
-            let max = self.values.iter().copied().fold(f32::EPSILON, f32::max);
-            let step = w / (self.values.len() - 1) as f32;
-            let point =
-                |i: usize, v: f32| Point::new(i as f32 * step, h - 4.0 - (v / max) * (h - 10.0));
-            let line = Path::new(|b| {
-                for (i, v) in self.values.iter().enumerate() {
-                    if i == 0 {
-                        b.move_to(point(i, *v));
-                    } else {
-                        b.line_to(point(i, *v));
-                    }
-                }
-            });
-            let area = Path::new(|b| {
-                b.move_to(Point::new(0.0, h));
-                for (i, v) in self.values.iter().enumerate() {
-                    b.line_to(point(i, *v));
-                }
-                b.line_to(Point::new(w, h));
-                b.close();
-            });
-            let fill = gradient::Linear::new(Point::new(0.0, 0.0), Point::new(0.0, h))
-                .add_stop(
-                    0.0,
-                    Color {
-                        a: 0.35,
-                        ..self.color
-                    },
-                )
-                .add_stop(
-                    1.0,
-                    Color {
-                        a: 0.0,
-                        ..self.color
-                    },
-                );
-            frame.fill(&area, fill);
-            frame.stroke(
-                &line,
-                Stroke::default()
-                    .with_color(self.color)
-                    .with_width(2.0)
-                    .with_line_cap(LineCap::Round),
-            );
-            if let Some(last) = self.values.last() {
-                let p = point(self.values.len() - 1, *last);
-                frame.fill(&Path::circle(p, 4.0), self.color);
-                frame.fill(
-                    &Path::circle(p, 8.0),
-                    Color {
-                        a: 0.2,
-                        ..self.color
-                    },
-                );
-            }
+        let max = self
+            .values
+            .iter()
+            .chain(self.second.iter().flat_map(|(v, _)| v.iter()))
+            .copied()
+            .fold(f32::EPSILON, f32::max);
+        if let Some((second, color)) = &self.second {
+            Self::draw_series(&mut frame, (w, h), max, second, *color);
         }
+        Self::draw_series(&mut frame, (w, h), max, &self.values, self.color);
         vec![frame.into_geometry()]
     }
 }
@@ -98,12 +96,14 @@ impl<M> canvas::Program<M> for Spark {
 pub(crate) fn spark<'a, M: 'a>(
     values: Vec<f32>,
     color: Color,
+    second: Option<(Vec<f32>, Color)>,
     grid: Color,
     height: f32,
 ) -> Element<'a, M> {
     canvas::Canvas::new(Spark {
         values,
         color,
+        second,
         grid,
     })
     .width(Length::Fill)
