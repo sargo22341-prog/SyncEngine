@@ -165,6 +165,20 @@ impl<M> canvas::Program<M> for Ring {
                     .with_width(self.width)
                     .with_line_cap(LineCap::Round),
             );
+            // Pulsing light dot at the head of a determinate arc.
+            if self.progress.is_some() {
+                let end = start + sweep;
+                let head = Point::new(center.x + radius * end.cos(), center.y + radius * end.sin());
+                let pulse = 0.5 + 0.5 * (self.phase * 2.0 * PI * 1.5).sin();
+                frame.fill(
+                    &Path::circle(head, self.width * (0.9 + 0.5 * pulse)),
+                    Color {
+                        a: 0.30 * (1.0 - pulse * 0.6),
+                        ..self.color
+                    },
+                );
+                frame.fill(&Path::circle(head, self.width * 0.32), Color::WHITE);
+            }
         }
         vec![frame.into_geometry()]
     }

@@ -15,7 +15,7 @@ use iced::widget::{
     Space, button, checkbox, column, container, mouse_area, opaque, row, scrollable, stack,
     text_input, toggler,
 };
-use iced::{Alignment, Length, Padding, Task};
+use iced::{Alignment, Color, Length, Padding, Task};
 use std::path::PathBuf;
 use std::time::Instant;
 use sync_plan::SyncMode;
@@ -434,21 +434,28 @@ impl Wizard {
         });
         let step_no = self.step.index() + 1;
         let header = column![
-            ui::eyebrow(
-                content_p.accent,
-                &format!("Étape {step_no} sur {}", Step::ALL.len())
+            ui::strong(
+                content_p.violet,
+                format!(
+                    "Étape {step_no} sur {} · {}",
+                    Step::ALL.len(),
+                    self.step.short()
+                ),
+                14.0
             ),
-            ui::title(&content_p, self.step.title(), 26.0),
+            ui::title(&content_p, self.step.title(), 32.0),
             ui::muted(&content_p, self.step.subtitle()),
         ]
         .spacing(6);
         let right = column![
             container(header).padding(Padding {
                 top: 30.0,
-                bottom: 18.0,
+                bottom: 14.0,
                 left: 36.0 + shift * 0.4,
                 right: 36.0
             }),
+            container(self.stepper(&panel_p)).padding(Padding::from([0, 36])),
+            ui::vspace(10.0),
             scrollable(
                 container(body)
                     .padding(Padding::from([4, 36]))
@@ -460,7 +467,7 @@ impl Wizard {
         ]
         .width(Length::Fill)
         .height(Length::Fill);
-        let panel = container(row![self.stepper(&panel_p), right])
+        let panel = container(right)
             .width(Length::Fill)
             .height(Length::Fill)
             .max_width(1120.0)
@@ -493,117 +500,52 @@ impl Wizard {
         .into()
     }
 
+    /// Segmented progress bar over the seven steps: a thin bar per step
+    /// (filled when done, violet when current) with its short name below.
     fn stepper<'a>(&'a self, p: &Palette) -> El<'a, Message> {
-        let mut col = column![
-            row![
-                icons::icon(Glyph::Logo, 22.0, p.accent),
-                ui::strong(
-                    p.text,
-                    if self.draft.existing.is_some() {
-                        "Modifier le profil"
-                    } else {
-                        "Nouveau profil"
-                    },
-                    15.0
-                )
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-            ui::vspace(26.0),
-        ]
-        .spacing(0);
         let current = self.step.index();
+        let mut steps = row![].spacing(8);
         for (i, step) in Step::ALL.iter().enumerate() {
             let done = i < current
                 || (i <= self.visited && i != current && self.step_error(*step).is_none());
             let active = i == current;
             let reachable = i <= self.visited;
-            let color = if active {
-                p.accent
+            let fill = if active {
+                p.violet
             } else if done {
-                p.success
+                p.accent
+            } else {
+                Color::TRANSPARENT
+            };
+            let bar = container(
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(5.0))
+                    .style(theme::bar(fill)),
+            )
+            .width(Length::Fill)
+            .style(theme::bar(theme::alpha(p.text, 0.10)));
+            let label_color = if active {
+                p.violet
+            } else if done {
+                p.text
+            } else if reachable {
+                p.muted
             } else {
                 p.faint
             };
-            let marker: El<'a, Message> = container(if done && !active {
-                icons::icon(Glyph::Check, 13.0, p.on_accent)
-            } else {
-                ui::strong(
-                    if active { p.on_accent } else { p.muted },
-                    (i + 1).to_string(),
-                    12.0,
-                )
-            })
-            .width(Length::Fixed(26.0))
-            .height(Length::Fixed(26.0))
-            .center_x(Length::Fixed(26.0))
-            .center_y(Length::Fixed(26.0))
-            .style(theme::pill(
-                if active || done {
-                    color
-                } else {
-                    theme::alpha(p.text, 0.08)
-                },
-                p.on_accent,
-            ))
-            .into();
-            col = col.push(
-                button(
-                    row![
-                        marker,
-                        ui::colored(
-                            if active {
-                                p.text
-                            } else if reachable {
-                                p.muted
-                            } else {
-                                p.faint
-                            },
-                            step.short(),
-                            14.0
-                        )
-                    ]
-                    .spacing(12)
-                    .align_y(Alignment::Center),
-                )
-                .padding(Padding::from([6, 8]))
-                .width(Length::Fill)
-                .style(theme::row_btn(*p, active))
-                .on_press_maybe(
-                    (reachable || i == current + 1)
-                        .then_some(Message::Wizard(WizardMsg::GoTo(*step))),
-                ),
+            steps = steps.push(
+                button(column![bar, ui::strong(label_color, step.short(), 12.0)].spacing(6))
+                    .padding(Padding::from([4, 0]))
+                    .width(Length::Fill)
+                    .style(theme::btn(*p, Tone::Ghost))
+                    .on_press_maybe(
+                        (reachable || i == current + 1)
+                            .then_some(Message::Wizard(WizardMsg::GoTo(*step))),
+                    ),
             );
-            if i + 1 < Step::ALL.len() {
-                col = col.push(
-                    container(
-                        container(Space::new())
-                            .width(Length::Fixed(2.0))
-                            .height(Length::Fixed(14.0))
-                            .style(theme::bar(if i < current {
-                                p.success
-                            } else {
-                                theme::alpha(p.text, 0.1)
-                            })),
-                    )
-                    .padding(Padding {
-                        left: 20.0,
-                        ..Padding::ZERO
-                    }),
-                );
-            }
         }
-        col = col.push(Space::new().height(Length::Fill)).push(
-            row![ui::kbd(p, "Échap"), ui::caption(p, "pour fermer")]
-                .spacing(8)
-                .align_y(Alignment::Center),
-        );
-        container(col)
-            .padding(Padding::from([28, 20]))
-            .width(Length::Fixed(240.0))
-            .height(Length::Fill)
-            .style(theme::panel(p.sidebar))
-            .into()
+        steps.width(Length::Fill).into()
     }
 
     fn footer<'a>(&'a self, p: &Palette, now: Instant) -> El<'a, Message> {
@@ -678,6 +620,7 @@ impl Wizard {
                     "Annuler",
                     (!self.saving).then_some(Message::Wizard(WizardMsg::Close))
                 ),
+                ui::kbd(p, "Échap"),
                 error,
             ]
             .push(back)
@@ -716,7 +659,7 @@ impl Wizard {
             (
                 SyncMode::Backup,
                 Glyph::Backup,
-                p.success,
+                p.accent,
                 [
                     "Copie les nouveautés et modifications",
                     "Ne supprime jamais rien",
@@ -726,7 +669,7 @@ impl Wizard {
             (
                 SyncMode::Mirror,
                 Glyph::Mirror,
-                p.accent,
+                p.warning,
                 [
                     "Destination identique à la source",
                     "Suppressions seulement si autorisées",
@@ -736,7 +679,7 @@ impl Wizard {
             (
                 SyncMode::Bidirectional,
                 Glyph::TwoWay,
-                p.warning,
+                p.violet,
                 [
                     "Changements propagés des deux côtés",
                     "Conflits conservés, jamais écrasés",
@@ -758,8 +701,12 @@ impl Wizard {
             });
             button(
                 column![
-                    ui::glyph_box(glyph, color, 56.0),
-                    ui::title(p, model::mode_label(mode), 19.0),
+                    ui::glyph_box(glyph, color, 40.0),
+                    ui::title(
+                        &Palette { text: color, ..*p },
+                        model::mode_label(mode),
+                        22.0
+                    ),
                     ui::muted(p, model::mode_tagline(mode)),
                     ui::divider(p),
                     facts,

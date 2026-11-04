@@ -299,17 +299,14 @@ pub(crate) fn callout<'a, M: 'a>(
     .into()
 }
 
-/// Rounded square holding a glyph (avatars of profiles, modes, providers).
+/// Discreet colored glyph (profiles, modes, providers): no tile behind it, the
+/// color alone carries the meaning. Occupies a `size` square so layouts that
+/// align on it keep their rhythm.
 pub(crate) fn glyph_box<'a, M: 'a>(glyph: Glyph, color: Color, size: f32) -> El<'a, M> {
-    container(icons::icon(glyph, size * 0.55, color))
+    container(icons::icon(glyph, (size * 0.5).max(16.0), color))
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
         .center_x(Length::Fixed(size))
         .center_y(Length::Fixed(size))
-        .style(move |_| container::Style {
-            background: Some(theme::alpha(color, 0.16).into()),
-            border: iced::border::rounded(size * 0.3),
-            ..container::Style::default()
-        })
         .into()
 }

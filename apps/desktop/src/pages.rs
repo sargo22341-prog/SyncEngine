@@ -29,25 +29,13 @@ fn page<'a>(p: &Palette, content: impl Into<El<'a, Message>>, width: f32) -> El<
     .into()
 }
 
-fn stat<'a>(
-    p: &Palette,
-    glyph: Glyph,
-    color: Color,
-    value: String,
-    label: &'static str,
-) -> El<'a, Message> {
-    container(
-        row![
-            ui::glyph_box(glyph, color, 42.0),
-            column![ui::title(p, value, 24.0), ui::caption(p, label)].spacing(0),
-        ]
-        .spacing(14)
-        .align_y(Alignment::Center),
-    )
-    .padding(16)
-    .width(Length::Fill)
-    .style(theme::card(*p, 0.0, false))
-    .into()
+/// Figure tile: colored label above a large number.
+fn stat<'a>(p: &Palette, color: Color, value: String, label: &'static str) -> El<'a, Message> {
+    container(column![ui::strong(color, label, 13.0), ui::title(p, value, 30.0)].spacing(4))
+        .padding(Padding::from([14, 18]))
+        .width(Length::Fill)
+        .style(theme::card(*p, 0.0, false))
+        .into()
 }
 
 impl App {
@@ -82,8 +70,8 @@ impl App {
         let mut col = column![
             row![
                 column![
-                    ui::eyebrow(p.accent, "Vue d’ensemble"),
-                    ui::title(p, "Vos synchronisations", 28.0),
+                    ui::strong(p.accent, format!("{total} profils"), 14.0),
+                    ui::title(p, "Vos synchronisations", 34.0),
                     ui::muted(p, summary),
                 ]
                 .spacing(6)
@@ -106,18 +94,11 @@ impl App {
             .spacing(10)
             .align_y(Alignment::Center),
             row![
-                stat(p, Glyph::Layers, p.accent, total.to_string(), "profils"),
-                stat(p, Glyph::Clock, p.info, scheduled.to_string(), "planifiés"),
+                stat(p, p.accent, total.to_string(), "profils"),
+                stat(p, p.violet, scheduled.to_string(), "planifiés"),
+                stat(p, p.success, ok.to_string(), "derniers résultats réussis"),
                 stat(
                     p,
-                    Glyph::Check,
-                    p.success,
-                    ok.to_string(),
-                    "derniers résultats réussis"
-                ),
-                stat(
-                    p,
-                    Glyph::Alert,
                     if attention > 0 { p.warning } else { p.faint },
                     attention.to_string(),
                     "à surveiller"
@@ -138,7 +119,7 @@ impl App {
             } else {
                 group.clone()
             };
-            let cards = members
+            let rows = members
                 .iter()
                 .map(|pr| self.profile_card(p, pr))
                 .chain(std::iter::once(add_card(p, &group)));
@@ -164,10 +145,7 @@ impl App {
                     .align_y(Alignment::Center)
                 )
                 .on_right_press(Message::OpenMenu(MenuTarget::Group(group.clone()))),
-                grid(cards)
-                    .fluid(420.0)
-                    .spacing(12)
-                    .height(iced::widget::grid::Sizing::EvenlyDistribute(Length::Shrink)),
+                column(rows).spacing(10),
             ]
             .spacing(10);
             col = col.push(
@@ -216,67 +194,55 @@ impl App {
             .last_run(&profile.id)
             .and_then(|r| r.started)
             .map_or("jamais lancé".to_owned(), |t| model::relative(t, now));
-        let body = column![
-            row![
-                ui::glyph_box(mode_glyph(profile.mode), color, 40.0),
-                column![
-                    ui::strong(p.text, model::ellipsize(&profile.name, 30), 15.0),
-                    ui::caption(p, model::mode_label(profile.mode))
-                ]
-                .spacing(1)
-                .width(Length::Fill),
-                status,
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
+        let body = row![
+            ui::glyph_box(mode_glyph(profile.mode), color, 28.0),
             column![
-                ui::mono(
-                    p.muted,
-                    model::ellipsize(&model::source_of(profile), 40),
-                    12.0
-                ),
-                row![
-                    icons::icon(
+                ui::strong(p.text, model::ellipsize(&profile.name, 40), 16.0),
+                ui::caption(
+                    p,
+                    format!(
+                        "{}  {}  {}",
+                        model::ellipsize(&model::source_of(profile), 26),
                         if profile.mode == sync_plan::SyncMode::Bidirectional {
-                            Glyph::TwoWay
+                            "↔"
                         } else {
-                            Glyph::ArrowRight
+                            "→"
                         },
-                        12.0,
-                        color
-                    ),
-                    ui::mono(
-                        p.muted,
-                        model::ellipsize(&model::destination_of(profile), 38),
-                        12.0
+                        model::ellipsize(&model::destination_of(profile), 26)
                     )
+                ),
+            ]
+            .spacing(3)
+            .width(Length::Fill),
+            container(ui::strong(color, model::mode_label(profile.mode), 13.0))
+                .width(Length::Fixed(104.0)),
+            container(status).width(Length::Fixed(100.0)),
+            container(
+                row![
+                    icons::icon(Glyph::Clock, 13.0, schedule.0),
+                    ui::colored(schedule.0, model::ellipsize(&schedule.1, 20), 12.0)
                 ]
                 .spacing(6)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(4),
-            ui::divider(p),
-            row![
-                icons::icon(Glyph::Clock, 13.0, schedule.0),
-                container(ui::colored(schedule.0, schedule.1, 12.0)).width(Length::Fill),
-                ui::caption(p, last),
-                ui::icon_button(
-                    p,
-                    Glyph::Eye,
-                    "Simuler",
-                    (!self.busy()).then(|| Message::Simulate(profile.id.clone()))
-                ),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+            )
+            .width(Length::Fixed(150.0)),
+            container(ui::caption(p, last)).width(Length::Fixed(84.0)),
+            ui::icon_button(
+                p,
+                Glyph::Eye,
+                "Simuler",
+                (!self.busy()).then(|| Message::Simulate(profile.id.clone()))
+            ),
+            icons::icon(Glyph::ChevronRight, 14.0, p.faint),
         ]
-        .spacing(12);
+        .spacing(14)
+        .align_y(Alignment::Center);
         let lifted = container(body)
             .padding(Padding {
                 top: 16.0 - 2.0 * lift,
-                bottom: 12.0 + 2.0 * lift,
-                left: 16.0,
-                right: 12.0,
+                bottom: 14.0 + 2.0 * lift,
+                left: 20.0,
+                right: 16.0,
             })
             .width(Length::Fill)
             .style(theme::card(*p, lift, selected));
@@ -941,15 +907,15 @@ impl App {
 fn add_card<'a>(p: &Palette, group: &str) -> El<'a, Message> {
     button(
         container(
-            column![
-                icons::icon(Glyph::Plus, 22.0, p.faint),
-                ui::colored(p.muted, "Nouveau profil", 13.0)
+            row![
+                icons::icon(Glyph::Plus, 18.0, p.accent),
+                ui::strong(p.accent, "Nouveau profil", 14.0)
             ]
-            .spacing(6)
-            .align_x(Alignment::Center),
+            .spacing(8)
+            .align_y(Alignment::Center),
         )
         .center_x(Length::Fill)
-        .center_y(Length::Fixed(150.0)),
+        .center_y(Length::Fixed(52.0)),
     )
     .padding(0)
     .width(Length::Fill)

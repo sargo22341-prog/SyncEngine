@@ -13,6 +13,16 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
   canvas, statique : aucun rafraîchissement continu). Couleurs de mode :
   sauvegarde bleu, miroir orange, bidirectionnel violet (le vert ne signale
   plus que le succès).
+- Vue d'ensemble : les profils passent de cartes en grille à des lignes
+  pleine largeur (mode coloré, résultat, planification, dernière exécution) ;
+  les compteurs deviennent des tuiles à libellé coloré.
+- Assistant de création : la colonne d'étapes à gauche est remplacée par une
+  barre segmentée en haut (étape courante en violet) ; les tuiles de mode
+  reprennent la couleur du mode.
+- Carte de transfert : carte neutre (plus de cadre vert), libellés de chiffres
+  colorés, anneau plus épais avec point lumineux pulsé en tête d'arc.
+- Page profil : mode en libellé coloré au-dessus du titre ; les pastilles
+  colorées derrière les icônes (`glyph_box`) sont supprimées partout.
 - Le thème « AMOLED » est retiré. Un `desktop-ui.json` contenant
   `"theme": "amoled"` reste valide et est lu comme `"dark"` ; il est réécrit
   en `"dark"` à la prochaine sauvegarde des préférences.

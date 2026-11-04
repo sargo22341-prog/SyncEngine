@@ -118,8 +118,8 @@ impl App {
         let crumbs = row![
             button(
                 row![
-                    icons::icon(Glyph::Grid, 14.0, p.muted),
-                    ui::colored(p.muted, "Vue d’ensemble", 13.0)
+                    icons::icon(Glyph::ChevronLeft, 14.0, p.accent),
+                    ui::strong(p.accent, "Vue d’ensemble", 13.0)
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center)
@@ -165,11 +165,7 @@ impl App {
         .align_y(Alignment::Center);
 
         let color = mode_color(p, profile.mode);
-        let mut pills = row![
-            ui::pill(color, model::mode_label(profile.mode)),
-            ui::pill(p.muted, model::compare_label(profile.compare)),
-        ]
-        .spacing(8);
+        let mut pills = row![ui::pill(p.muted, model::compare_label(profile.compare))].spacing(8);
         match (self.schedule_of(id), self.schedule_valid(id)) {
             (Some(s), Some(true)) => {
                 pills = pills.push(ui::pill(p.info, draft::trigger_label(&s.schedule.trigger)))
@@ -208,9 +204,19 @@ impl App {
                 (!busy).then(|| Message::Simulate(id.clone())),
             ),
         };
+        // Mode as a small colored label above a large title (no big icon).
         let heading = row![
-            ui::glyph_box(mode_glyph(profile.mode), color, 60.0),
-            container(ui::title(p, profile.name.clone(), 26.0)).width(Length::Fill),
+            column![
+                row![
+                    icons::icon(mode_glyph(profile.mode), 15.0, color),
+                    ui::strong(color, model::mode_label(profile.mode), 14.0),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+                ui::title(p, profile.name.clone(), 34.0),
+            ]
+            .spacing(4)
+            .width(Length::Fill),
             main_action,
         ]
         .spacing(18)
@@ -377,7 +383,7 @@ impl App {
         )
         .padding(24)
         .width(Length::Fill)
-        .style(theme::outline(*p, p.accent, 0.5))
+        .style(theme::card(*p, 0.0, false))
         .into()
     }
 
@@ -434,12 +440,12 @@ impl App {
                     progress,
                     phase: turn * 0.7,
                     color,
-                    track: theme::alpha(color, 0.18),
-                    width: 7.0
+                    track: theme::alpha(color, 0.16),
+                    width: 9.0
                 },
-                104.0
+                116.0
             ),
-            container(center).center(Length::Fixed(104.0)),
+            container(center).center(Length::Fixed(116.0)),
         ];
         // Throughput over a 4 s sliding window (bytes/s, or entries/s while
         // scanning), as FreeFileSync: see `speed`.
@@ -467,8 +473,8 @@ impl App {
             }
         };
         let stat = |label: &'static str, value: String, c: Color| -> El<'a, Message> {
-            column![ui::title(p, value, 20.0), ui::colored(c, label, 12.0)]
-                .spacing(2)
+            column![ui::strong(c, label, 12.0), ui::title(p, value, 22.0)]
+                .spacing(3)
                 .width(Length::Fill)
                 .into()
         };
@@ -477,7 +483,7 @@ impl App {
                 stat(
                     "entrées analysées (2 côtés)",
                     model::count(s.entries_scanned),
-                    p.muted
+                    p.accent
                 ),
                 stat(
                     "empreintes calculées",
@@ -490,7 +496,7 @@ impl App {
                     } else {
                         model::count(s.entries_hashed)
                     },
-                    p.muted
+                    p.violet
                 ),
                 stat(
                     "erreurs de lecture",
@@ -510,7 +516,7 @@ impl App {
                         p.muted
                     },
                 ),
-                stat("débit d’analyse", rate_label, p.muted),
+                stat("débit d’analyse", rate_label, p.success),
             ],
             JobKind::Execute => row![
                 stat(
@@ -520,7 +526,7 @@ impl App {
                         model::count(s.entries_done),
                         model::count(job.planned.unwrap_or(0))
                     ),
-                    p.muted
+                    p.success
                 ),
                 stat(
                     "volume validé",
@@ -529,7 +535,7 @@ impl App {
                             format!("{} / {}", model::bytes(s.bytes_done), model::bytes(total)),
                         None => model::bytes(s.bytes_done),
                     },
-                    p.muted
+                    p.accent
                 ),
                 stat(
                     "refus ou échecs",
@@ -541,9 +547,8 @@ impl App {
                     }
                 ),
                 column![
-                    ui::title(p, rate_label, 20.0),
-                    ui::colored(
-                        p.muted,
+                    ui::strong(
+                        p.warning,
                         operations.map_or_else(
                             || "débit".to_owned(),
                             |rate| format!(
@@ -552,9 +557,10 @@ impl App {
                             )
                         ),
                         12.0
-                    )
+                    ),
+                    ui::title(p, rate_label, 22.0),
                 ]
-                .spacing(2)
+                .spacing(3)
                 .width(Length::Fill),
             ],
         }
@@ -622,7 +628,7 @@ impl App {
         container(row![ring, body].spacing(24).align_y(Alignment::Center))
             .padding(22)
             .width(Length::Fill)
-            .style(theme::outline(*p, color, 0.6))
+            .style(theme::card(*p, 0.0, false))
             .into()
     }
 
