@@ -407,15 +407,6 @@ pub(crate) fn compare_label(compare: CompareMethod) -> &'static str {
     }
 }
 
-pub(crate) fn mode_tagline(mode: SyncMode) -> &'static str {
-    match mode {
-        SyncMode::Backup => "Copie vers la destination, ne supprime jamais rien.",
-        SyncMode::Mirror => "Rend la destination identique à la source, sous protections.",
-        SyncMode::Bidirectional => "Propage les changements des deux côtés, conflits conservés.",
-        _ => "",
-    }
-}
-
 pub(crate) fn action_label(action: Action) -> &'static str {
     match action {
         Action::Copy => "Copier",
@@ -452,19 +443,6 @@ pub(crate) fn action_from_key(key: &str) -> Option<Action> {
     ]
     .into_iter()
     .find(|a| action_key(*a) == key)
-}
-
-/// Plural noun of an action, after a count (« 3 suppressions »).
-pub(crate) fn action_noun(action: Action) -> &'static str {
-    match action {
-        Action::Copy => "copies",
-        Action::Replace => "remplacements",
-        Action::Delete => "suppressions",
-        Action::Keep => "conservés",
-        Action::Conflict => "conflits",
-        Action::Skip => "ignorés",
-        _ => "autres",
-    }
 }
 
 pub(crate) fn reason_label(code: &str) -> &str {
@@ -774,16 +752,6 @@ pub(crate) fn pretty_path(value: &str) -> String {
         .map(|rest| format!(r"\\{rest}"))
         .or_else(|| value.strip_prefix(r"\\?\").map(str::to_owned))
         .unwrap_or_else(|| value.to_owned())
-}
-
-/// Cuts a label at `max` characters and appends « … » (names keep their start).
-pub(crate) fn truncate_end(value: &str, max: usize) -> String {
-    if value.chars().count() <= max {
-        return value.to_owned();
-    }
-    let mut out: String = value.chars().take(max.saturating_sub(1)).collect();
-    out.push('…');
-    out
 }
 
 /// Shortens a long path keeping both ends visible.

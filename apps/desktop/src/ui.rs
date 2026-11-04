@@ -114,13 +114,52 @@ pub(crate) fn fill<'a, M: 'a>() -> El<'a, M> {
     Space::new().width(Length::Fill).into()
 }
 
-/// Icon + label button. `on` = None renders it disabled.
+/// Icon + label button (40 px high pill). `on` = None renders it disabled.
 pub(crate) fn action<'a, M: Clone + 'a>(
     p: &Palette,
     tone: Tone,
     glyph: Option<Glyph>,
     label: impl Into<String>,
     on: Option<M>,
+) -> El<'a, M> {
+    button_pill(
+        p,
+        tone,
+        glyph,
+        label.into(),
+        on,
+        14.0,
+        Padding::from([10, 20]),
+    )
+}
+
+/// Compact variant (32 px high) for rows and toolbars.
+pub(crate) fn action_sm<'a, M: Clone + 'a>(
+    p: &Palette,
+    tone: Tone,
+    glyph: Option<Glyph>,
+    label: impl Into<String>,
+    on: Option<M>,
+) -> El<'a, M> {
+    button_pill(
+        p,
+        tone,
+        glyph,
+        label.into(),
+        on,
+        13.0,
+        Padding::from([7, 14]),
+    )
+}
+
+fn button_pill<'a, M: Clone + 'a>(
+    p: &Palette,
+    tone: Tone,
+    glyph: Option<Glyph>,
+    label: String,
+    on: Option<M>,
+    size: f32,
+    padding: Padding,
 ) -> El<'a, M> {
     let fg = match tone {
         // Primary is the ink button (text color on the page color); lime
@@ -138,16 +177,16 @@ pub(crate) fn action<'a, M: Clone + 'a>(
     };
     let mut content = row![].spacing(8).align_y(Alignment::Center);
     if let Some(g) = glyph {
-        content = content.push(icons::icon(g, 16.0, fg));
+        content = content.push(icons::icon(g, size + 2.0, fg));
     }
     content = content.push(
-        text(label.into())
-            .size(14)
+        text(label)
+            .size(size)
             .font(weight(Weight::Semibold))
             .color(fg),
     );
     button(content)
-        .padding(Padding::from([8, 14]))
+        .padding(padding)
         .style(theme::btn(*p, tone))
         .on_press_maybe(on)
         .into()
@@ -206,6 +245,195 @@ pub(crate) fn info_tip<'a, M: 'a>(p: &Palette, hint: &str) -> El<'a, M> {
     .into()
 }
 
+/// Flat tinted chip (mode, option, counter): 12 px semibold on a soft wash.
+pub(crate) fn chip<'a, M: 'a>(bg: Color, fg: Color, label: impl Into<String>) -> El<'a, M> {
+    container(
+        text(label.into())
+            .size(12)
+            .font(weight(Weight::Semibold))
+            .color(fg)
+            .wrapping(iced::widget::text::Wrapping::None),
+    )
+    .padding(Padding::from([3, 10]))
+    .style(theme::pill(bg, fg))
+    .into()
+}
+
+/// Neutral chip on the secondary surface.
+pub(crate) fn tag<'a, M: 'a>(p: &Palette, label: impl Into<String>) -> El<'a, M> {
+    chip(p.surface_hi, p.muted, label)
+}
+
+/// Mode chip: soft wash of the mode color with its text-safe ink.
+pub(crate) fn mode_chip<'a, M: 'a>(p: &Palette, mode: sync_plan::SyncMode) -> El<'a, M> {
+    let ink = crate::shell::mode_color(p, mode);
+    let glyph = match mode {
+        sync_plan::SyncMode::Backup => "→",
+        sync_plan::SyncMode::Mirror => "⇉",
+        _ => "⇄",
+    };
+    chip(
+        theme::alpha(
+            crate::shell::mode_fill(p, mode),
+            if p.is_light() { 0.2 } else { 0.16 },
+        ),
+        ink,
+        format!("{glyph} {}", crate::model::mode_label(mode)),
+    )
+}
+
+/// Square rounded tile in the mode color with its arrow glyph.
+pub(crate) fn mode_tile<'a, M: 'a>(p: &Palette, mode: sync_plan::SyncMode, size: f32) -> El<'a, M> {
+    let ink = if mode == sync_plan::SyncMode::Bidirectional {
+        p.bg
+    } else {
+        Color::from_rgb(0.043, 0.047, 0.055)
+    };
+    container(icons::icon(
+        crate::shell::mode_glyph(mode),
+        size * 0.46,
+        ink,
+    ))
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .center(Length::Fixed(size))
+    .style(theme::swatch(crate::shell::mode_fill(p, mode)))
+    .into()
+}
+
+/// Status: colored dot and muted label, no background.
+pub(crate) fn status<'a, M: 'a>(p: &Palette, color: Color, label: impl Into<String>) -> El<'a, M> {
+    row![dot(color, 8.0), colored(p.muted, label, 12.0)]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+/// Big figure with a small unit next to it (monospace), e.g. `37,4 Mo/s`.
+pub(crate) fn metric<'a, M: 'a>(
+    p: &Palette,
+    value: impl Into<String>,
+    unit: impl Into<String>,
+    size: f32,
+) -> El<'a, M> {
+    let unit = unit.into();
+    let mut line = row![
+        text(value.into())
+            .size(size)
+            .font(Font {
+                weight: Weight::Medium,
+                ..mono_font()
+            })
+            .color(p.text)
+            .wrapping(iced::widget::text::Wrapping::None)
+    ]
+    .spacing(6)
+    .align_y(Alignment::End);
+    if !unit.is_empty() {
+        line = line.push(
+            container(
+                text(unit)
+                    .size((size * 0.3).clamp(12.0, 15.0))
+                    .font(mono_font())
+                    .color(p.muted),
+            )
+            .padding(Padding {
+                bottom: size * 0.12,
+                ..Padding::ZERO
+            }),
+        );
+    }
+    line.into()
+}
+
+/// Horizontal progress bar (`fraction` in 0..=1) on a neutral track.
+pub(crate) fn progress<'a, M: 'a>(
+    p: &Palette,
+    fraction: f32,
+    color: Color,
+    height: f32,
+) -> El<'a, M> {
+    let done = (fraction.clamp(0.0, 1.0) * 1000.0).round() as u16;
+    let bar = |fill: Color, portion: u16| -> El<'a, M> {
+        container(Space::new())
+            .width(Length::FillPortion(portion.max(1)))
+            .height(Length::Fixed(height))
+            .style(theme::pill(fill, fill))
+            .into()
+    };
+    let mut line = row![].width(Length::Fill);
+    if done > 0 {
+        line = line.push(bar(color, done));
+    }
+    if done < 1000 {
+        line = line.push(
+            container(Space::new())
+                .width(Length::FillPortion(1000 - done))
+                .height(Length::Fixed(height)),
+        );
+    }
+    container(line)
+        .width(Length::Fill)
+        .style(theme::pill(p.surface_hi, p.surface_hi))
+        .into()
+}
+
+/// Setting row: toggle, title with an optional explanation, optional widget
+/// on the right (a size field, a counter…).
+pub(crate) fn toggle_row<'a, M: Clone + 'a>(
+    p: &Palette,
+    on: bool,
+    title: &str,
+    sub: Option<&str>,
+    danger: bool,
+    on_toggle: impl Fn(bool) -> M + 'a,
+    right: Option<El<'a, M>>,
+) -> El<'a, M> {
+    let mut text_col = column![strong(p.text, title.to_owned(), 14.0)].spacing(2);
+    if let Some(sub) = sub {
+        text_col = text_col.push(colored(p.muted, sub.to_owned(), 12.0));
+    }
+    let mut line = row![
+        iced::widget::toggler(on)
+            .on_toggle(on_toggle)
+            .size(22)
+            .style(theme::switch(*p, danger)),
+        container(text_col).width(Length::Fill),
+    ]
+    .spacing(14)
+    .align_y(Alignment::Center);
+    if let Some(right) = right {
+        line = line.push(right);
+    }
+    container(line).padding(Padding::from([7, 0])).into()
+}
+
+/// Segmented control.
+pub(crate) fn seg<'a, M: Clone + 'a, T: Copy + PartialEq + 'a>(
+    p: &Palette,
+    options: &[(T, &'a str)],
+    selected: T,
+    on: impl Fn(T) -> M,
+) -> El<'a, M> {
+    let items = options.iter().map(|(value, label)| {
+        let active = *value == selected;
+        button(
+            text((*label).to_owned())
+                .size(13)
+                .font(weight(Weight::Semibold))
+                .color(if active { p.text } else { p.muted }),
+        )
+        .padding(Padding::from([5, 14]))
+        .style(theme::seg_item(*p, active))
+        .on_press(on(*value))
+        .into()
+    });
+    container(row(items).spacing(4))
+        .padding(4)
+        .style(theme::seg_track(*p))
+        .into()
+}
+
 /// Rounded status pill with a dot.
 pub(crate) fn pill<'a, M: 'a>(color: Color, label: impl Into<String>) -> El<'a, M> {
     container(
@@ -224,17 +452,12 @@ pub(crate) fn pill<'a, M: 'a>(color: Color, label: impl Into<String>) -> El<'a, 
     .into()
 }
 
-/// Small solid badge (counts).
+/// Small solid badge (counts), in the monospace face.
 pub(crate) fn badge<'a, M: 'a>(bg: Color, fg: Color, label: impl Into<String>) -> El<'a, M> {
-    container(
-        text(label.into())
-            .size(11)
-            .font(weight(Weight::Bold))
-            .color(fg),
-    )
-    .padding(Padding::from([1, 7]))
-    .style(theme::pill(bg, fg))
-    .into()
+    container(text(label.into()).size(11).font(mono_font()).color(fg))
+        .padding(Padding::from([1, 7]))
+        .style(theme::pill(bg, fg))
+        .into()
 }
 
 pub(crate) fn dot<'a, M: 'a>(color: Color, size: f32) -> El<'a, M> {
@@ -250,11 +473,11 @@ pub(crate) fn kbd<'a, M: 'a>(p: &Palette, keys: &str) -> El<'a, M> {
     container(
         text(keys.to_owned())
             .size(11)
-            .font(weight(Weight::Semibold))
+            .font(mono_font())
             .color(p.muted),
     )
-    .padding(Padding::from([2, 6]))
-    .style(theme::outline(*p, p.faint, 0.0))
+    .padding(Padding::from([2, 7]))
+    .style(theme::field_box(*p, 6.0))
     .into()
 }
 
@@ -321,9 +544,13 @@ pub(crate) fn callout<'a, M: 'a>(
         .spacing(12)
         .align_y(Alignment::Start),
     )
-    .padding(Padding::from([12, 14]))
+    .padding(Padding::from([14, 16]))
     .width(Length::Fill)
-    .style(theme::outline(*p, color, 1.0))
+    .style(theme::tint(
+        color,
+        if p.is_light() { 0.16 } else { 0.15 },
+        12.0,
+    ))
     .into()
 }
 

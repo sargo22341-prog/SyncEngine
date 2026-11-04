@@ -141,25 +141,34 @@ impl<T> Tree<T> {
     }
 }
 
-/// Default folder summary: entries below, by action, and their size.
+/// Default folder summary: entries below by action as compact counters
+/// (`+12` additions, `~3` replacements, `−2` deletions, `!1` conflicts), then
+/// their size.
 pub(crate) fn action_summary<'a, M: 'a>(p: &Palette, folder: &TreeFolder) -> El<'a, M> {
     let mut summary = row![].spacing(6).align_y(Alignment::Center);
     for (code, count) in &folder.actions {
         let action = model::action_from_key(code);
         let color = action.map_or(p.muted, |a| crate::profile::action_color(p, a));
-        let label = match action {
-            Some(a) => model::action_noun(a).to_owned(),
-            None if code.is_empty() => "fichiers".to_owned(),
-            None => code.clone(),
+        let ink = match action {
+            Some(sync_plan::Action::Copy) => p.backup_ink,
+            Some(sync_plan::Action::Replace) => p.info,
+            _ => color,
+        };
+        let sign = match action {
+            Some(sync_plan::Action::Copy) => "+",
+            Some(sync_plan::Action::Replace) => "~",
+            Some(sync_plan::Action::Delete) => "−",
+            Some(sync_plan::Action::Conflict) => "!",
+            _ => "",
         };
         summary = summary.push(ui::badge(
-            theme::alpha(color, 0.14),
-            color,
-            format!("{} {label}", model::count(*count)),
+            theme::alpha(color, if action.is_some() { 0.18 } else { 0.0 }),
+            if action.is_some() { ink } else { p.muted },
+            format!("{sign}{}", model::count(*count)),
         ));
     }
     if folder.bytes > 0 {
-        summary = summary.push(ui::caption(p, model::bytes(folder.bytes)));
+        summary = summary.push(ui::mono(p.muted, model::bytes(folder.bytes), 11.0));
     }
     summary.into()
 }
@@ -231,8 +240,11 @@ fn level_rows<'a, T, M: Clone + 'a>(
                 13.0,
                 p.muted
             ),
-            icons::icon(Glyph::Folder, 15.0, p.accent),
-            ui::strong(p.text, model::ellipsize(&node.name, 60), 13.0),
+            ui::mono(
+                p.text,
+                format!("{}/", model::ellipsize(&node.name, 60)),
+                13.0
+            ),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -245,18 +257,13 @@ fn level_rows<'a, T, M: Clone + 'a>(
             ));
         }
         let row_el = button(
-            row![
-                label,
-                ui::fill(),
-                ui::caption(p, format!("{} élément(s)", model::count(node.count))),
-                summary(node),
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
+            row![label, ui::fill(), summary(node),]
+                .spacing(10)
+                .align_y(Alignment::Center),
         )
-        .padding(Padding::from([5, 10]))
+        .padding(Padding::from([6, 10]))
         .width(Length::Fill)
-        .style(theme::row_btn(*p, open))
+        .style(theme::row_btn(*p, false))
         .on_press(on(TreeMsg::Toggle(node.path.clone())));
         col = match extra(node) {
             Some(action) => col.push(row![row_el, action].spacing(4).align_y(Alignment::Center)),

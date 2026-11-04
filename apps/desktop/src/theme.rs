@@ -23,6 +23,8 @@ pub(crate) struct Palette {
     pub(crate) surface_hi: Color,
     /// Subtle separators.
     pub(crate) border: Color,
+    /// Visible outline of fields and ghost buttons (stronger than `border`).
+    pub(crate) line: Color,
     pub(crate) text: Color,
     pub(crate) muted: Color,
     pub(crate) faint: Color,
@@ -54,6 +56,7 @@ impl Palette {
         surface: color!(0x131417),
         surface_hi: color!(0x1c1e22),
         border: color!(0x26282d),
+        line: color!(0x5e6168),
         text: color!(0xf2f3f0),
         muted: color!(0x9a9da5),
         faint: color!(0x6e7179),
@@ -80,6 +83,7 @@ impl Palette {
         surface: color!(0xffffff),
         surface_hi: color!(0xecece6),
         border: color!(0xe1e1d9),
+        line: color!(0x8a8c86),
         text: color!(0x0e0f11),
         muted: color!(0x5e6068),
         faint: color!(0x8a8c93),
@@ -113,6 +117,7 @@ impl Palette {
             surface: m(a.surface, b.surface),
             surface_hi: m(a.surface_hi, b.surface_hi),
             border: m(a.border, b.border),
+            line: m(a.line, b.line),
             text: m(a.text, b.text),
             muted: m(a.muted, b.muted),
             faint: m(a.faint, b.faint),
@@ -155,6 +160,7 @@ impl Palette {
             mirror: f(self.mirror),
             mirror_ink: f(self.mirror_ink),
             border: f(self.border),
+            line: f(self.line),
             surface: mix(self.bg, self.surface, v),
             surface_hi: mix(self.bg, self.surface_hi, v),
             shadow: f(self.shadow),
@@ -242,6 +248,29 @@ pub(crate) fn card(p: Palette, lift: f32, selected: bool) -> impl Fn(&Theme) -> 
             radius: RADIUS.into(),
         },
         // Flat: a hairline separates cards, never a shadow.
+        shadow: Shadow::default(),
+        snap: true,
+    }
+}
+
+/// Compact list row card (profiles, runs): 12 px radius, hairline border.
+pub(crate) fn row_card(
+    p: Palette,
+    lift: f32,
+    selected: bool,
+) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(mix(p.surface, p.surface_hi, lift * 0.6).into()),
+        text_color: Some(p.text),
+        border: Border {
+            color: if selected {
+                p.accent
+            } else {
+                mix(p.border, p.accent, lift * 0.55)
+            },
+            width: if selected { 2.0 } else { 1.0 },
+            radius: RADIUS_SM.into(),
+        },
         shadow: Shadow::default(),
         snap: true,
     }
@@ -381,7 +410,7 @@ pub(crate) fn btn(p: Palette, tone: Tone) -> impl Fn(&Theme, button::Status) -> 
                 mix(p.backup, Color::BLACK, 0.12),
                 color!(0x0b0c0e),
             ),
-            Tone::Secondary => (p.surface_hi, mix(p.surface_hi, p.text, 0.08), p.text),
+            Tone::Secondary => (Color::TRANSPARENT, alpha(p.text, 0.07), p.text),
             Tone::Ghost => (Color::TRANSPARENT, alpha(p.text, 0.08), p.muted),
         };
         let background = if pressed {
@@ -406,7 +435,7 @@ pub(crate) fn btn(p: Palette, tone: Tone) -> impl Fn(&Theme, button::Status) -> 
             },
             border: Border {
                 color: if tone == Tone::Secondary {
-                    p.border
+                    p.line
                 } else {
                     Color::TRANSPARENT
                 },
@@ -438,6 +467,42 @@ pub(crate) fn row_btn(
             background: Some(bg.into()),
             text_color: if selected || hover { p.text } else { p.muted },
             border: border::rounded(RADIUS_SM),
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// Button without any chrome (a whole card made clickable).
+pub(crate) fn bare_btn() -> impl Fn(&Theme, button::Status) -> button::Style {
+    |_, _| button::Style {
+        background: None,
+        text_color: Color::BLACK,
+        border: Border::default(),
+        shadow: Shadow::default(),
+        snap: true,
+    }
+}
+
+/// Dashed-feel add row: outlined, transparent, tints on hover.
+pub(crate) fn ghost_row(p: Palette) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: Some(
+                if hover {
+                    alpha(p.text, 0.05)
+                } else {
+                    Color::TRANSPARENT
+                }
+                .into(),
+            ),
+            text_color: p.muted,
+            border: Border {
+                color: p.border,
+                width: 1.0,
+                radius: RADIUS_SM.into(),
+            },
             shadow: Shadow::default(),
             snap: true,
         }
@@ -511,37 +576,6 @@ pub(crate) fn nav_btn(
     }
 }
 
-/// Small removable chip.
-pub(crate) fn chip(
-    p: Palette,
-    color: Color,
-    on: bool,
-) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| {
-        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        button::Style {
-            background: Some(
-                if on {
-                    alpha(color, if hover { 0.30 } else { 0.18 })
-                } else if hover {
-                    alpha(p.text, 0.08)
-                } else {
-                    Color::TRANSPARENT
-                }
-                .into(),
-            ),
-            text_color: if on { p.text } else { p.muted },
-            border: Border {
-                color: if on { alpha(color, 0.7) } else { p.border },
-                width: 1.0,
-                radius: 999.0.into(),
-            },
-            shadow: Shadow::default(),
-            snap: true,
-        }
-    }
-}
-
 pub(crate) fn menu_item(
     p: Palette,
     danger: bool,
@@ -578,16 +612,16 @@ pub(crate) fn input(
             text_input::Status::Hovered | text_input::Status::Focused { is_hovered: true }
         );
         text_input::Style {
-            background: (if p.is_light() { p.surface } else { p.rail }).into(),
+            background: p.surface.into(),
             border: Border {
                 color: if invalid {
                     p.danger
                 } else if focused {
                     p.accent
                 } else if hovered {
-                    mix(p.border, p.text, 0.25)
+                    p.text
                 } else {
-                    p.border
+                    p.line
                 },
                 width: if focused { 2.0 } else { 1.0 },
                 radius: RADIUS_SM.into(),
@@ -603,16 +637,12 @@ pub(crate) fn input(
 /// Search field embedded in a header: no border until focused.
 pub(crate) fn search(p: Palette) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
     move |_, status| {
-        let focused = matches!(status, text_input::Status::Focused { .. });
+        let _ = status;
         text_input::Style {
-            background: (if p.is_light() { p.surface_hi } else { p.rail }).into(),
+            background: Color::TRANSPARENT.into(),
             border: Border {
-                color: if focused {
-                    p.accent
-                } else {
-                    Color::TRANSPARENT
-                },
-                width: 1.0,
+                color: Color::TRANSPARENT,
+                width: 0.0,
                 radius: RADIUS_SM.into(),
             },
             icon: p.muted,
@@ -654,6 +684,8 @@ pub(crate) fn check(p: Palette) -> impl Fn(&Theme, checkbox::Status) -> checkbox
     }
 }
 
+/// Toggle: ink track when on, outlined neutral track when off. `danger`
+/// keeps the ink look but turns the track red (destructive choices).
 pub(crate) fn switch(
     p: Palette,
     danger: bool,
@@ -664,32 +696,205 @@ pub(crate) fn switch(
             toggler::Status::Hovered { is_toggled } => (is_toggled, true, false),
             toggler::Status::Disabled { is_toggled } => (is_toggled, false, true),
         };
-        let tint = if danger { p.danger } else { p.success };
+        let track = if on {
+            if danger { p.danger } else { p.text }
+        } else {
+            p.surface_hi
+        };
+        let track = if hover {
+            mix(track, p.text, 0.08)
+        } else {
+            track
+        };
+        let thumb = if on {
+            if danger { Color::WHITE } else { p.bg }
+        } else {
+            p.muted
+        };
+        let fade = if disabled { 0.5 } else { 1.0 };
         toggler::Style {
-            background: (if on {
-                if hover {
-                    mix(tint, Color::WHITE, 0.1)
-                } else {
-                    tint
-                }
-            } else {
-                p.faint
-            })
-            .into(),
-            background_border_width: 0.0,
-            background_border_color: Color::TRANSPARENT,
-            foreground: (if disabled {
-                alpha(Color::WHITE, 0.5)
-            } else {
-                Color::WHITE
-            })
-            .into(),
+            background: alpha(track, track.a * fade).into(),
+            background_border_width: 1.0,
+            background_border_color: alpha(if on { track } else { p.line }, fade),
+            foreground: alpha(thumb, thumb.a * fade).into(),
             foreground_border_width: 0.0,
             foreground_border_color: Color::TRANSPARENT,
             text_color: Some(p.text),
             border_radius: None,
-            padding_ratio: 0.12,
+            padding_ratio: 0.18,
         }
+    }
+}
+
+/// Round step marker of the assistant (filled when current or done).
+pub(crate) fn step_dot(fill: Color, edge: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(fill.into()),
+        border: Border {
+            color: edge,
+            width: 1.0,
+            radius: 999.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Row of the assistant's step list: raised surface when current.
+pub(crate) fn step_row(
+    p: Palette,
+    active: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: Some(
+                if active {
+                    p.surface
+                } else if hover {
+                    alpha(p.text, 0.05)
+                } else {
+                    Color::TRANSPARENT
+                }
+                .into(),
+            ),
+            text_color: p.text,
+            border: border::rounded(RADIUS_SM),
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// Provider / choice chip: ink fill when chosen, soft neutral otherwise.
+pub(crate) fn pick_chip(
+    p: Palette,
+    on: bool,
+    enabled: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let hover = enabled && matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let (bg, fg) = if on {
+            (p.text, p.bg)
+        } else if hover {
+            (mix(p.surface_hi, p.text, 0.1), p.text)
+        } else {
+            (p.surface_hi, p.muted)
+        };
+        let fade = if enabled || on { 1.0 } else { 0.45 };
+        button::Style {
+            background: Some(alpha(bg, bg.a * fade).into()),
+            text_color: alpha(fg, fg.a * fade),
+            border: border::rounded(999),
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// Removable tinted chip (filter patterns, summary links).
+pub(crate) fn tint_btn(
+    color: Color,
+    wash: f32,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: Some(alpha(color, if hover { wash * 1.8 } else { wash }).into()),
+            text_color: color,
+            border: border::rounded(999),
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// Segmented-control track.
+pub(crate) fn seg_track(p: Palette) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(p.surface_hi.into()),
+        border: border::rounded(999),
+        ..container::Style::default()
+    }
+}
+
+/// One segment: raised surface with a hairline when selected.
+pub(crate) fn seg_item(p: Palette, on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: Some(
+                if on {
+                    p.surface
+                } else if hover {
+                    alpha(p.text, 0.05)
+                } else {
+                    Color::TRANSPARENT
+                }
+                .into(),
+            ),
+            text_color: if on { p.text } else { p.muted },
+            border: Border {
+                color: if on { p.border } else { Color::TRANSPARENT },
+                width: 1.0,
+                radius: 999.0.into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// Selectable option card: outlined, thick colored border and a tint when on.
+pub(crate) fn option(
+    p: Palette,
+    color: Color,
+    on: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: Some(
+                if on {
+                    alpha(color, if p.is_light() { 0.14 } else { 0.17 })
+                } else if hover {
+                    p.surface_hi
+                } else {
+                    p.surface
+                }
+                .into(),
+            ),
+            text_color: p.text,
+            border: Border {
+                color: if on { color } else { p.line },
+                width: if on { 2.0 } else { 1.0 },
+                radius: RADIUS_SM.into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// Tinted band (summary cards, callouts): flat color wash, no outline.
+pub(crate) fn tint(color: Color, wash: f32, radius: f32) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(alpha(color, wash).into()),
+        border: border::rounded(radius),
+        ..container::Style::default()
+    }
+}
+
+/// Outlined field-like box (read-only values, selects).
+pub(crate) fn field_box(p: Palette, radius: f32) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(p.surface.into()),
+        text_color: Some(p.text),
+        border: Border {
+            color: p.line,
+            width: 1.0,
+            radius: radius.into(),
+        },
+        ..container::Style::default()
     }
 }
 

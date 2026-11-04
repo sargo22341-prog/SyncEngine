@@ -178,7 +178,7 @@ python scripts/release.py collect --bundle target/release/bundle --output target
 
 ## Icône
 
-Source : `docs/icon/syncengine.png`. `python scripts/generate_icons.py docs/icon/syncengine.png`
+Source : `docs/icon/syncengine.png`, dessinée par `python scripts/render_icon.py` (même géométrie que le logo de l'interface, `charts::logo_paths`). `python scripts/generate_icons.py docs/icon/syncengine.png`
 (Pillow 13.0.0 : `python -m pip install Pillow==13.0.0`) régénère `apps/desktop/assets/` : `.ico` intégré à l'exécutable
 Windows par `build.rs`, `.rgba` intégré pour la fenêtre et la zone de
 notification. Aucune image n'est livrée à côté des exécutables.

@@ -1001,8 +1001,12 @@ impl App {
                 self.save_prefs();
                 Task::none()
             }
-            Message::ScheduleWeek(week) => {
-                self.schedule_week = week;
+            Message::SettingsTab(tab) => {
+                self.settings_tab = tab;
+                Task::none()
+            }
+            Message::OverviewFilter(filter) => {
+                self.overview_filter = filter;
                 Task::none()
             }
             Message::PerfWorkers(n) => self.set_performance(|p| p.copy_workers = n),
@@ -1087,7 +1091,6 @@ impl App {
                 }
                 Task::none()
             }
-            Message::Noop => Task::none(),
         }
     }
 }

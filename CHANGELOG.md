@@ -5,6 +5,40 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Interface alignée sur les maquettes
+- Primitives communes (`ui.rs`, `theme.rs`) : puces teintées (`chip`, `mode_chip`),
+  tuile de mode à flèche (`mode_tile`), statut à pastille, contrôle segmenté
+  (`seg`), cartes d'option, bascules à encre (`toggle_row`), barres de
+  progression, grand chiffre (`metric`), champs à contour visible (`Palette::line`).
+  Les glyphes de mode deviennent `→`, `⇉`, `⇄`.
+- Navigation : libellés seuls avec compteurs en police mono, « Réglages » dans la
+  liste, carte de l'agent avec l'heure du prochain passage (UTC) et le thème.
+- Accueil : cartes « En direct » (débit, courbe, progression), « À traiter »
+  (exécutions à vérifier, autorisations à renouveler) et « Prochaine
+  planification » ; lignes à colonnes fixes (tuile, chemin tronqué, mode,
+  statut, âge, action) ; filtre Tous · En cours · À vérifier ; accueil vide.
+- Assistant : page entière (liste d'étapes à gauche, en-tête « Étape N sur 5 »,
+  pied de page), cartes source/destination aux pastilles de fournisseur,
+  catégories de filtres en bascules, garde-fous en cartes, planification en
+  pastilles et consentement teinté, récapitulatif en pastilles cliquables.
+- Activité : en-tête avec puces de phase et temps restant estimé, débit
+  instantané en grand chiffre, progression, moyenne, fichiers en cours
+  (progression par fichier) ; carte compacte pour le mini-suivi.
+  Historique et derniers résultats groupés par jour avec compteurs.
+- Page profil : fil d'Ariane, boutons à libellé, puces d'état, cartes
+  « Planification » et « Garde-fous du profil » ; plan : cartes de comptage,
+  filtres segmentés, lignes `+ AJOUT` / `~ MODIF.` / `− SUPPR.` / `! CONFLIT`.
+- Planification : calendrier de la semaine (heures utiles seulement) à côté de
+  la liste des règles. Réglages : menu de sections (Apparence, Fenêtre et
+  démarrage, Performances, Clavier, Garanties, Données, Mises à jour, Version).
+- Logo : carré arrondi partagé par une courbe (lime au-dessus, violet en
+  dessous), dessiné par `charts::logo_paths` et par `scripts/render_icon.py`
+  pour `docs/icon/syncengine.png` ; `scripts/generate_icons.py` en tire l'icône
+  de l'exécutable (`.ico`) et celle de la fenêtre et de la zone de notification.
+- Non repris des maquettes, faute de donnée ou de moteur : aperçu des fichiers
+  retenus dans l'assistant, tailles de corbeille dans la liste, détail d'une
+  exécution à côté de l'historique, exclusion « pour cette simulation seulement ».
+
 ### Design « Flux » (première étape)
 - Palettes : sombre `#0b0c0e` / cartes `#131417`, clair `#f4f4f0` / cartes
   blanches. Couleurs de mode : sauvegarde lime, miroir mandarine,

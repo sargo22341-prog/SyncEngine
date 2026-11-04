@@ -2,7 +2,6 @@
 //! « flow » between source and destination. Purely presentational.
 
 use iced::mouse;
-use iced::widget::canvas::gradient;
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineDash, Path, Stroke, path::Arc};
 use iced::{Color, Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme};
 use std::f32::consts::PI;
@@ -278,13 +277,46 @@ pub(crate) fn flow<'a, M: 'a>(flow: Flow, width: f32) -> Element<'a, M> {
         .into()
 }
 
-/// Application mark: gradient squircle with the sync arrows, used for the
-/// splash screen and the rail.
+/// Application mark: a rounded square split by a flowing S-curve, `from`
+/// above and `to` below. `turn` (in turns) makes the curve ripple, so the
+/// splash screen shows the logo alive.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Mark {
     pub(crate) from: Color,
     pub(crate) to: Color,
     pub(crate) turn: f32,
+}
+
+/// Geometry of the logo in a `s`-sized square: the two fills as paths.
+/// `phase` shifts the wave (0 for the static logo).
+pub(crate) fn logo_paths(s: f32, phase: f32) -> (Path, Path) {
+    let r = s * 0.3;
+    let k = r * 0.5523;
+    let wave = s * 0.17 * phase.cos();
+    let (yl, yr) = (s * 0.46, s * 0.54);
+    let top = Path::rounded_rectangle(Point::ORIGIN, Size::new(s, s), r.into());
+    let bottom = Path::new(|b| {
+        b.move_to(Point::new(0.0, yl));
+        b.bezier_curve_to(
+            Point::new(s * 0.35, yl - wave - s * 0.2),
+            Point::new(s * 0.65, yr + wave + s * 0.2),
+            Point::new(s, yr),
+        );
+        b.line_to(Point::new(s, s - r));
+        b.bezier_curve_to(
+            Point::new(s, s - r + k),
+            Point::new(s - r + k, s),
+            Point::new(s - r, s),
+        );
+        b.line_to(Point::new(r, s));
+        b.bezier_curve_to(
+            Point::new(r - k, s),
+            Point::new(0.0, s - r + k),
+            Point::new(0.0, s - r),
+        );
+        b.close();
+    });
+    (top, bottom)
 }
 
 impl<M> canvas::Program<M> for Mark {
@@ -299,21 +331,9 @@ impl<M> canvas::Program<M> for Mark {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let s = bounds.width.min(bounds.height);
-        let bg = Path::rounded_rectangle(Point::ORIGIN, Size::new(s, s), (s * 0.3).into());
-        frame.fill(
-            &bg,
-            gradient::Linear::new(Point::ORIGIN, Point::new(s, s))
-                .add_stop(0.0, self.from)
-                .add_stop(1.0, self.to),
-        );
-        crate::icons::sync_arrows(
-            &mut frame,
-            Point::new(s / 2.0, s / 2.0),
-            s * 0.27,
-            s * 0.065,
-            self.turn * 2.0 * PI,
-            Color::WHITE,
-        );
+        let (top, bottom) = logo_paths(s, self.turn * 2.0 * PI);
+        frame.fill(&top, self.from);
+        frame.fill(&bottom, self.to);
         vec![frame.into_geometry()]
     }
 }

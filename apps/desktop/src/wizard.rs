@@ -4,16 +4,17 @@
 use crate::anim::{Ease, Tween};
 use crate::app::Message;
 use crate::backend::{self, ScheduleChange};
+use crate::charts;
 use crate::draft::{Field, FilterList, PRESETS, ProfileDraft, Provider, TriggerKind};
 use crate::icons::{self, Glyph};
 use crate::model;
 use crate::native;
 use crate::schedules::{self, ScheduleMsg};
+use crate::shell;
 use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
 use iced::widget::{
-    Space, button, checkbox, column, container, mouse_area, opaque, row, scrollable, stack,
-    text_input, toggler,
+    Space, button, checkbox, column, container, opaque, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Color, Length, Padding, Task};
 use std::path::PathBuf;
@@ -55,8 +56,8 @@ impl Step {
     fn short(self) -> &'static str {
         match self {
             Self::Locations => "Mode et emplacements",
-            Self::Filters => "Filtres",
-            Self::Safety => "Sécurité",
+            Self::Filters => "Filtres et exclusions",
+            Self::Safety => "Garde-fous",
             Self::Schedule => "Planification",
             Self::Summary => "Récapitulatif",
         }
@@ -430,31 +431,23 @@ impl Wizard {
         });
         let step_no = self.step.index() + 1;
         let header = column![
-            ui::strong(
-                content_p.violet,
-                format!(
-                    "Étape {step_no} sur {} · {}",
-                    Step::ALL.len(),
-                    self.step.short()
-                ),
-                14.0
+            ui::eyebrow(
+                content_p.muted,
+                &format!("Étape {step_no} sur {}", Step::ALL.len()),
             ),
             ui::title(&content_p, self.step.title(), 32.0),
-            ui::muted(&content_p, self.step.subtitle()),
         ]
-        .spacing(6);
-        let right = column![
+        .spacing(4);
+        let main = column![
             container(header).padding(Padding {
                 top: 30.0,
-                bottom: 14.0,
-                left: 36.0 + shift * 0.4,
-                right: 36.0
+                bottom: 18.0,
+                left: 48.0 + shift * 0.4,
+                right: 48.0
             }),
-            container(self.stepper(&panel_p)).padding(Padding::from([0, 36])),
-            ui::vspace(10.0),
             scrollable(
                 container(body)
-                    .padding(Padding::from([4, 36]))
+                    .padding(Padding::from([4, 48]))
                     .width(Length::Fill)
             )
             .style(theme::scroll(panel_p))
@@ -463,85 +456,113 @@ impl Wizard {
         ]
         .width(Length::Fill)
         .height(Length::Fill);
-        let panel = container(right)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .max_width(1120.0)
-            .max_height(780.0)
-            .style(theme::dialog(panel_p))
-            .clip(true);
-        let lift = 28.0 * (1.0 - open);
-        let layer = container(panel)
-            .padding(Padding {
-                top: 32.0 + lift,
-                bottom: (32.0 - lift).max(0.0),
-                left: 40.0,
-                right: 40.0,
-            })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill);
-        stack![
-            opaque(
-                mouse_area(
-                    container(Space::new())
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .style(theme::scrim(*p, open))
-                )
-                .on_press(Message::Noop)
-            ),
-            opaque(layer),
-        ]
-        .into()
+        let layout = row![
+            self.sidebar(&panel_p),
+            container(Space::new())
+                .width(Length::Fixed(1.0))
+                .height(Length::Fill)
+                .style(theme::panel(panel_p.border)),
+            main,
+        ];
+        opaque(
+            container(layout)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::panel(theme::alpha(p.bg, open)))
+                .clip(true),
+        )
     }
 
-    /// Segmented progress bar over the seven steps: a thin bar per step
-    /// (filled when done, violet when current) with its short name below.
-    fn stepper<'a>(&'a self, p: &Palette) -> El<'a, Message> {
+    /// Left column of the assistant: title, the five steps as a vertical
+    /// list (done, current, upcoming) and the note of the current step.
+    fn sidebar<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         let current = self.step.index();
-        let mut steps = row![].spacing(8);
+        let mut steps = column![].spacing(2);
         for (i, step) in Step::ALL.iter().enumerate() {
             let done = i < current
                 || (i <= self.visited && i != current && self.step_error(*step).is_none());
             let active = i == current;
-            let reachable = i <= self.visited;
-            let fill = if active {
-                p.violet
+            let reachable = i <= self.visited || i == current + 1;
+            let (fill, edge, ink) = if active {
+                (p.text, p.text, p.bg)
             } else if done {
-                p.accent
+                (p.backup, p.backup, Color::from_rgb(0.043, 0.047, 0.055))
             } else {
-                Color::TRANSPARENT
+                (Color::TRANSPARENT, p.line, p.muted)
             };
-            let bar = container(
-                container(Space::new())
-                    .width(Length::Fill)
-                    .height(Length::Fixed(5.0))
-                    .style(theme::bar(fill)),
-            )
-            .width(Length::Fill)
-            .style(theme::bar(theme::alpha(p.text, 0.10)));
-            let label_color = if active {
-                p.violet
-            } else if done {
-                p.text
-            } else if reachable {
-                p.muted
+            let dot = container(if done && !active {
+                icons::icon(Glyph::Check, 13.0, ink)
             } else {
-                p.faint
-            };
+                ui::mono(ink, (i + 1).to_string(), 11.0)
+            })
+            .width(Length::Fixed(24.0))
+            .height(Length::Fixed(24.0))
+            .center(Length::Fixed(24.0))
+            .style(theme::step_dot(fill, edge));
             steps = steps.push(
-                button(column![bar, ui::strong(label_color, step.short(), 12.0)].spacing(6))
-                    .padding(Padding::from([4, 0]))
-                    .width(Length::Fill)
-                    .style(theme::btn(*p, Tone::Ghost))
-                    .on_press_maybe(
-                        (reachable || i == current + 1)
-                            .then_some(Message::Wizard(WizardMsg::GoTo(*step))),
-                    ),
+                button(
+                    row![
+                        dot,
+                        ui::colored(
+                            if active || done { p.text } else { p.muted },
+                            step.short(),
+                            14.0
+                        )
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                )
+                .padding(Padding::from([8, 12]))
+                .width(Length::Fill)
+                .style(theme::step_row(*p, active))
+                .on_press_maybe(reachable.then_some(Message::Wizard(WizardMsg::GoTo(*step)))),
             );
         }
-        steps.width(Length::Fill).into()
+        let note = container(
+            column![
+                ui::colored(p.muted, self.step.subtitle(), 12.0),
+                ui::kbd(p, "Échap · quitter"),
+            ]
+            .spacing(8),
+        )
+        .padding(12)
+        .width(Length::Fill)
+        .style(theme::outline(*p, p.border, 0.0));
+        container(
+            column![
+                row![
+                    charts::mark(
+                        charts::Mark {
+                            from: p.backup,
+                            to: p.violet,
+                            turn: 0.0
+                        },
+                        24.0
+                    ),
+                    ui::title(
+                        p,
+                        if self.draft.existing.is_some() {
+                            "Modifier le profil"
+                        } else {
+                            "Nouveau profil"
+                        },
+                        18.0
+                    ),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .padding(Padding::from([2, 10])),
+                steps,
+                Space::new().height(Length::Fill),
+                note,
+            ]
+            .spacing(18),
+        )
+        .width(Length::Fixed(300.0))
+        .height(Length::Fill)
+        .padding(Padding::from([18, 14]))
+        .style(theme::panel(p.rail))
+        .into()
     }
 
     fn footer<'a>(&'a self, p: &Palette, now: Instant) -> El<'a, Message> {
@@ -563,15 +584,16 @@ impl Wizard {
                 bottom: 0.0,
             })
             .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Right)
             .into(),
             None => ui::fill(),
         };
         let back = (self.step.index() > 0).then(|| {
             ui::action(
                 p,
-                Tone::Ghost,
-                Some(Glyph::ChevronLeft),
-                "Retour",
+                Tone::Secondary,
+                None,
+                "← Retour",
                 (!self.saving).then_some(Message::Wizard(WizardMsg::Back)),
             )
         });
@@ -580,14 +602,14 @@ impl Wizard {
                 ui::action(
                     p,
                     Tone::Secondary,
-                    Some(Glyph::Check),
+                    None,
                     "Enregistrer",
                     (!self.saving).then_some(Message::Wizard(WizardMsg::Save(false)))
                 ),
                 ui::action(
                     p,
                     Tone::Primary,
-                    Some(Glyph::Eye),
+                    None,
                     if self.saving {
                         "Enregistrement…"
                     } else {
@@ -603,7 +625,7 @@ impl Wizard {
                 p,
                 Tone::Primary,
                 None,
-                "Continuer",
+                "Continuer →",
                 Some(Message::Wizard(WizardMsg::Next)),
             )
         };
@@ -611,12 +633,11 @@ impl Wizard {
             row![
                 ui::action(
                     p,
-                    Tone::Ghost,
+                    Tone::Secondary,
                     None,
                     "Annuler",
                     (!self.saving).then_some(Message::Wizard(WizardMsg::Close))
                 ),
-                ui::kbd(p, "Échap"),
                 error,
             ]
             .push(back)
@@ -624,9 +645,8 @@ impl Wizard {
             .spacing(10)
             .align_y(Alignment::Center),
         )
-        .padding(Padding::from([16, 28]))
+        .padding(Padding::from([16, 48]))
         .width(Length::Fill)
-        .style(theme::panel(theme::mix(p.surface, p.sidebar, 0.5)))
         .into()
     }
 
@@ -648,35 +668,47 @@ impl Wizard {
         }
     }
 
-    /// Mode tiles, then source and destination side by side.
+    /// Mode choice, then source and destination side by side.
     fn locations_view<'a>(&'a self, p: &Palette, providers: &[&'static str]) -> El<'a, Message> {
-        let side = |side: Side, question: &'static str, hint: &'static str| -> El<'a, Message> {
-            column![
-                ui::heading(p, question),
-                ui::caption(p, hint),
-                self.endpoint_view(p, side, providers, true),
-            ]
-            .spacing(8)
-            .width(Length::FillPortion(1))
-            .into()
+        let arrow_mode = self.draft.mode;
+        let arrow: El<'a, Message> = match arrow_mode {
+            Some(mode) => container(ui::mode_tile(p, mode, 44.0)).into(),
+            None => container(icons::icon(Glyph::ArrowRight, 20.0, p.muted))
+                .width(Length::Fixed(44.0))
+                .height(Length::Fixed(44.0))
+                .center(Length::Fixed(44.0))
+                .style(theme::swatch(p.surface_hi))
+                .into(),
         };
         column![
             self.mode_view(p),
             row![
-                side(
+                container(self.endpoint_card(
+                    p,
                     Side::Source,
                     "D’où viennent les fichiers ?",
-                    "Les fichiers de référence : jamais modifiés par une sauvegarde ou un miroir."
-                ),
-                side(
+                    providers
+                ))
+                .width(Length::FillPortion(1)),
+                container(arrow)
+                    .width(Length::Fixed(70.0))
+                    .center_x(Length::Fixed(70.0))
+                    .center_y(Length::Fill),
+                container(self.endpoint_card(
+                    p,
                     Side::Destination,
                     "Où doivent-ils aller ?",
-                    "La copie à maintenir."
-                ),
+                    providers
+                ))
+                .width(Length::FillPortion(1)),
             ]
-            .spacing(24),
+            .height(Length::Shrink),
+            ui::caption(
+                p,
+                "La destination doit être distincte de la source et non imbriquée. Une sauvegarde ou un miroir ne modifie jamais la source."
+            ),
         ]
-        .spacing(28)
+        .spacing(20)
         .into()
     }
 
@@ -684,68 +716,60 @@ impl Wizard {
         let modes = [
             (
                 SyncMode::Backup,
-                Glyph::Backup,
-                p.accent,
-                [
-                    "Copie les nouveautés et modifications",
-                    "Ne supprime jamais rien",
-                    "Versions gardées avant remplacement",
-                ],
+                "Copie la source vers la destination. Ne supprime jamais : les fichiers présents seulement à la destination sont conservés.",
             ),
             (
                 SyncMode::Mirror,
-                Glyph::Mirror,
-                p.warning,
-                [
-                    "Destination identique à la source",
-                    "Suppressions seulement si autorisées",
-                    "Bloqué si source vide ou > 50 %",
-                ],
+                "Rend la destination identique à la source. Suppressions possibles, avec confirmation séparée.",
             ),
             (
                 SyncMode::Bidirectional,
-                Glyph::TwoWay,
-                p.violet,
-                [
-                    "Changements propagés des deux côtés",
-                    "Conflits conservés, jamais écrasés",
-                    "Deux dossiers locaux requis",
-                ],
+                "Propage les changements dans les deux sens (deux dossiers locaux). Les conflits vous sont soumis.",
             ),
         ];
-        let tiles = modes.into_iter().map(|(mode, glyph, color, facts)| {
+        let tiles = modes.into_iter().map(|(mode, body)| {
             let selected = self.draft.mode == Some(mode);
-            let facts = facts.into_iter().fold(column![].spacing(8), |c, f| {
-                c.push(
-                    row![
-                        icons::icon(Glyph::Check, 14.0, color),
-                        ui::colored(p.muted, f, 13.0)
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
-            });
             button(
                 column![
-                    ui::glyph_box(glyph, color, 40.0),
-                    ui::title(
-                        &Palette { text: color, ..*p },
-                        model::mode_label(mode),
-                        22.0
-                    ),
-                    ui::muted(p, model::mode_tagline(mode)),
-                    ui::divider(p),
-                    facts,
+                    row![
+                        ui::mode_tile(p, mode, 36.0),
+                        ui::strong(p.text, model::mode_label(mode), 15.0),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                    ui::colored(p.muted, body, 12.0),
                 ]
-                .spacing(12),
+                .spacing(10),
             )
-            .padding(20)
+            .padding(18)
             .width(Length::Fill)
-            .style(theme::tile(*p, selected, true))
+            .style(theme::option(*p, shell::mode_fill(p, mode), selected))
             .on_press(Message::Wizard(WizardMsg::Mode(mode)))
             .into()
         });
-        row(tiles).spacing(14).into()
+        row(tiles).spacing(12).height(Length::Shrink).into()
+    }
+
+    /// One side of the profile: provider chips, then the form of the chosen
+    /// provider, in a card.
+    fn endpoint_card<'a>(
+        &'a self,
+        p: &Palette,
+        side: Side,
+        question: &'static str,
+        providers: &[&'static str],
+    ) -> El<'a, Message> {
+        container(
+            column![
+                ui::eyebrow(p.muted, question),
+                self.endpoint_view(p, side, providers),
+            ]
+            .spacing(14),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .style(theme::card(*p, 0.0, false))
+        .into()
     }
 
     fn endpoint_view<'a>(
@@ -753,18 +777,17 @@ impl Wizard {
         p: &Palette,
         side: Side,
         providers: &[&'static str],
-        compact: bool,
     ) -> El<'a, Message> {
         let d = match side {
             Side::Source => &self.draft.source,
             Side::Destination => &self.draft.destination,
         };
-        let tiles = Provider::ALL.iter().map(|prov| {
+        let chips = Provider::ALL.iter().map(|prov| {
             let compiled = providers.contains(&prov.key());
             let forbidden = if self.bidirectional() && *prov != Provider::Local {
-                Some("Bidirectionnel : local uniquement")
+                Some("Bidirectionnel : dossiers locaux uniquement")
             } else if side == Side::Destination && *prov == Provider::Onedrive {
-                Some("Source uniquement")
+                Some("OneDrive ne peut être qu’une source")
             } else if !compiled {
                 Some("Non inclus dans cette version")
             } else {
@@ -772,31 +795,22 @@ impl Wizard {
             };
             let enabled = forbidden.is_none();
             let selected = d.provider == Some(*prov);
-            let color = if enabled { p.accent } else { p.faint };
-            button(
-                row![
-                    ui::glyph_box(prov.glyph(), color, 36.0),
-                    column![
-                        ui::strong(if enabled { p.text } else { p.faint }, prov.label(), 14.0),
-                        ui::caption(p, forbidden.unwrap_or(prov.hint())),
-                    ]
-                    .spacing(2)
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),
+            let chip = button(
+                text(prov.label())
+                    .size(12)
+                    .font(ui::weight(iced::font::Weight::Semibold)),
             )
-            .padding(12)
-            .width(Length::Fill)
-            .style(theme::tile(*p, selected, enabled))
-            .on_press_maybe(enabled.then_some(Message::Wizard(WizardMsg::Provider(side, *prov))))
-            .into()
+            .padding(Padding::from([4, 12]))
+            .style(theme::pick_chip(*p, selected, enabled))
+            .on_press_maybe(enabled.then_some(Message::Wizard(WizardMsg::Provider(side, *prov))));
+            match forbidden {
+                Some(reason) => ui::with_tip(p, chip, reason, iced::widget::tooltip::Position::Top),
+                None => chip.into(),
+            }
         });
-        let grid = iced::widget::grid(tiles)
-            .fluid(if compact { 220.0 } else { 260.0 })
-            .spacing(10)
-            .height(iced::widget::grid::Sizing::EvenlyDistribute(Length::Shrink));
+        let chips: El<'a, Message> = row(chips).spacing(6).wrap().into();
         let form = d.provider.map(|prov| self.endpoint_form(p, side, prov));
-        column![grid].push(form).spacing(22).into()
+        column![chips].push(form).spacing(14).into()
     }
 
     fn endpoint_form<'a>(&'a self, p: &Palette, side: Side, prov: Provider) -> El<'a, Message> {
@@ -819,15 +833,6 @@ impl Wizard {
                 None,
             )
         };
-        let browse = |field: Field, label: &'static str| {
-            ui::action(
-                p,
-                Tone::Secondary,
-                Some(Glyph::Folder),
-                label,
-                Some(Message::Wizard(WizardMsg::Browse(side, field))),
-            )
-        };
         let path_row = |field: Field,
                         label: &'static str,
                         placeholder: &'static str,
@@ -841,16 +846,24 @@ impl Wizard {
             };
             column![
                 ui::strong(p.muted, label, 12.0),
-                row![
-                    text_input(placeholder, value)
-                        .on_input(move |v| Message::Wizard(WizardMsg::Field(side, field, v)))
-                        .padding(Padding::from([9, 12]))
-                        .size(14)
-                        .style(theme::input(*p, false)),
-                    browse(field, button_label),
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center),
+                container(
+                    row![
+                        text_input(placeholder, value)
+                            .on_input(move |v| Message::Wizard(WizardMsg::Field(side, field, v)))
+                            .font(ui::mono_font())
+                            .padding(Padding::from([10, 0]))
+                            .size(13)
+                            .style(theme::search(*p)),
+                        button(ui::strong(p.accent, button_label, 13.0))
+                            .padding(Padding::from([4, 6]))
+                            .style(theme::btn(*p, Tone::Ghost))
+                            .on_press(Message::Wizard(WizardMsg::Browse(side, field))),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                )
+                .padding(Padding::from([0, 12]))
+                .style(theme::field_box(*p, 12.0)),
                 ui::caption(p, help),
             ]
             .spacing(6)
@@ -942,279 +955,208 @@ impl Wizard {
             .spacing(14)
             .into(),
         };
-        container(
-            column![
-                row![
-                    ui::glyph_box(prov.glyph(), p.accent, 30.0),
-                    ui::heading(p, prov.label())
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center),
-                content
-            ]
-            .spacing(16),
-        )
-        .padding(20)
-        .width(Length::Fill)
-        .style(theme::card(*p, 0.0, false))
-        .into()
+        content
     }
 
-    fn filters_view<'a>(&'a self, p: &Palette, compact: bool) -> El<'a, Message> {
+    fn filters_view<'a>(&'a self, p: &Palette, _compact: bool) -> El<'a, Message> {
         let f = &self.draft.filters;
-        let presets = PRESETS.iter().enumerate().map(|(i, preset)| {
-            let on = f.has_preset(preset);
-            button(
-                row![
-                    container(if on {
-                        icons::icon(Glyph::Check, 14.0, p.on_accent)
-                    } else {
-                        ui::hspace(14.0)
-                    })
-                    .width(Length::Fixed(22.0))
-                    .height(Length::Fixed(22.0))
-                    .center(Length::Fixed(22.0))
-                    .style(theme::outline(
-                        *p,
-                        if on { p.accent } else { p.faint },
-                        if on { 8.0 } else { 0.0 }
-                    )),
-                    column![
-                        ui::strong(p.text, preset.label, 14.0),
-                        ui::caption(p, preset.hint)
-                    ]
-                    .spacing(2)
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),
-            )
-            .padding(12)
-            .width(Length::Fill)
-            .style(theme::tile(*p, on, true))
-            .on_press(Message::Wizard(WizardMsg::Preset(i)))
-            .into()
-        });
-        let grid = iced::widget::grid(presets)
-            .fluid(if compact { 260.0 } else { 300.0 })
-            .spacing(10)
-            .height(iced::widget::grid::Sizing::EvenlyDistribute(Length::Shrink));
+        let mut presets = column![ui::eyebrow(p.muted, "Catégories prêtes")].spacing(4);
+        for (i, preset) in PRESETS.iter().enumerate() {
+            presets = presets.push(ui::toggle_row(
+                p,
+                f.has_preset(preset),
+                preset.label,
+                Some(preset.hint),
+                false,
+                move |_| Message::Wizard(WizardMsg::Preset(i)),
+                None,
+            ));
+        }
         let list =
             |list: FilterList, label: &'static str, help: &'static str, color| -> El<'a, Message> {
                 let chips = f.list(list).iter().enumerate().map(|(i, pattern)| {
                     button(
                         row![
-                            ui::mono(p.text, pattern.clone(), 12.0),
-                            icons::icon(Glyph::Close, 11.0, p.muted)
+                            ui::mono(color, pattern.clone(), 12.0),
+                            icons::icon(Glyph::Close, 11.0, color)
                         ]
                         .spacing(6)
                         .align_y(Alignment::Center),
                     )
                     .padding(Padding::from([4, 10]))
-                    .style(theme::chip(*p, color, true))
+                    .style(theme::tint_btn(
+                        color,
+                        if p.is_light() { 0.16 } else { 0.18 },
+                    ))
                     .on_press(Message::Wizard(WizardMsg::RemovePattern(list, i)))
                     .into()
                 });
                 let value = &self.inputs[list_index(list)];
                 column![
-                    ui::strong(p.text, label, 14.0),
+                    ui::strong(p.text, label, 13.0),
                     ui::caption(p, help),
                     row(chips).spacing(6).wrap(),
-                    row![
-                        text_input("Ajouter un motif puis Entrée", value)
-                            .on_input(move |v| Message::Wizard(WizardMsg::PatternInput(list, v)))
-                            .on_submit(Message::Wizard(WizardMsg::AddPattern(list)))
-                            .padding(Padding::from([8, 12]))
-                            .size(13)
-                            .style(theme::input(*p, false)),
-                        ui::action(
-                            p,
-                            Tone::Secondary,
-                            Some(Glyph::Plus),
-                            "Ajouter",
-                            (!value.trim().is_empty())
-                                .then_some(Message::Wizard(WizardMsg::AddPattern(list)))
-                        ),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
+                    container(
+                        row![
+                            text_input("Ajouter un motif puis Entrée", value)
+                                .on_input(move |v| Message::Wizard(WizardMsg::PatternInput(
+                                    list, v
+                                )))
+                                .on_submit(Message::Wizard(WizardMsg::AddPattern(list)))
+                                .font(ui::mono_font())
+                                .padding(Padding::from([8, 0]))
+                                .size(13)
+                                .style(theme::search(*p)),
+                            button(ui::strong(
+                                if value.trim().is_empty() {
+                                    p.faint
+                                } else {
+                                    p.accent
+                                },
+                                "Ajouter",
+                                13.0
+                            ))
+                            .padding(Padding::from([4, 6]))
+                            .style(theme::btn(*p, Tone::Ghost))
+                            .on_press_maybe(
+                                (!value.trim().is_empty())
+                                    .then_some(Message::Wizard(WizardMsg::AddPattern(list)))
+                            ),
+                        ]
+                        .align_y(Alignment::Center)
+                    )
+                    .padding(Padding::from([0, 12]))
+                    .style(theme::field_box(*p, 12.0)),
                 ]
                 .spacing(8)
                 .into()
             };
-        column![
-            ui::eyebrow(p.muted, "Raccourcis"),
-            grid,
-            ui::divider(p),
+        let mut patterns = column![
+            ui::eyebrow(p.muted, "Vos motifs"),
             list(
                 FilterList::ExcludeFiles,
                 "Exclure des fichiers",
                 "Ex. *.tmp exclut les fichiers temporaires ; **/*.iso dans tous les sous-dossiers.",
-                p.danger
+                p.mirror_ink
             ),
             list(
                 FilterList::ExcludeDirectories,
                 "Exclure des dossiers",
                 "Ex. cache exclut tout dossier nommé cache (non parcouru).",
-                p.warning
+                p.mirror_ink
             ),
             list(
                 FilterList::IncludeFiles,
                 "Inclure uniquement",
                 "Vide = tous les fichiers. Ex. **/*.jpg pour ne garder que les photos.",
-                p.success
+                p.backup_ink
             ),
-            if crate::draft::case_choice_available() {
-                El::from(
-                    toggler(f.case_insensitive)
-                        .label("Ignorer la casse des motifs")
-                        .on_toggle(|v| Message::Wizard(WizardMsg::CaseInsensitive(v)))
-                        .text_size(14)
-                        .style(theme::switch(*p, false)),
-                )
-            } else {
-                ui::caption(
-                    p,
-                    "Comme les noms de fichiers Windows, les motifs ignorent la casse : Thumbs.db exclut aussi thumbs.db.",
-                )
-            },
         ]
-        .spacing(16)
+        .spacing(14);
+        patterns = patterns.push(if crate::draft::case_choice_available() {
+            ui::toggle_row(
+                p,
+                f.case_insensitive,
+                "Ignorer la casse des motifs",
+                None,
+                false,
+                |v| Message::Wizard(WizardMsg::CaseInsensitive(v)),
+                None,
+            )
+        } else {
+            ui::caption(
+                p,
+                "Comme les noms de fichiers Windows, les motifs ignorent la casse : Thumbs.db exclut aussi thumbs.db.",
+            )
+        });
+        let card = |content: iced::widget::Column<'a, Message>| -> El<'a, Message> {
+            container(content)
+                .padding(Padding::from([14, 18]))
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false))
+                .into()
+        };
+        column![
+            ui::callout(
+                p,
+                p.info,
+                Glyph::Info,
+                "Mêmes règles partout",
+                "Les filtres s’appliquent aux deux côtés, en simulation comme en exécution. Vous pourrez aussi exclure un dossier depuis le plan simulé.",
+            ),
+            row![
+                container(card(presets)).width(Length::FillPortion(1)),
+                container(card(patterns)).width(Length::FillPortion(1)),
+            ]
+            .spacing(14),
+        ]
+        .spacing(14)
         .into()
     }
 
     /// How one-way previews recognize identical files.
     fn compare_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
+        let card = |content: El<'a, Message>| -> El<'a, Message> {
+            container(content)
+                .padding(20)
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false))
+                .into()
+        };
         if self.bidirectional() {
-            return ui::callout(
-                p,
-                p.info,
-                Glyph::TwoWay,
-                "Comparaison par contenu",
-                "Le bidirectionnel lit l’empreinte de chaque fichier : l’état de référence doit prouver qu’un fichier n’a pas changé.",
+            return card(
+                column![
+                    ui::eyebrow(p.muted, "Comparaison des fichiers"),
+                    ui::strong(p.text, "Contenu (BLAKE3)", 14.0),
+                    ui::caption(
+                        p,
+                        "Le bidirectionnel lit l’empreinte de chaque fichier : l’état de référence doit prouver qu’un fichier n’a pas changé."
+                    ),
+                ]
+                .spacing(8)
+                .into(),
             );
         }
         let current = self.draft.compare;
-        let tile = |method: CompareMethod,
-                    glyph: Glyph,
-                    title: &'static str,
-                    body: &'static str|
-         -> El<'a, Message> {
+        let option = |method: CompareMethod, title: &'static str, body: &'static str| {
             let on = current == method;
             button(
+                column![
+                    ui::strong(p.text, title, 14.0),
+                    ui::colored(p.muted, body, 12.0)
+                ]
+                .spacing(4)
+                .width(Length::Fill),
+            )
+            .padding(16)
+            .width(Length::Fill)
+            .style(theme::option(*p, p.violet, on))
+            .on_press(Message::Wizard(WizardMsg::Compare(method)))
+        };
+        card(
+            column![
+                ui::eyebrow(p.muted, "Comparaison des fichiers"),
                 row![
-                    ui::glyph_box(glyph, if on { p.accent } else { p.muted }, 36.0),
-                    column![ui::strong(p.text, title, 14.0), ui::caption(p, body)]
-                        .spacing(3)
-                        .width(Length::Fill),
-                    icons::icon(
-                        if on {
-                            Glyph::Check
-                        } else {
-                            Glyph::ChevronRight
-                        },
-                        16.0,
-                        if on { p.accent } else { p.faint }
+                    option(
+                        CompareMethod::SizeAndDate,
+                        "Taille et date",
+                        "Rapide. Lit seulement les listes de dossiers ; une modification qui garde taille et date passe inaperçue."
+                    ),
+                    option(
+                        CompareMethod::Content,
+                        "Contenu (BLAKE3)",
+                        "Plus lent. Relit les fichiers de même taille des deux côtés et détecte tout changement."
                     ),
                 ]
                 .spacing(12)
-                .align_y(Alignment::Center),
-            )
-            .padding(14)
-            .width(Length::Fill)
-            .style(theme::tile(*p, on, true))
-            .on_press(Message::Wizard(WizardMsg::Compare(method)))
-            .into()
-        };
-        column![
-            ui::strong(p.muted, "Comparaison des fichiers", 12.0),
-            tile(
-                CompareMethod::SizeAndDate,
-                Glyph::Bolt,
-                "Taille et date — rapide",
-                "Seuls les dossiers sont lus. Une modification qui garde la même taille et la même date passe inaperçue.",
-            ),
-            tile(
-                CompareMethod::Content,
-                Glyph::Shield,
-                "Contenu — empreintes BLAKE3",
-                "Relit les fichiers de même taille des deux côtés : plus lent, détecte tout changement de contenu.",
-            ),
-        ]
-        .spacing(8)
-        .into()
+                .height(Length::Shrink),
+            ]
+            .spacing(12)
+            .into(),
+        )
     }
 
     fn safety_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
-        let guard = |title: &'static str, body: &'static str| -> El<'a, Message> {
-            row![
-                icons::icon(Glyph::Shield, 18.0, p.success),
-                column![ui::strong(p.text, title, 14.0), ui::caption(p, body)].spacing(2)
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .into()
-        };
-        let guards = column![
-            guard("Simulation obligatoire", "Le plan exact affiché est le seul exécutable ; toute modification exige une nouvelle simulation."),
-            guard("Copie vérifiée", "Empreinte BLAKE3 calculée pendant la copie et contenu relu avant publication."),
-            guard("Plafond de suppressions", "Une simulation qui supprimerait plus de la moitié de la destination demande votre accord."),
-            guard("Jamais de suppression déduite d’une panne", "Source inaccessible, inventaire incomplet ou source vide : suppressions refusées."),
-        ]
-        .spacing(14);
-        let deletion: El<'a, Message> = if self.draft.deletions_possible() {
-            let on = self.draft.allow_delete;
-            container(
-                column![
-                    row![
-                        ui::glyph_box(Glyph::Trash, if on { p.danger } else { p.muted }, 40.0),
-                        column![
-                            ui::strong(p.text, "Autoriser les suppressions protégées", 15.0),
-                            ui::caption(p, if self.draft.mode == Some(SyncMode::Mirror) {
-                                "Réplique les retraits de la source. Sans cela, le miroir garde les fichiers en trop et le signale."
-                            } else {
-                                "Propage les suppressions détectées grâce à l’état précédent fiable."
-                            }),
-                        ]
-                        .spacing(3)
-                        .width(Length::Fill),
-                        toggler(on)
-                            .on_toggle(|v| Message::Wizard(WizardMsg::AllowDelete(v)))
-                            .size(24)
-                            .style(theme::switch(*p, true)),
-                    ]
-                    .spacing(14)
-                    .align_y(Alignment::Center),
-                    ui::caption(p, "Source vide ou illisible toujours bloquée. Au-delà de 50 % de la destination (dès 10 suppressions), la simulation demande votre accord explicite. Une confirmation distincte est demandée à chaque exécution."),
-                ]
-                .spacing(10),
-            )
-            .padding(18)
-            .style(theme::outline(*p, if on { p.danger } else { p.border }, if on { 1.0 } else { 0.0 }))
-            .into()
-        } else {
-            ui::callout(
-                p,
-                p.success,
-                Glyph::Backup,
-                "Une sauvegarde ne supprime jamais",
-                "Les fichiers retirés de la source restent à destination.",
-            )
-        };
-        column![
-            deletion,
-            self.trash_view(p),
-            self.compare_view(p),
-            container(guards)
-                .padding(18)
-                .width(Length::Fill)
-                .style(theme::card(*p, 0.0, false))
-        ]
-        .spacing(16)
-        .into()
-    }
-
-    /// Always shown: replacements go through the trash as much as deletions.
-    fn trash_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         let on = self.draft.trash_enabled;
         let explanation = if on {
             match self.draft.trash_limit() {
@@ -1228,204 +1170,208 @@ impl Wizard {
         } else {
             "Les fichiers remplacés ou supprimés ne seront pas récupérables.".to_owned()
         };
-        let mut col = column![
-            row![
-                ui::glyph_box(Glyph::Trash, if on { p.success } else { p.muted }, 40.0),
-                column![
-                    ui::strong(
-                        p.text,
-                        if on {
-                            "Corbeille : activée"
-                        } else {
-                            "Corbeille : désactivée"
-                        },
-                        15.0
-                    ),
-                    ui::caption(p, explanation),
-                ]
-                .spacing(3)
-                .width(Length::Fill),
-                toggler(on)
-                    .on_toggle(|v| Message::Wizard(WizardMsg::Trash(v)))
-                    .size(24)
-                    .style(theme::switch(*p, false)),
-            ]
-            .spacing(14)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(12);
-        if on {
+        let size: Option<El<'a, Message>> = on.then(|| {
             let invalid = self.draft.trash_limit().is_err();
-            col = col.push(
-                container(ui::field(
-                    p,
-                    "Taille maximale (Go)",
-                    "5",
-                    &self.draft.trash_size,
-                    |v| Message::Wizard(WizardMsg::TrashSize(v)),
-                    Some("Au-delà, les synchronisations les plus anciennes sont retirées de la corbeille."),
-                    invalid.then_some("Un nombre entier de 1 à 100 000"),
-                ))
-                .max_width(260.0),
-            );
-        }
-        container(col)
-            .padding(18)
-            .style(theme::outline(
-                *p,
-                if on { p.success } else { p.border },
-                if on { 1.0 } else { 0.0 },
+            container(
+                row![
+                    text_input("5", &self.draft.trash_size)
+                        .on_input(|v| Message::Wizard(WizardMsg::TrashSize(v)))
+                        .font(ui::mono_font())
+                        .padding(Padding::from([8, 0]))
+                        .width(Length::Fixed(48.0))
+                        .size(13)
+                        .style(theme::search(*p)),
+                    ui::mono(p.muted, "Go", 12.0),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding::from([0, 12]))
+            .style(theme::field_box(
+                Palette {
+                    line: if invalid { p.danger } else { p.line },
+                    ..*p
+                },
+                12.0,
             ))
             .into()
+        });
+        let mut retention = column![
+            ui::eyebrow(p.muted, "Si un fichier est remplacé ou supprimé"),
+            ui::toggle_row(
+                p,
+                on,
+                "Garder l’ancienne version en corbeille",
+                Some(&explanation),
+                false,
+                |v| Message::Wizard(WizardMsg::Trash(v)),
+                size,
+            ),
+        ]
+        .spacing(6);
+        if self.draft.trash_limit().is_err() && on {
+            retention = retention.push(ui::colored(
+                p.danger,
+                "Un nombre entier de 1 à 100 000 Go",
+                12.0,
+            ));
+        }
+        if self.draft.deletions_possible() {
+            retention = retention.push(ui::toggle_row(
+                p,
+                self.draft.allow_delete,
+                "Autoriser les suppressions protégées",
+                Some(if self.draft.mode == Some(SyncMode::Mirror) {
+                    "Miroir : réplique les retraits de la source, avec une confirmation à chaque exécution. Sans cela, les fichiers en trop sont gardés et signalés."
+                } else {
+                    "Propage les suppressions détectées grâce à l’état précédent fiable, avec une confirmation à chaque exécution."
+                }),
+                true,
+                |v| Message::Wizard(WizardMsg::AllowDelete(v)),
+                None,
+            ));
+        } else {
+            retention = retention.push(ui::caption(
+                p,
+                "Une sauvegarde ne supprime jamais : les fichiers retirés de la source restent à destination.",
+            ));
+        }
+        column![
+            self.compare_view(p),
+            container(retention)
+                .padding(Padding::from([14, 18]))
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false)),
+            ui::callout(
+                p,
+                p.backup_ink,
+                Glyph::Shield,
+                "Toujours actifs, quel que soit votre choix",
+                "Simulation obligatoire avant écriture · copie vérifiée par empreinte · source vide ou illisible refusée · aucune suppression déduite d’une panne · plafond de suppressions (plus de la moitié de la destination, dès 10).",
+            ),
+        ]
+        .spacing(14)
+        .into()
     }
 
     fn summary_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         let d = &self.draft;
         let groups = self.groups.iter().map(|g| {
-            button(ui::colored(p.text, g.clone(), 13.0))
-                .padding(Padding::from([4, 12]))
-                .style(theme::chip(*p, p.accent, d.group.trim() == g))
-                .on_press(Message::Wizard(WizardMsg::Group(g.clone())))
-                .into()
-        });
-        let side = |label: &'static str, e: &crate::draft::EndpointDraft| -> El<'a, Message> {
-            let (local, remote) = e.build().unwrap_or_default();
-            let prov = e.provider.unwrap_or(Provider::Local);
-            row![
-                ui::glyph_box(prov.glyph(), p.accent, 34.0),
-                column![
-                    ui::eyebrow(p.faint, label),
-                    ui::mono(
-                        p.text,
-                        model::ellipsize(&model::endpoint_location(&local, remote.as_ref()), 70),
-                        13.0
-                    ),
-                    ui::caption(p, model::provider_label(remote.as_ref())),
-                ]
-                .spacing(2)
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
+            let on = d.group.trim() == g;
+            button(ui::colored(
+                if on { p.bg } else { p.muted },
+                g.clone(),
+                12.0,
+            ))
+            .padding(Padding::from([4, 12]))
+            .style(theme::pick_chip(*p, on, true))
+            .on_press(Message::Wizard(WizardMsg::Group(g.clone())))
             .into()
-        };
+        });
         let schedule = match d.schedule.trigger() {
             Ok(Some(t)) => crate::draft::trigger_label(&t),
             _ if d.schedule.kind == TriggerKind::Manual => "Lancement manuel".into(),
             _ => "Planification invalide".into(),
         };
-        let item = |g: Glyph, label: String, step: Step| -> El<'a, Message> {
-            button(
-                row![
-                    icons::icon(g, 16.0, p.muted),
-                    ui::colored(p.text, label, 13.0),
-                    ui::fill(),
-                    icons::icon(Glyph::Pencil, 13.0, p.faint)
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center),
-            )
-            .padding(Padding::from([8, 10]))
-            .width(Length::Fill)
-            .style(theme::row_btn(*p, false))
-            .on_press(Message::Wizard(WizardMsg::GoTo(step)))
-            .into()
+        // A chip that jumps back to the step it summarizes.
+        let item = |label: String, step: Step, color: Color| -> El<'a, Message> {
+            button(ui::colored(color, label, 12.0))
+                .padding(Padding::from([4, 10]))
+                .style(theme::tint_btn(color, 0.12))
+                .on_press(Message::Wizard(WizardMsg::GoTo(step)))
+                .into()
+        };
+        let location = |e: &crate::draft::EndpointDraft| -> String {
+            let (local, remote) = e.build().unwrap_or_default();
+            model::ellipsize(&model::endpoint_location(&local, remote.as_ref()), 44)
         };
         let mode = d.mode.map_or("—", model::mode_label);
+        let chips = vec![
+            item(format!("Mode : {mode}"), Step::Locations, p.text),
+            item(location(&d.source), Step::Locations, p.text),
+            item(location(&d.destination), Step::Locations, p.text),
+            item(
+                format!("{} filtre(s)", d.filters.count()),
+                Step::Filters,
+                p.muted,
+            ),
+            item(
+                format!(
+                    "Comparaison : {}",
+                    model::compare_label(d.effective_compare())
+                ),
+                Step::Safety,
+                p.muted,
+            ),
+            item(
+                if d.allow_delete {
+                    "Suppressions protégées autorisées".into()
+                } else {
+                    "Aucune suppression".into()
+                },
+                Step::Safety,
+                if d.allow_delete { p.danger } else { p.muted },
+            ),
+            item(
+                match (d.trash_enabled, d.trash_limit()) {
+                    (true, Ok(limit)) => format!("Corbeille {}", model::bytes(limit)),
+                    (true, Err(_)) => "Corbeille : taille invalide".into(),
+                    (false, _) => "Corbeille désactivée".into(),
+                },
+                Step::Safety,
+                p.muted,
+            ),
+            item(schedule, Step::Schedule, p.violet),
+        ];
+        let card = |content: iced::widget::Column<'a, Message>| -> El<'a, Message> {
+            container(content)
+                .padding(20)
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false))
+                .into()
+        };
         column![
-            row![
-                ui::field(
-                    p,
-                    "Nom du profil",
-                    "Ex. Documents vers NAS",
-                    &d.name,
-                    |v| Message::Wizard(WizardMsg::Name(v)),
-                    None,
-                    None
-                ),
-                ui::field(
-                    p,
-                    "Groupe",
-                    "Sans groupe",
-                    &d.group,
-                    |v| Message::Wizard(WizardMsg::Group(v)),
-                    None,
-                    None
-                ),
-            ]
-            .spacing(14),
-            row(groups).spacing(6).wrap(),
-            container(
+            card(
                 column![
-                    side("Source", &d.source),
-                    container(icons::icon(
-                        if d.mode == Some(SyncMode::Bidirectional) {
-                            Glyph::TwoWay
-                        } else {
-                            Glyph::ArrowRight
-                        },
-                        18.0,
-                        p.accent
-                    ))
-                    .padding(Padding {
-                        left: 8.0,
-                        ..Padding::ZERO
-                    }),
-                    side("Destination", &d.destination),
-                    ui::divider(p),
-                    item(Glyph::Layers, format!("Mode : {mode}"), Step::Locations),
-                    item(
-                        Glyph::Filter,
-                        format!(
-                            "{} motif(s) de filtre{}",
-                            d.filters.count(),
-                            if d.filters.case_insensitive {
-                                ", casse ignorée"
-                            } else {
-                                ""
-                            }
-                        ),
-                        Step::Filters
+                    ui::eyebrow(p.muted, "Nom et groupe"),
+                    ui::field(
+                        p,
+                        "Nom du profil",
+                        "Ex. Documents vers NAS",
+                        &d.name,
+                        |v| Message::Wizard(WizardMsg::Name(v)),
+                        None,
+                        None
                     ),
-                    item(
-                        Glyph::Eye,
-                        format!(
-                            "Comparaison : {}",
-                            model::compare_label(d.effective_compare())
-                        ),
-                        Step::Safety
+                    ui::field(
+                        p,
+                        "Groupe",
+                        "Sans groupe",
+                        &d.group,
+                        |v| Message::Wizard(WizardMsg::Group(v)),
+                        None,
+                        None
                     ),
-                    item(
-                        Glyph::Shield,
-                        if d.allow_delete {
-                            "Suppressions protégées autorisées".into()
-                        } else {
-                            "Aucune suppression".into()
-                        },
-                        Step::Safety
-                    ),
-                    item(
-                        Glyph::Trash,
-                        match (d.trash_enabled, d.trash_limit()) {
-                            (true, Ok(limit)) => {
-                                format!("Corbeille activée, {} au maximum", model::bytes(limit))
-                            }
-                            (true, Err(_)) => "Corbeille : taille invalide".into(),
-                            (false, _) => "Corbeille désactivée".into(),
-                        },
-                        Step::Safety
-                    ),
-                    item(Glyph::Clock, schedule, Step::Schedule),
+                    row(groups).spacing(6).wrap(),
                 ]
-                .spacing(10),
-            )
-            .padding(18)
-            .style(theme::card(*p, 0.0, false)),
+                .spacing(12)
+            ),
+            card(
+                column![
+                    ui::eyebrow(
+                        p.muted,
+                        "Récapitulatif · touchez une pastille pour modifier"
+                    ),
+                    row(chips).spacing(6).wrap(),
+                ]
+                .spacing(12)
+            ),
             ui::caption(
                 p,
                 "« Enregistrer et simuler » calcule le plan sans modifier aucun fichier."
             ),
         ]
-        .spacing(16)
+        .spacing(14)
         .into()
     }
 }

@@ -83,7 +83,6 @@ pub(crate) enum Glyph {
     Sliders,
     History,
     Pulse,
-    Grid,
     Check,
     Close,
     Alert,
@@ -96,7 +95,6 @@ pub(crate) enum Glyph {
     ChevronUp,
     ChevronRight,
     ChevronLeft,
-    Filter,
     ArrowRight,
     Copy,
     Eye,
@@ -422,18 +420,14 @@ fn draw(glyph: Glyph, d: &mut Pen<'_>) {
             d.line((12.0, 3.5), (12.0, 11.0));
         }
         Glyph::Backup => {
-            d.rect(4.0, 12.0, 16.0, 8.0, 2.0);
-            d.line((12.0, 3.0), (12.0, 14.0));
-            d.poly(&[(8.5, 10.5), (12.0, 14.0), (15.5, 10.5)], false);
-            d.line((8.0, 16.5), (16.0, 16.5));
+            d.line((4.0, 12.0), (20.0, 12.0));
+            d.poly(&[(14.0, 6.0), (20.0, 12.0), (14.0, 18.0)], false);
         }
         Glyph::Mirror => {
-            d.line((12.0, 3.0), (12.0, 5.0));
-            d.line((12.0, 8.0), (12.0, 10.0));
-            d.line((12.0, 13.0), (12.0, 15.0));
-            d.line((12.0, 18.0), (12.0, 21.0));
-            d.poly(&[(9.0, 5.0), (9.0, 19.0), (3.0, 19.0)], true);
-            d.poly(&[(15.0, 5.0), (15.0, 19.0), (21.0, 19.0)], true);
+            d.line((4.0, 8.0), (19.0, 8.0));
+            d.poly(&[(15.0, 4.0), (19.0, 8.0), (15.0, 12.0)], false);
+            d.line((4.0, 16.0), (19.0, 16.0));
+            d.poly(&[(15.0, 12.0), (19.0, 16.0), (15.0, 20.0)], false);
         }
         Glyph::TwoWay => {
             d.line((4.0, 8.0), (20.0, 8.0));
@@ -563,12 +557,6 @@ fn draw(glyph: Glyph, d: &mut Pen<'_>) {
                 false,
             );
         }
-        Glyph::Grid => {
-            d.rect(4.0, 4.0, 7.0, 7.0, 1.5);
-            d.rect(13.0, 4.0, 7.0, 7.0, 1.5);
-            d.rect(4.0, 13.0, 7.0, 7.0, 1.5);
-            d.rect(13.0, 13.0, 7.0, 7.0, 1.5);
-        }
         Glyph::Check => {
             d.poly(&[(5.0, 12.5), (10.0, 17.5), (19.0, 7.0)], false);
         }
@@ -620,19 +608,6 @@ fn draw(glyph: Glyph, d: &mut Pen<'_>) {
         Glyph::ChevronUp => d.poly(&[(6.0, 15.0), (12.0, 9.0), (18.0, 15.0)], false),
         Glyph::ChevronRight => d.poly(&[(9.0, 6.0), (15.0, 12.0), (9.0, 18.0)], false),
         Glyph::ChevronLeft => d.poly(&[(15.0, 6.0), (9.0, 12.0), (15.0, 18.0)], false),
-        Glyph::Filter => {
-            d.poly(
-                &[
-                    (3.5, 5.0),
-                    (20.5, 5.0),
-                    (14.0, 12.5),
-                    (14.0, 19.0),
-                    (10.0, 17.0),
-                    (10.0, 12.5),
-                ],
-                true,
-            );
-        }
         Glyph::ArrowRight => {
             d.line((4.0, 12.0), (20.0, 12.0));
             d.poly(&[(14.0, 6.0), (20.0, 12.0), (14.0, 18.0)], false);

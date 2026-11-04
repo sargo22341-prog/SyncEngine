@@ -234,8 +234,34 @@ impl App {
             .into()
     }
 
-    /// Labeled navigation column: brand, sections with counters, live job,
-    /// agent state and theme switch.
+    /// Earliest upcoming timed schedule (presentation only: the agent decides).
+    pub(crate) fn next_job(&self) -> Option<(i64, String)> {
+        let now = model::now_secs();
+        self.ws
+            .schedules
+            .iter()
+            .filter(|s| self.schedule_valid(&s.schedule.approved.id) == Some(true))
+            .filter_map(|s| {
+                crate::draft::next_occurrence(&s.schedule.trigger, s.schedule.created_at, now)
+                    .map(|at| (at, s.schedule.approved.id.clone()))
+            })
+            .min_by_key(|(at, _)| *at)
+            .map(|(at, id)| {
+                let name = self
+                    .profile(&id)
+                    .map_or_else(|| id.to_string(), |pr| pr.name.clone());
+                (at, name)
+            })
+    }
+
+    /// « HH:MM » (UTC, like every schedule time of the application).
+    pub(crate) fn clock_label(secs: i64) -> String {
+        let (_, _, _, hour, minute) = model::utc(secs);
+        format!("{hour:02}:{minute:02}")
+    }
+
+    /// Labeled navigation column: brand, sections with counters, live job and
+    /// the agent card.
     fn rail(&self, p: &Palette) -> El<'_, Message> {
         let invalid = self
             .ws
@@ -246,45 +272,35 @@ impl App {
                     || s.running_slot.is_some()
             })
             .count();
+        let live = usize::from(self.job.is_some()) + usize::from(self.agent_job.is_some());
         let items = [
             (
                 Nav::Profiles,
-                Glyph::Grid,
                 "Profils",
                 (!self.ws.profiles.is_empty()).then(|| self.ws.profiles.len().to_string()),
             ),
             (
                 Nav::Activity,
-                Glyph::Pulse,
                 "Activité",
-                self.live_job().map(|_| "●".to_owned()),
+                (live > 0).then(|| live.to_string()),
             ),
-            (Nav::History, Glyph::History, "Historique", None),
+            (Nav::History, "Historique", None),
             (
                 Nav::Schedules,
-                Glyph::Clock,
                 "Planification",
                 (invalid > 0).then(|| invalid.to_string()),
             ),
-            (Nav::Trash, Glyph::Trash, "Corbeille", None),
+            (Nav::Trash, "Corbeille", None),
+            (Nav::Settings, "Réglages", None),
         ];
-        let turn = self
-            .now
-            .saturating_duration_since(self.started)
-            .as_secs_f32();
-        let nav_item = |nav: Nav, glyph: Glyph, label: &str, count: Option<String>| {
+        let nav_item = |nav: Nav, label: &'static str, count: Option<String>| {
             let active = self.nav == nav;
             let fg = if active { p.bg } else { p.muted };
-            let icon = if nav == Nav::Activity && self.live_job().is_some() {
-                icons::spinning(Glyph::Sync, 18.0, fg, turn)
-            } else {
-                icons::icon(glyph, 18.0, fg)
-            };
-            let mut line = row![icon, ui::strong(fg, label.to_owned(), 14.0), ui::fill()]
+            let mut line = row![ui::strong(fg, label, 14.0), ui::fill()]
                 .spacing(12)
                 .align_y(Alignment::Center);
             if let Some(c) = count {
-                line = line.push(ui::colored(fg, c, 11.0));
+                line = line.push(ui::mono(fg, c, 11.0));
             }
             button(line)
                 .padding(Padding::from([9, 14]))
@@ -300,47 +316,71 @@ impl App {
                         to: p.violet,
                         turn: 0.0
                     },
-                    26.0
+                    24.0
                 ),
                 ui::title(p, "SyncEngine", 18.0)
             ]
             .spacing(10)
             .align_y(Alignment::Center)
-            .padding(Padding::from([2, 10])),
-            ui::vspace(14.0),
+            .padding(Padding {
+                top: 2.0,
+                bottom: 18.0,
+                left: 10.0,
+                right: 10.0
+            }),
         ]
         .spacing(4);
-        for (nav, glyph, label, count) in items {
-            col = col.push(nav_item(nav, glyph, label, count));
+        for (nav, label, count) in items {
+            col = col.push(nav_item(nav, label, count));
         }
         let light = p.is_light();
         let agent_on = !self.ws.agent_stopped;
+        let detail = match (agent_on, self.next_job()) {
+            (false, _) => "Les planifications ne se lancent pas".to_owned(),
+            (true, Some((at, _))) => format!("Prochain job à {} UTC", Self::clock_label(at)),
+            (true, None) => match self.ws.schedules.len() {
+                0 => "Aucune planification".to_owned(),
+                1 => "1 planification".to_owned(),
+                n => format!("{n} planifications"),
+            },
+        };
         let agent = container(
-            column![
-                row![
-                    ui::dot(if agent_on { p.backup } else { p.faint }, 8.0),
-                    ui::strong(
-                        p.text,
-                        if agent_on {
-                            "Agent actif"
-                        } else {
-                            "Agent arrêté"
-                        },
-                        13.0
-                    )
+            row![
+                column![
+                    row![
+                        ui::dot(if agent_on { p.backup } else { p.faint }, 8.0),
+                        ui::strong(
+                            p.text,
+                            if agent_on {
+                                "Agent actif"
+                            } else {
+                                "Agent arrêté"
+                            },
+                            13.0
+                        )
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                    ui::caption(p, detail),
                 ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                ui::caption(
+                .spacing(2)
+                .width(Length::Fill),
+                ui::icon_button(
                     p,
-                    match self.ws.schedules.len() {
-                        0 => "Aucune planification".to_owned(),
-                        1 => "1 planification".to_owned(),
-                        n => format!("{n} planifications"),
-                    }
+                    if light { Glyph::Moon } else { Glyph::Sun },
+                    if light {
+                        "Thème sombre  ·  Ctrl+T"
+                    } else {
+                        "Thème clair  ·  Ctrl+T"
+                    },
+                    Some(Message::Theme(if light {
+                        crate::ui_prefs::ThemeChoice::Dark
+                    } else {
+                        crate::ui_prefs::ThemeChoice::Light
+                    }))
                 ),
             ]
-            .spacing(3),
+            .align_y(Alignment::Center),
         )
         .padding(Padding::from([10, 12]))
         .width(Length::Fill)
@@ -348,35 +388,12 @@ impl App {
         col = col
             .push(Space::new().height(Length::Fill))
             .push(self.job_card(p))
-            .push(agent)
-            .push(ui::vspace(4.0))
-            .push(
-                row![
-                    container(nav_item(Nav::Settings, Glyph::Sliders, "Réglages", None))
-                        .width(Length::Fill),
-                    ui::icon_button(
-                        p,
-                        if light { Glyph::Moon } else { Glyph::Sun },
-                        if light {
-                            "Thème sombre  ·  Ctrl+T"
-                        } else {
-                            "Thème clair  ·  Ctrl+T"
-                        },
-                        Some(Message::Theme(if light {
-                            crate::ui_prefs::ThemeChoice::Dark
-                        } else {
-                            crate::ui_prefs::ThemeChoice::Light
-                        }))
-                    ),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            );
+            .push(agent);
         row![
             container(col.height(Length::Fill))
                 .width(Length::Fixed(232.0))
                 .height(Length::Fill)
-                .padding(Padding::from([16, 12]))
+                .padding(Padding::from([18, 14]))
                 .style(theme::panel(p.rail)),
             container(Space::new())
                 .width(Length::Fixed(1.0))

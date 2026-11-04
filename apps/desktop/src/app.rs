@@ -280,7 +280,8 @@ pub(crate) enum Message {
     /// the choice.
     ConflictChoose(String, sync_orchestrator::ConflictKeep),
     /// Planning page: week calendar (`true`) or list.
-    ScheduleWeek(bool),
+    OverviewFilter(OverviewFilter),
+    SettingsTab(SettingsTab),
     /// Performance settings (saved at once, read by every execution).
     PerfWorkers(u8),
     PerfLarge(u8),
@@ -391,18 +392,68 @@ pub(crate) enum Message {
     CopyText(String),
     /// Opens the state folder in the system file manager.
     OpenStateFolder,
-    Noop,
+}
+
+/// Section of the settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SettingsTab {
+    #[default]
+    Appearance,
+    Window,
+    Performance,
+    Keyboard,
+    Guarantees,
+    Data,
+    Updates,
+    About,
+}
+
+impl SettingsTab {
+    pub(crate) const ALL: [Self; 8] = [
+        Self::Appearance,
+        Self::Window,
+        Self::Performance,
+        Self::Keyboard,
+        Self::Guarantees,
+        Self::Data,
+        Self::Updates,
+        Self::About,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => "Apparence",
+            Self::Window => "Fenêtre et démarrage",
+            Self::Performance => "Performances",
+            Self::Keyboard => "Clavier",
+            Self::Guarantees => "Garanties d’exécution",
+            Self::Data => "Données",
+            Self::Updates => "Mises à jour",
+            Self::About => "Cette version",
+        }
+    }
+}
+
+/// Which profiles the overview lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum OverviewFilter {
+    #[default]
+    All,
+    Running,
+    Review,
 }
 
 /// Root state.
 pub(crate) struct App {
+    /// Filter chosen on the overview.
+    pub(crate) overview_filter: OverviewFilter,
+    /// Section shown by the settings page.
+    pub(crate) settings_tab: SettingsTab,
     pub(crate) backend: Option<Shared>,
     pub(crate) boot_error: Option<Failure>,
     pub(crate) boot_wait: Option<backend::StartupObservation>,
     /// The tracker card is shown enlarged.
     pub(crate) mini_large: bool,
-    /// The planning page shows the week calendar.
-    pub(crate) schedule_week: bool,
     /// Text typed for a custom rate limit (MiB/s).
     pub(crate) rate_input: String,
     /// Choices made on the conflicts of the displayed preview.
@@ -502,8 +553,9 @@ impl App {
             backend: None,
             boot_error: None,
             boot_wait: None,
+            overview_filter: OverviewFilter::default(),
+            settings_tab: SettingsTab::default(),
             mini_large: false,
-            schedule_week: false,
             rate_input: String::new(),
             conflict_choices: std::collections::HashMap::new(),
             started_mini: std::env::args().skip(1).any(|a| a == FOLLOW_AGENT_ARG),

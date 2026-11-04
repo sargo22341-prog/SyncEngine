@@ -2,11 +2,11 @@
 //! (plan inspection) and execution panels, recent results and planning.
 
 use crate::app::{App, Job, JobKind, Message};
-use crate::charts::{self, Flow, Ring};
+use crate::charts::{self, Flow};
 use crate::draft::{self, Provider};
 use crate::icons::{self, Glyph};
 use crate::model::{self, OpView};
-use crate::shell::{mode_color, mode_fill, mode_glyph, outcome_color};
+use crate::shell::{mode_color, mode_fill, outcome_color};
 use crate::speed;
 use crate::theme::{self, Palette, Tone};
 use crate::tree::ListMode;
@@ -35,62 +35,102 @@ const SHOWN_TRANSFERS: usize = 4;
 const SHOWN_AFTER_MS: u64 = 500;
 
 /// Files being copied (from the live snapshot, never from the journal):
-/// up to four lines with path, own progress bar, bytes and average rate;
-/// shorter copies are summarized as a rate.
+/// up to four lines with path, own progress bar, bytes, average rate and
+/// percentage; shorter copies are summarized as a rate.
 fn transfers<'a>(
     p: &Palette,
     s: &sync_orchestrator::JobSnapshot,
     quick_rate: Option<f32>,
     color: Color,
 ) -> El<'a, Message> {
-    let mut col = column![].spacing(6);
-    for file in s
+    let shown: Vec<_> = s
         .transfers
         .iter()
         .filter(|f| f.elapsed_ms >= SHOWN_AFTER_MS)
         .take(SHOWN_TRANSFERS)
-    {
+        .collect();
+    let mut head = row![
+        ui::strong(p.text, "Fichiers en cours", 14.0),
+        ui::badge(
+            p.surface_hi,
+            p.muted,
+            format!("{} copies parallèles", s.transfers.len())
+        ),
+        ui::fill(),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    if let Some(rate) = quick_rate.filter(|r| r.round() >= 1.0) {
+        head = head.push(ui::caption(
+            p,
+            format!("+ {} petits fichiers/s", model::count(rate.round() as u64)),
+        ));
+    }
+    let mut col = column![container(head).padding(Padding::from([6, 16]))].spacing(4);
+    for file in shown {
         let fraction = file
             .size
             .and_then(|size| model::fraction(file.bytes_done, size))
             .unwrap_or(0.0);
-        let filled = (fraction * 1000.0).round() as u16;
-        let bar = row![
-            container(Space::new())
-                .width(Length::FillPortion(filled.max(1)))
-                .height(Length::Fixed(4.0))
-                .style(theme::bar(color)),
-            container(Space::new())
-                .width(Length::FillPortion((1000 - filled.min(1000)).max(1)))
-                .height(Length::Fixed(4.0))
-                .style(theme::bar(theme::alpha(p.text, 0.08))),
-        ];
         let rate = file.bytes_done as f64 / (file.elapsed_ms.max(1) as f64 / 1000.0);
         let amount = match file.size {
             Some(size) => format!("{} / {}", model::bytes(file.bytes_done), model::bytes(size)),
             None => model::bytes(file.bytes_done),
         };
         col = col.push(
-            row![
-                container(ui::mono(p.text, model::ellipsize(&file.path, 48), 12.0))
-                    .width(Length::FillPortion(5))
-                    .clip(true),
-                container(bar).width(Length::FillPortion(3)),
-                container(ui::caption(p, amount)).width(Length::Fixed(150.0)),
-                container(ui::caption(p, format!("{}/s", model::bytes(rate as u64))))
-                    .width(Length::Fixed(90.0)),
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
+            container(
+                row![
+                    container(ui::mono(p.backup_ink, "→", 13.0)).width(Length::Fixed(24.0)),
+                    column![
+                        container(ui::mono(p.text, model::ellipsize(&file.path, 64), 12.0))
+                            .width(Length::Fill)
+                            .clip(true),
+                        ui::progress(p, fraction, color, 6.0),
+                    ]
+                    .spacing(6)
+                    .width(Length::Fill),
+                    container(ui::mono(p.muted, amount, 12.0))
+                        .width(Length::Fixed(140.0))
+                        .align_x(iced::alignment::Horizontal::Right),
+                    container(ui::mono(
+                        p.muted,
+                        format!("{}/s", model::bytes(rate as u64)),
+                        12.0
+                    ))
+                    .width(Length::Fixed(100.0))
+                    .align_x(iced::alignment::Horizontal::Right),
+                    container(ui::mono(p.muted, model::percent(fraction), 12.0))
+                        .width(Length::Fixed(60.0))
+                        .align_x(iced::alignment::Horizontal::Right),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding::from([7, 16])),
         );
     }
-    if let Some(rate) = quick_rate.filter(|r| r.round() >= 1.0) {
-        col = col.push(ui::caption(
-            p,
-            format!("+ {} petits fichiers/s", model::count(rate.round() as u64)),
-        ));
+    container(col)
+        .padding(Padding::from([10, 4]))
+        .width(Length::Fill)
+        .style(theme::card(*p, 0.0, false))
+        .into()
+}
+
+/// Phase of a run, as shown by the chips under the page title.
+#[derive(Clone, Copy)]
+enum Phase {
+    Done,
+    Now,
+    Next,
+}
+
+/// Splits `model::bytes(rate)` into a figure and its `unit/s`.
+pub(crate) fn rate_parts(bytes_per_second: f32) -> (String, String) {
+    let text = model::bytes(bytes_per_second.max(0.0) as u64);
+    match text.rsplit_once(' ') {
+        Some((value, unit)) => (value.to_owned(), format!("{unit}/s")),
+        None => (text, "/s".to_owned()),
     }
-    col.into()
 }
 
 fn provider_of(remote: Option<&sync_profiles::RemoteEndpoint>) -> Provider {
@@ -106,6 +146,14 @@ fn provider_of(remote: Option<&sync_profiles::RemoteEndpoint>) -> Provider {
     }
 }
 
+/// Series computed by [`App::job_rates`].
+pub(crate) struct JobRates {
+    pub(crate) forward: Vec<f32>,
+    pub(crate) reverse: Option<Vec<f32>>,
+    pub(crate) operations: Vec<f32>,
+    pub(crate) quick: Vec<f32>,
+}
+
 impl App {
     pub(crate) fn profile_page<'a>(&'a self, p: &Palette, profile: &'a Profile) -> El<'a, Message> {
         let id = &profile.id;
@@ -116,77 +164,90 @@ impl App {
         } else {
             profile.group.as_str()
         };
+        let tool = |label: &'static str, on: Option<Message>| -> El<'a, Message> {
+            ui::action_sm(p, Tone::Secondary, None, label, on)
+        };
         let crumbs = row![
             button(
                 row![
-                    icons::icon(Glyph::ChevronLeft, 14.0, p.accent),
-                    ui::strong(p.accent, "Vue d’ensemble", 13.0)
+                    ui::colored(p.muted, "‹", 14.0),
+                    ui::colored(p.muted, "Profils", 13.0),
+                    ui::colored(p.faint, "/", 13.0),
+                    ui::strong(p.text, group.to_owned(), 13.0),
                 ]
-                .spacing(6)
+                .spacing(8)
                 .align_y(Alignment::Center)
             )
             .padding(Padding::from([4, 8]))
             .style(theme::btn(*p, Tone::Ghost))
             .on_press(Message::Select(None)),
-            icons::icon(Glyph::ChevronRight, 12.0, p.faint),
-            ui::colored(p.muted, group.to_owned(), 13.0),
             ui::fill(),
-            ui::icon_button(
-                p,
-                Glyph::Pencil,
-                "Modifier  ·  Ctrl+E",
-                (!busy).then(|| Message::Edit(id.clone()))
+            tool("Modifier", (!busy).then(|| Message::Edit(id.clone()))),
+            tool("Planifier", Some(Message::OpenSchedule(id.clone()))),
+            tool("Dupliquer", Some(Message::Duplicate(id.clone()))),
+            tool("Historique", Some(Message::ShowHistory(id.clone()))),
+            tool(
+                "Corbeille",
+                Some(Message::Trash(crate::trash::TrashMsg::Open(id.clone())))
             ),
-            ui::icon_button(
-                p,
-                Glyph::Clock,
-                "Planifier…",
-                Some(Message::OpenSchedule(id.clone()))
-            ),
-            ui::icon_button(
-                p,
-                Glyph::Copy,
-                "Dupliquer",
-                Some(Message::Duplicate(id.clone()))
-            ),
-            ui::icon_button(
-                p,
-                Glyph::History,
-                "Historique",
-                Some(Message::ShowHistory(id.clone()))
-            ),
-            ui::icon_button(
-                p,
-                Glyph::Trash,
-                "Retirer  ·  Suppr",
-                (!busy).then(|| Message::AskRemove(id.clone()))
-            ),
+            tool("Retirer", (!busy).then(|| Message::AskRemove(id.clone()))),
         ]
-        .spacing(4)
+        .spacing(8)
         .align_y(Alignment::Center);
 
         let color = mode_color(p, profile.mode);
-        let mut pills = row![ui::pill(p.muted, model::compare_label(profile.compare))].spacing(8);
+        let mut pills = row![ui::tag(p, model::compare_label(profile.compare))].spacing(6);
         match (self.schedule_of(id), self.schedule_valid(id)) {
             (Some(s), Some(true)) => {
-                pills = pills.push(ui::pill(p.info, draft::trigger_label(&s.schedule.trigger)))
+                pills = pills.push(ui::chip(
+                    theme::alpha(p.violet, 0.14),
+                    p.info,
+                    draft::trigger_label(&s.schedule.trigger),
+                ))
             }
-            (Some(_), _) => pills = pills.push(ui::pill(p.danger, "Planification à renouveler")),
+            (Some(_), _) => {
+                pills = pills.push(ui::chip(
+                    theme::alpha(p.danger, 0.14),
+                    p.danger,
+                    "Planification à renouveler",
+                ))
+            }
             _ => {}
         }
         if profile.allow_delete {
-            pills = pills.push(ui::pill(p.danger, "Suppressions autorisées"));
+            pills = pills.push(ui::chip(
+                theme::alpha(p.danger, 0.14),
+                p.danger,
+                "Suppressions autorisées",
+            ));
+        }
+        if profile.trash.enabled {
+            pills = pills.push(ui::tag(
+                p,
+                format!("Corbeille {}", model::bytes(profile.trash.max_bytes)),
+            ));
         }
         if let Some(run) = self.last_run(id) {
-            pills = pills.push(ui::pill(outcome_color(p, run.outcome), run.label.clone()));
+            let (wash, ink, label) = match run.outcome {
+                model::Outcome::Success => (
+                    theme::alpha(p.backup, if p.is_light() { 0.22 } else { 0.16 }),
+                    p.backup_ink,
+                    "✓ À jour".to_owned(),
+                ),
+                model::Outcome::Warning => {
+                    (theme::alpha(p.warning, 0.22), p.warning, run.label.clone())
+                }
+                _ => (theme::alpha(p.danger, 0.14), p.danger, run.label.clone()),
+            };
+            pills = pills.push(ui::chip(wash, ink, label));
         }
         let main_action: El<'a, Message> = match running {
             Some(job) => row![
                 pause_button(p, job),
                 ui::action(
                     p,
-                    Tone::Secondary,
-                    Some(Glyph::Stop),
+                    Tone::Danger,
+                    None,
                     if job.cancel_requested {
                         "Annulation…"
                     } else {
@@ -197,46 +258,43 @@ impl App {
             ]
             .spacing(8)
             .into(),
-            None => ui::action(
-                p,
-                Tone::Primary,
-                Some(Glyph::Eye),
-                "Simuler",
-                (!busy).then(|| Message::Simulate(id.clone())),
-            ),
+            None => button(
+                row![
+                    ui::strong(
+                        if busy { theme::alpha(p.bg, 0.5) } else { p.bg },
+                        "Simuler",
+                        15.0
+                    ),
+                    container(ui::mono(theme::alpha(p.bg, 0.75), "F5", 11.0))
+                        .padding(Padding::from([1, 7]))
+                        .style(theme::pill(theme::alpha(p.bg, 0.16), p.bg)),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding::from([14, 28]))
+            .style(theme::btn(*p, Tone::Primary))
+            .on_press_maybe((!busy).then(|| Message::Simulate(id.clone())))
+            .into(),
         };
-        // Vivid mode tile, then the name with its mode chip.
-        let tile = container(icons::icon(
-            mode_glyph(profile.mode),
-            26.0,
-            if profile.mode == SyncMode::Bidirectional {
-                p.bg
-            } else {
-                Color::from_rgb(0.043, 0.047, 0.055)
-            },
-        ))
-        .width(Length::Fixed(56.0))
-        .height(Length::Fixed(56.0))
-        .center(Length::Fixed(56.0))
-        .style(theme::swatch(mode_fill(p, profile.mode)));
         let heading = row![
-            tile,
+            ui::mode_tile(p, profile.mode, 56.0),
             column![
                 row![
                     ui::title(p, profile.name.clone(), 32.0),
-                    container(ui::strong(color, model::mode_label(profile.mode), 12.0))
-                        .padding(Padding::from([3, 10]))
-                        .style(theme::pill(theme::alpha(color, 0.14), color)),
+                    ui::mode_chip(p, profile.mode),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center),
+                pills.wrap(),
             ]
+            .spacing(8)
             .width(Length::Fill),
             main_action,
         ]
         .spacing(16)
         .align_y(Alignment::Center);
-        let hero = column![heading, pills.wrap()].spacing(12);
+        let hero = heading;
 
         let interrupted = self
             .last_run(id)
@@ -331,13 +389,22 @@ impl App {
     ) -> El<'a, Message> {
         container(
             row![
-                ui::glyph_box(provider.glyph(), p.accent, 42.0),
+                container(icons::icon(provider.glyph(), 20.0, p.text))
+                    .width(Length::Fixed(44.0))
+                    .height(Length::Fixed(44.0))
+                    .center(Length::Fixed(44.0))
+                    .style(theme::swatch(p.surface_hi)),
                 // Clipped: a long unwrapped path never runs under the button.
                 container(
                     column![
-                        ui::eyebrow(p.faint, label),
-                        ui::mono(p.text, model::ellipsize(&location, 44), 13.0),
-                        ui::caption(p, model::provider_label(remote.as_ref())),
+                        ui::eyebrow(
+                            p.muted,
+                            &format!(
+                                "{label} · {}",
+                                model::provider_label(remote.as_ref()).to_lowercase()
+                            )
+                        ),
+                        ui::mono(p.text, model::ellipsize(&location, 48), 13.0),
                     ]
                     .spacing(3),
                 )
@@ -350,13 +417,11 @@ impl App {
                     Some(Message::CopyText(location))
                 ),
             ]
-            .spacing(12)
+            .spacing(14)
             .align_y(Alignment::Center),
         )
         .padding(16)
         .width(Length::Fill)
-        .height(Length::Fixed(96.0))
-        .center_y(Length::Fixed(96.0))
         .style(theme::card(*p, 0.0, false))
         .into()
     }
@@ -402,8 +467,43 @@ impl App {
         .into()
     }
 
-    /// Live job card (used on the profile page and the activity page), for a
-    /// job of this window or a scheduled run of the agent.
+    /// Throughput series of a live job over a 4 s sliding window, as
+    /// FreeFileSync (see `speed`): bytes/s toward the destination (or in all,
+    /// when the profile is not two-way), the bytes/s toward the source when it
+    /// is, and the operations/s rate.
+    pub(crate) fn job_rates(&self, job: &Job) -> JobRates {
+        let series = |count: fn(&crate::app::Sample) -> u64| -> Vec<f32> {
+            let counts: Vec<(Instant, u64)> =
+                job.samples.iter().map(|s| (s.at, count(s))).collect();
+            speed::rates(&counts, job.started)
+        };
+        let two_ways = job.kind == JobKind::Execute
+            && (job.snapshot.bytes_to_source > 0
+                || self
+                    .profile(&job.profile)
+                    .is_some_and(|pr| pr.mode == SyncMode::Bidirectional));
+        let forward = match job.kind {
+            JobKind::Execute if two_ways => series(|s| s.bytes.saturating_sub(s.to_source)),
+            JobKind::Execute => series(|s| s.bytes),
+            JobKind::Preview => series(|s| s.scanned),
+        };
+        JobRates {
+            reverse: two_ways.then(|| series(|s| s.to_source)),
+            operations: match job.kind {
+                JobKind::Execute => series(|s| s.operations),
+                JobKind::Preview => Vec::new(),
+            },
+            quick: match job.kind {
+                JobKind::Execute => series(|s| s.quick),
+                JobKind::Preview => Vec::new(),
+            },
+            forward,
+        }
+    }
+
+    /// Live job view (activity page, profile page, tracker window), for a job
+    /// of this window or a scheduled run of the agent. `large` is the full
+    /// page; otherwise the compact tracker card.
     pub(crate) fn live_panel<'a>(
         &'a self,
         p: &Palette,
@@ -412,282 +512,413 @@ impl App {
     ) -> El<'a, Message> {
         let s = &job.snapshot;
         let elapsed = self.now.saturating_duration_since(job.started);
-        let turn = elapsed.as_secs_f32();
-        let (title, color) = if s.pause_requested {
-            ("Pause demandée — Reprendre pour continuer", p.warning)
-        } else {
-            match job.kind {
-                JobKind::Preview if job.agent => ("Synchronisation planifiée : analyse", p.accent),
-                JobKind::Execute if job.agent => {
-                    ("Synchronisation planifiée : écritures en cours", p.success)
-                }
-                JobKind::Preview if s.hash_target > 0 => {
-                    ("Simulation : comparaison du contenu", p.accent)
-                }
-                JobKind::Preview if s.entries_hashed > 0 => {
-                    ("Simulation : lecture et empreintes", p.accent)
-                }
-                JobKind::Preview => ("Simulation : lecture des dossiers", p.accent),
-                JobKind::Execute => ("Exécution réelle en cours", p.success),
-            }
-        };
         let progress = job.progress();
-        let percent = progress.map(model::percent);
-        // Says what the percentage measures: the volume, not the file count
-        // shown next to it.
-        let basis = match (job.kind, progress) {
-            (JobKind::Execute, Some(_)) => Some("du volume"),
-            (JobKind::Preview, Some(_)) => Some("des empreintes"),
-            (_, None) => None,
+        let rates = self.job_rates(job);
+        let mode = self
+            .profile(&job.profile)
+            .map_or(SyncMode::Bidirectional, |pr| pr.mode);
+        let execute = job.kind == JobKind::Execute;
+        let color = mode_fill(p, mode);
+        let forward = rates.forward.last().copied();
+        let total_rate = forward.map(|f| {
+            f + rates
+                .reverse
+                .as_ref()
+                .and_then(|r| r.last())
+                .copied()
+                .unwrap_or(0.0)
+        });
+        let (value, unit) = match (execute, total_rate) {
+            (_, None) => ("…".to_owned(), String::new()),
+            (true, Some(rate)) => rate_parts(rate),
+            (false, Some(rate)) => (model::count(rate as u64), "éléments/s".to_owned()),
         };
-        let mut center = column![ui::title(
-            p,
-            percent.unwrap_or_else(|| format!("{:.0} s", elapsed.as_secs_f32())),
-            18.0
-        )]
-        .align_x(Alignment::Center);
-        if let Some(basis) = basis {
-            center = center.push(ui::caption(p, basis));
-        }
-        let ring = iced::widget::stack![
-            charts::ring(
-                Ring {
-                    progress,
-                    phase: turn * 0.7,
-                    color,
-                    track: theme::alpha(color, 0.16),
-                    width: 9.0
+        let controls = row![
+            pause_button(p, job),
+            ui::action(
+                p,
+                Tone::Danger,
+                None,
+                if job.cancel_requested {
+                    "Annulation…"
+                } else {
+                    "Annuler"
                 },
-                116.0
+                (!job.cancel_requested).then_some(cancel_message(job)),
             ),
-            container(center).center(Length::Fixed(116.0)),
-        ];
-        // Throughput over a 4 s sliding window (bytes/s, or entries/s while
-        // scanning), as FreeFileSync: see `speed`.
-        let series = |count: fn(&crate::app::Sample) -> u64| -> Vec<f32> {
-            let counts: Vec<(Instant, u64)> =
-                job.samples.iter().map(|s| (s.at, count(s))).collect();
-            speed::rates(&counts, job.started)
-        };
-        // Bidirectional runs draw the two directions apart: toward the
-        // destination (the left folder's changes) and toward the source.
-        let two_ways = job.kind == JobKind::Execute
-            && (s.bytes_to_source > 0
-                || self
-                    .profile(&job.profile)
-                    .is_some_and(|pr| pr.mode == SyncMode::Bidirectional));
-        let values = match job.kind {
-            JobKind::Execute if two_ways => series(|s| s.bytes.saturating_sub(s.to_source)),
-            JobKind::Execute => series(|s| s.bytes),
-            JobKind::Preview => series(|s| s.scanned),
-        };
-        let reverse = two_ways.then(|| series(|s| s.to_source));
-        // Many small items (folders, thumbnails) move few bytes: show the
-        // operation rate next to the byte rate, as FreeFileSync does.
-        let operations = match job.kind {
-            JobKind::Execute => series(|s| s.operations).last().copied(),
-            JobKind::Preview => None,
-        };
-        let rate_label = match (values.last(), job.kind) {
-            // Not estimated during the first second: no misleading 0.
-            (None, _) => "mesure…".to_owned(),
-            (Some(rate), JobKind::Execute) if two_ways => format!(
-                "{}/s",
-                model::bytes(
-                    (*rate
-                        + reverse
-                            .as_ref()
-                            .and_then(|r| r.last())
-                            .copied()
-                            .unwrap_or(0.0)) as u64
-                )
-            ),
-            (Some(rate), JobKind::Execute) => format!("{}/s", model::bytes(*rate as u64)),
-            (Some(rate), JobKind::Preview) => {
-                format!("{} éléments/s", model::count(*rate as u64))
-            }
-        };
-        let stat = |label: &'static str, value: String, c: Color| -> El<'a, Message> {
-            column![ui::strong(c, label, 12.0), ui::title(p, value, 22.0)]
-                .spacing(3)
-                .width(Length::Fill)
-                .into()
-        };
-        let stats = match job.kind {
-            JobKind::Preview => row![
-                stat(
-                    "entrées analysées (2 côtés)",
-                    model::count(s.entries_scanned),
-                    p.accent
-                ),
-                stat(
-                    "empreintes calculées",
-                    if s.hash_target > 0 {
-                        format!(
-                            "{} / {}",
-                            model::count(s.entries_hashed),
-                            model::count(s.hash_target)
-                        )
-                    } else {
-                        model::count(s.entries_hashed)
-                    },
-                    p.violet
-                ),
-                stat(
-                    "erreurs de lecture",
-                    model::count(s.scan_issues),
-                    if s.scan_issues > 0 {
-                        p.warning
-                    } else {
-                        p.muted
-                    }
-                ),
-                stat(
-                    "dossiers à cohérence incertaine",
-                    model::count(s.scan_consistency_warnings),
-                    if s.scan_consistency_warnings > 0 {
-                        p.warning
-                    } else {
-                        p.muted
-                    },
-                ),
-                stat("débit d’analyse", rate_label, p.success),
-            ],
-            JobKind::Execute => row![
-                stat(
-                    "opérations terminées",
-                    format!(
-                        "{} / {}",
-                        model::count(s.entries_done),
-                        model::count(job.planned.unwrap_or(0))
-                    ),
-                    p.success
-                ),
-                stat(
-                    "volume validé",
-                    match job.planned_bytes.filter(|b| *b > 0) {
-                        Some(total) =>
-                            format!("{} / {}", model::bytes(s.bytes_done), model::bytes(total)),
-                        None => model::bytes(s.bytes_done),
-                    },
-                    p.accent
-                ),
-                stat(
-                    "refus ou échecs",
-                    model::count(s.operation_errors),
-                    if s.operation_errors > 0 {
-                        p.danger
-                    } else {
-                        p.muted
-                    }
-                ),
-                column![
-                    ui::strong(
-                        p.warning,
-                        operations.map_or_else(
-                            || "débit".to_owned(),
-                            |rate| format!(
-                                "débit · {} opérations/s",
-                                model::count(rate.round() as u64)
-                            )
-                        ),
-                        12.0
-                    ),
-                    ui::title(p, rate_label, 22.0),
-                ]
-                .spacing(3)
-                .width(Length::Fill),
-            ],
-        }
-        .spacing(16);
-        let mut body = column![
-            row![
-                ui::eyebrow(
-                    color,
-                    match (job.agent, job.kind) {
-                        (true, JobKind::Preview) =>
-                            "Lancée par l’agent — analyse avant écritures, rien n’est encore modifié",
-                        (true, JobKind::Execute) => "Lancée par l’agent — écritures réelles",
-                        (false, JobKind::Preview) => "Simulation — aucun fichier modifié",
-                        (false, JobKind::Execute) => "Écritures réelles",
-                    }
-                ),
-                ui::fill(),
-                ui::caption(p, format!("{} · {:.0} s", job.name, elapsed.as_secs_f32())),
-            ],
-            ui::title(p, title, 19.0),
-            stats,
         ]
-        .spacing(10)
-        .width(Length::Fill);
-        if job.kind == JobKind::Execute {
-            body=body.push(ui::caption(p,format!(
-                "En cours : {} transférés · {} relus pour vérification · {} conservés en versions. Le volume validé avance après publication complète de chaque fichier.",
-                model::bytes(s.bytes_transferred),model::bytes(s.bytes_verified),model::bytes(s.bytes_versioned)
-            )));
-        }
-        if s.scan_consistency_warnings > 0 {
-            body = body.push(ui::caption(p,
-                "Le partage ne garantit pas la cohérence de ses listes : ce compteur ne signifie pas que la lecture a échoué. Les absences restent incertaines et ne permettent pas de suppression miroir."
-            ));
-        }
-        if large {
-            if let Some(reverse) = &reverse {
-                let rate = |v: &[f32]| {
-                    v.last().map_or("—".to_owned(), |r| {
-                        format!("{}/s", model::bytes(*r as u64))
-                    })
-                };
-                body = body.push(
+        .spacing(10);
+        if !large {
+            return container(
+                column![
                     row![
-                        ui::dot(p.backup, 8.0),
-                        ui::colored(
+                        ui::strong(p.text, model::ellipsize(&job.name, 22), 14.0),
+                        ui::mode_chip(p, mode),
+                        ui::fill(),
+                        ui::mono(
                             p.muted,
-                            format!("Vers la destination {}", rate(&values)),
+                            progress.map_or_else(|| "…".to_owned(), model::percent),
                             12.0
                         ),
-                        ui::hspace(12.0),
-                        ui::dot(p.violet, 8.0),
-                        ui::colored(p.muted, format!("Vers la source {}", rate(reverse)), 12.0),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                    ui::metric(p, value, unit, 40.0),
+                    charts::spark(
+                        rates.forward.clone(),
+                        p.violet,
+                        rates.reverse.clone().map(|r| (r, p.backup)),
+                        Color::TRANSPARENT,
+                        36.0
+                    ),
+                    ui::progress(p, progress.unwrap_or(0.0), color, 6.0),
+                    controls,
+                ]
+                .spacing(10),
+            )
+            .padding(16)
+            .width(Length::Fill)
+            .style(theme::tint(
+                p.violet,
+                if p.is_light() { 0.12 } else { 0.17 },
+                theme::RADIUS,
+            ))
+            .into();
+        }
+
+        let heading = if s.pause_requested {
+            "Pause demandée".to_owned()
+        } else {
+            match (job.agent, job.kind) {
+                (true, JobKind::Preview) => {
+                    "Lancée par l’agent · analyse avant écritures".to_owned()
+                }
+                (true, JobKind::Execute) => "Lancée par l’agent · écritures en cours".to_owned(),
+                (false, JobKind::Preview) => "Simulation · analyse en cours".to_owned(),
+                (false, JobKind::Execute) => "Exécution réelle · écritures en cours".to_owned(),
+            }
+        };
+        let kind_chip: El<'a, Message> = if execute {
+            ui::chip(
+                theme::alpha(p.danger, 0.14),
+                if p.is_light() {
+                    p.danger
+                } else {
+                    theme::mix(p.danger, p.text, 0.2)
+                },
+                "Réel · modifie les fichiers",
+            )
+        } else {
+            ui::chip(
+                theme::alpha(p.violet, 0.14),
+                p.info,
+                "Simulation · aucun fichier modifié",
+            )
+        };
+        let header = row![
+            column![
+                ui::eyebrow(p.muted, &heading),
+                row![
+                    ui::title(p, model::ellipsize(&job.name, 40), 32.0),
+                    ui::mode_chip(p, mode),
+                    kind_chip,
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+            controls,
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+
+        // Phases: what is finished, what runs, what comes next.
+        let phase = |label: &'static str, state: Phase| -> El<'a, Message> {
+            match state {
+                Phase::Done => ui::chip(
+                    theme::alpha(p.backup, if p.is_light() { 0.22 } else { 0.16 }),
+                    p.backup_ink,
+                    format!("✓ {label}"),
+                ),
+                Phase::Now => ui::chip(p.text, p.bg, label),
+                Phase::Next => ui::tag(p, label),
+            }
+        };
+        let hashing = s.hash_target > 0 || s.entries_hashed > 0;
+        let phases: Vec<El<'a, Message>> = if execute {
+            vec![
+                phase("Lecture", Phase::Done),
+                phase("Comparaison", Phase::Done),
+                phase("Écriture", Phase::Now),
+                phase("Vérification", Phase::Next),
+                phase("Bilan", Phase::Next),
+            ]
+        } else {
+            vec![
+                phase("Lecture", if hashing { Phase::Done } else { Phase::Now }),
+                phase(
+                    "Comparaison",
+                    if hashing { Phase::Now } else { Phase::Next },
+                ),
+                phase("Bilan", Phase::Next),
+            ]
+        };
+        let secs = elapsed.as_secs();
+        let remaining = progress
+            .filter(|f| *f > 0.02 && *f < 1.0 && secs >= 3)
+            .map(|f| (secs as f32 * (1.0 - f) / f).round() as u64);
+        let timing = match remaining {
+            Some(r) if r >= 90 => format!(
+                "écoulé {:02}:{:02} · reste ≈ {} min",
+                secs / 60,
+                secs % 60,
+                (r + 30) / 60
+            ),
+            Some(_) => format!(
+                "écoulé {:02}:{:02} · reste moins de 2 min",
+                secs / 60,
+                secs % 60
+            ),
+            None => format!("écoulé {:02}:{:02}", secs / 60, secs % 60),
+        };
+        let phase_row = row(phases)
+            .spacing(6)
+            .push(ui::fill())
+            .push(ui::mono(p.muted, timing, 12.0))
+            .align_y(Alignment::Center);
+
+        // Throughput card.
+        let two_ways = rates.reverse.is_some();
+        let mut head = row![
+            column![
+                ui::eyebrow(
+                    p.muted,
+                    if execute {
+                        "Débit instantané"
+                    } else {
+                        "Vitesse d’analyse"
+                    }
+                ),
+                ui::metric(p, value, unit, 52.0),
+            ]
+            .spacing(2)
+        ]
+        .align_y(Alignment::Center);
+        head = head.push(ui::fill());
+        if let Some(reverse) = &rates.reverse {
+            let rate = |v: Option<&f32>| v.map_or("—".to_owned(), |r| model::bytes(*r as u64));
+            head = head.push(
+                column![
+                    row![
+                        ui::dot(p.backup, 8.0),
+                        ui::colored(p.muted, "Vers la destination", 12.0),
+                        ui::mono(p.text, rate(rates.forward.last()), 12.0),
                     ]
                     .spacing(6)
                     .align_y(Alignment::Center),
-                );
-            }
-            body = body.push(charts::spark(
-                values,
-                if reverse.is_some() { p.backup } else { color },
-                reverse.map(|r| (r, p.violet)),
-                theme::alpha(p.text, 0.06),
-                70.0,
-            ));
-            if job.kind == JobKind::Execute {
-                let quick = series(|s| s.quick).last().copied();
-                body = body.push(transfers(p, s, quick, color));
-            }
+                    row![
+                        ui::dot(p.violet, 8.0),
+                        ui::colored(p.muted, "Vers la source", 12.0),
+                        ui::mono(p.text, rate(reverse.last()), 12.0),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(4)
+                .align_x(Alignment::End),
+            );
         }
-        body = body.push(
-            row![
-                // Fill: the explanation wraps instead of squeezing the button.
-                container(ui::caption(p, if job.cancel_requested { "Annulation coopérative demandée : l’opération en cours se termine proprement." } else { "Vous pouvez annuler à tout moment ; l’état partiel est conservé et journalisé." }))
-                    .width(Length::Fill),
-                pause_button(p, job),
-                ui::action(p, Tone::Secondary, Some(Glyph::Stop), "Annuler", (!job.cancel_requested).then_some(cancel_message(job))),
+        let chart = container(
+            column![
+                head,
+                charts::spark(
+                    rates.forward.clone(),
+                    if two_ways { p.backup } else { p.violet },
+                    rates.reverse.clone().map(|r| (r, p.violet)),
+                    theme::alpha(p.text, 0.07),
+                    190.0,
+                ),
+                ui::caption(p, "Moyenne glissante sur 4 s · fenêtre de 30 s"),
             ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-        );
-        if job.agent {
-            body = body.push(row![
-                container(ui::caption(p, "Arrêter l’agent annule le transfert et suspend les jobs jusqu’à « Reprendre les planifications ». Aucun processus n’est tué de force.")).width(Length::Fill),
-                ui::action(p, Tone::Secondary, Some(Glyph::Power), "Arrêter l’agent", (!self.ws.agent_stopped).then_some(Message::StopAgent)),
-            ].spacing(12).align_y(Alignment::Center));
-        }
-        container(row![ring, body].spacing(24).align_y(Alignment::Center))
-            .padding(22)
-            .width(Length::Fill)
+            .spacing(10),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .style(theme::card(*p, 0.0, false));
+
+        // Right column.
+        let mini = |label: &'static str, value: String, unit: String| -> El<'a, Message> {
+            container(
+                column![
+                    ui::eyebrow(p.muted, label),
+                    ui::metric(p, value, unit, 20.0)
+                ]
+                .spacing(4),
+            )
+            .padding(14)
+            .width(Length::FillPortion(1))
             .style(theme::card(*p, 0.0, false))
             .into()
+        };
+        let mut side = column![].spacing(12);
+        if execute {
+            let planned_bytes = job.planned_bytes.filter(|b| *b > 0);
+            let amount = match planned_bytes {
+                Some(total) => format!("{} / {}", model::bytes(s.bytes_done), model::bytes(total)),
+                None => model::bytes(s.bytes_done),
+            };
+            side = side.push(
+                container(
+                    column![
+                        ui::eyebrow(p.muted, "Progression"),
+                        row![
+                            ui::metric(
+                                p,
+                                progress.map_or("—".to_owned(), |f| format!("{:.0}", f * 100.0)),
+                                "%",
+                                24.0
+                            ),
+                            ui::fill(),
+                            ui::mono(p.muted, amount, 12.0),
+                        ]
+                        .align_y(Alignment::Center),
+                        ui::progress(p, progress.unwrap_or(0.0), color, 10.0),
+                        ui::caption(
+                            p,
+                            format!(
+                                "calculée sur le volume · {} / {} opérations",
+                                model::count(s.entries_done),
+                                model::count(job.planned.unwrap_or(0))
+                            )
+                        ),
+                    ]
+                    .spacing(6),
+                )
+                .padding(20)
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false)),
+            );
+            let average = if secs > 0 {
+                s.bytes_transferred as f32 / secs as f32
+            } else {
+                0.0
+            };
+            let (avg_value, avg_unit) = rate_parts(average);
+            let ops = rates.operations.last().copied().unwrap_or(0.0);
+            side = side.push(
+                row![
+                    mini("Moyenne", avg_value, avg_unit),
+                    mini(
+                        "Opérations",
+                        model::count(ops.round() as u64),
+                        "/s".to_owned()
+                    ),
+                ]
+                .spacing(12),
+            );
+            if s.operation_errors > 0 {
+                side = side.push(ui::callout(
+                    p,
+                    p.danger,
+                    Glyph::Alert,
+                    "Refus ou échecs",
+                    format!(
+                        "{} opération(s) n’ont pas abouti ; le détail est dans l’historique.",
+                        model::count(s.operation_errors)
+                    ),
+                ));
+            }
+        } else {
+            side = side.push(
+                container(
+                    column![
+                        ui::eyebrow(p.muted, "Analyse"),
+                        row![ui::metric(
+                            p,
+                            model::count(s.entries_scanned),
+                            "entrées",
+                            24.0
+                        ),],
+                        ui::progress(p, progress.unwrap_or(0.0), color, 10.0),
+                        ui::caption(
+                            p,
+                            if s.hash_target > 0 {
+                                format!(
+                                    "empreintes {} / {}",
+                                    model::count(s.entries_hashed),
+                                    model::count(s.hash_target)
+                                )
+                            } else {
+                                "lecture des deux dossiers (2 côtés)".to_owned()
+                            }
+                        ),
+                    ]
+                    .spacing(6),
+                )
+                .padding(20)
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false)),
+            );
+            side = side.push(
+                row![
+                    mini(
+                        "Erreurs de lecture",
+                        model::count(s.scan_issues),
+                        String::new()
+                    ),
+                    mini(
+                        "Cohérence incertaine",
+                        model::count(s.scan_consistency_warnings),
+                        String::new()
+                    ),
+                ]
+                .spacing(12),
+            );
+        }
+        if s.scan_consistency_warnings > 0 {
+            side = side.push(ui::callout(
+                p,
+                p.warning,
+                Glyph::Alert,
+                "Listes non garanties",
+                "Le partage ne garantit pas la cohérence de ses listes : les absences restent incertaines et ne permettent aucune suppression miroir.",
+            ));
+        }
+        let mut body = column![
+            header,
+            phase_row,
+            row![
+                container(chart).width(Length::Fill),
+                container(side).width(Length::Fixed(300.0)),
+            ]
+            .spacing(12),
+        ]
+        .spacing(16);
+        if execute {
+            let quick = rates.quick.last().copied();
+            body = body.push(transfers(p, s, quick, color));
+        }
+        if job.agent {
+            body = body.push(
+                row![
+                    container(ui::caption(p, "Arrêter l’agent annule le transfert et suspend les jobs jusqu’à « Reprendre les planifications ». Aucun processus n’est tué de force.")).width(Length::Fill),
+                    ui::action(p, Tone::Secondary, Some(Glyph::Power), "Arrêter l’agent", (!self.ws.agent_stopped).then_some(Message::StopAgent)),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            );
+        } else {
+            body = body.push(ui::caption(
+                p,
+                if job.cancel_requested {
+                    "Annulation coopérative demandée : l’opération en cours se termine proprement."
+                } else {
+                    "Vous pouvez annuler à tout moment ; l’état partiel est conservé et journalisé."
+                },
+            ));
+        }
+        body.into()
     }
 
     pub(crate) fn result_card<'a>(
@@ -835,15 +1066,23 @@ impl App {
                 column![
                     row![
                         ui::dot(c, 8.0),
-                        ui::colored(p.muted, model::action_label(a), 12.0)
+                        ui::colored(
+                            if a == Action::Delete && n > 0 {
+                                p.danger
+                            } else {
+                                p.muted
+                            },
+                            model::action_label(a),
+                            12.0
+                        )
                     ]
                     .spacing(6)
                     .align_y(Alignment::Center),
-                    ui::title(p, model::count(shown), 24.0),
+                    ui::metric(p, model::count(shown), "", 24.0),
                 ]
                 .spacing(4),
             )
-            .padding(Padding::from([12, 14]))
+            .padding(Padding::from([12, 16]))
             .width(Length::Fill)
             .style(theme::tile(*p, selected, true))
             .on_press(Message::PlanFilter(if selected { None } else { Some(a) }))
@@ -878,14 +1117,17 @@ impl App {
 
         let mut col = column![
             row![
-                ui::glyph_box(Glyph::Eye, p.info, 30.0),
-                // The label yields (wraps) first in a narrow window.
-                container(ui::eyebrow(
+                ui::chip(
+                    theme::alpha(p.violet, 0.14),
                     p.info,
-                    "Simulation — aucun fichier n’a été modifié"
-                ))
-                .width(Length::Fill),
-                ui::caption(p, format!("{} à transférer", model::bytes(s.bytes))),
+                    "SIMULATION · AUCUN FICHIER MODIFIÉ"
+                ),
+                ui::fill(),
+                ui::colored(
+                    p.muted,
+                    format!("{} à transférer", model::bytes(s.bytes)),
+                    13.0
+                ),
             ]
             .spacing(10)
             .align_y(Alignment::Center),
@@ -969,12 +1211,17 @@ impl App {
             let complete = preview.view.source_complete && preview.view.destination_complete;
             let guard = |ok: bool, label: String| -> El<'a, Message> {
                 row![
-                    icons::icon(
-                        if ok { Glyph::Check } else { Glyph::Alert },
-                        14.0,
-                        if ok { p.success } else { p.warning }
-                    ),
-                    ui::colored(p.muted, label, 13.0)
+                    container(if ok {
+                        ui::chip(
+                            theme::alpha(p.backup, if p.is_light() { 0.22 } else { 0.16 }),
+                            p.backup_ink,
+                            "✓",
+                        )
+                    } else {
+                        ui::chip(theme::alpha(p.warning, 0.22), p.warning, "!")
+                    })
+                    .width(Length::Fixed(34.0)),
+                    ui::colored(p.text, label, 13.0)
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center)
@@ -1059,18 +1306,6 @@ impl App {
             }
         }
 
-        let filter_chip = |label: &'static str, a: Option<Action>| -> El<'a, Message> {
-            let on = preview.filter == a;
-            button(ui::colored(if on { p.text } else { p.muted }, label, 12.0))
-                .padding(Padding::from([4, 12]))
-                .style(theme::chip(
-                    *p,
-                    a.map_or(p.accent, |a| action_color(p, a)),
-                    on,
-                ))
-                .on_press(Message::PlanFilter(a))
-                .into()
-        };
         let execute_tone = if s.delete > 0 {
             Tone::Danger
         } else {
@@ -1083,12 +1318,14 @@ impl App {
             container(
                 text_input("Filtrer par chemin…", &preview.query)
                     .on_input(Message::PlanQuery)
-                    .padding(Padding::from([8, 12]))
+                    .padding(Padding::from([9, 0]))
                     .size(13)
-                    .style(theme::input(*p, false))
+                    .style(theme::search(*p))
             )
+            .padding(Padding::from([0, 16]))
             .width(Length::FillPortion(3))
-            .max_width(320.0),
+            .max_width(320.0)
+            .style(theme::field_box(*p, 999.0)),
             Space::new().width(Length::FillPortion(1)),
             ui::icon_button(
                 p,
@@ -1099,37 +1336,42 @@ impl App {
             ui::action(
                 p,
                 Tone::Secondary,
-                Some(Glyph::Refresh),
+                None,
                 "Recalculer",
                 (!self.busy()).then(|| Message::Simulate(profile.id.clone()))
             ),
             ui::action(
                 p,
                 execute_tone,
-                Some(Glyph::Bolt),
+                None,
                 if s.mutations() == 0 {
-                    "Rien à appliquer"
+                    "Rien à appliquer".to_owned()
                 } else {
-                    "Exécuter ce plan…"
+                    format!("Exécuter {} opérations…", model::count(s.mutations()))
                 },
                 (s.mutations() > 0 && !self.busy()).then_some(Message::AskExecute)
             ),
         ]
-        .spacing(8)
+        .spacing(10)
         .align_y(Alignment::Center);
         let filters = row![
-            filter_chip("Tout", None),
-            filter_chip("Copies", Some(Action::Copy)),
-            filter_chip("Remplacements", Some(Action::Replace)),
-            filter_chip("Suppressions", Some(Action::Delete)),
-            filter_chip("Conflits", Some(Action::Conflict)),
+            ui::seg(
+                p,
+                &[
+                    (None, "Tout"),
+                    (Some(Action::Copy), "Copies"),
+                    (Some(Action::Replace), "Remplacements"),
+                    (Some(Action::Delete), "Suppressions"),
+                    (Some(Action::Conflict), "Conflits"),
+                ],
+                preview.filter,
+                Message::PlanFilter,
+            ),
             Space::new().width(Length::Fixed(12.0)),
             mode_switch(p, self.list_mode),
         ]
         .spacing(8)
-        .align_y(Alignment::Center)
-        .wrap()
-        .vertical_spacing(8);
+        .align_y(Alignment::Center);
         let toolbar = column![actions, filters].spacing(10);
         let compact = self.ws.preferences.compact;
         let arbitrating =
@@ -1164,10 +1406,10 @@ impl App {
 
         let mut list = column![
             row![
-                container(ui::eyebrow(p.faint, "Action")).width(Length::Fixed(110.0)),
+                container(ui::eyebrow(p.faint, "Action")).width(Length::Fixed(84.0)),
                 container(ui::eyebrow(p.faint, "Chemin et motif")).width(Length::Fill),
                 container(ui::eyebrow(p.faint, "Taille")).width(Length::Fixed(90.0)),
-                container(ui::eyebrow(p.faint, "Cible")).width(Length::Fixed(100.0)),
+                container(ui::eyebrow(p.faint, "Cible")).width(Length::Fixed(130.0)),
             ]
             .padding(Padding::from([4, 12])),
         ]
@@ -1267,26 +1509,37 @@ impl App {
     /// One conflicting file: both contents side by side and the two choices.
     fn conflict_row<'a>(&'a self, p: &Palette, op: &'a OpView) -> El<'a, Message> {
         let choice = self.conflict_choices.get(&op.path).copied();
-        let side =
-            |label: &'static str, obs: &Option<crate::model::Observation>| -> El<'a, Message> {
-                let detail = match obs {
-                    Some(o) => format!(
-                        "{} · {}",
-                        o.size.map_or("—".into(), model::bytes),
-                        o.modified.map_or("date inconnue".into(), model::utc_label)
-                    ),
-                    None => "absent".into(),
-                };
-                column![ui::eyebrow(p.muted, label), ui::caption(p, detail)]
-                    .spacing(2)
-                    .width(Length::Fill)
-                    .into()
+        let side = |label: &'static str,
+                    badge: &'static str,
+                    tint: Color,
+                    obs: &Option<crate::model::Observation>|
+         -> El<'a, Message> {
+            let detail = match obs {
+                Some(o) => format!(
+                    "{} · {}",
+                    o.size.map_or("—".into(), model::bytes),
+                    o.modified.map_or("date inconnue".into(), model::utc_label)
+                ),
+                None => "absent".into(),
             };
+            column![
+                row![
+                    ui::chip(theme::alpha(tint, 0.16), tint, badge),
+                    ui::strong(p.text, label, 14.0),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                ui::mono(p.muted, detail, 12.0),
+            ]
+            .spacing(6)
+            .width(Length::Fill)
+            .into()
+        };
         let pick = |label: &'static str, keep: ConflictKeep| -> El<'a, Message> {
             let on = choice == Some(keep);
-            button(ui::colored(if on { p.text } else { p.muted }, label, 12.0))
-                .padding(Padding::from([5, 12]))
-                .style(theme::chip(*p, p.violet, on))
+            button(ui::colored(if on { p.bg } else { p.muted }, label, 12.0))
+                .padding(Padding::from([5, 14]))
+                .style(theme::pick_chip(*p, on, true))
                 .on_press(Message::ConflictChoose(op.path.clone(), keep))
                 .into()
         };
@@ -1296,18 +1549,22 @@ impl App {
                     ui::mono(p.text, model::ellipsize(&op.path, 90), 13.0),
                     ui::fill(),
                     match choice {
-                        Some(ConflictKeep::Source) => ui::pill(p.violet, "Garder la source"),
-                        Some(ConflictKeep::Destination) => {
-                            ui::pill(p.violet, "Garder la destination")
+                        Some(ConflictKeep::Source) => {
+                            ui::chip(theme::alpha(p.backup, 0.22), p.backup_ink, "A gardé")
                         }
-                        Some(ConflictKeep::Both) => ui::pill(p.violet, "Garder les deux"),
-                        None => ui::pill(p.warning, "À décider"),
+                        Some(ConflictKeep::Destination) => {
+                            ui::chip(theme::alpha(p.mirror, 0.2), p.mirror_ink, "B gardé")
+                        }
+                        Some(ConflictKeep::Both) => {
+                            ui::chip(theme::alpha(p.violet, 0.16), p.info, "Les deux gardés")
+                        }
+                        None => ui::chip(theme::alpha(p.warning, 0.22), p.warning, "à décider"),
                     },
                 ]
                 .align_y(Alignment::Center),
                 row![
-                    side("Source", &op.sender),
-                    side("Destination", &op.receiver)
+                    side("Source", "A", p.violet, &op.sender),
+                    side("Destination", "B", p.mirror, &op.receiver)
                 ]
                 .spacing(16),
                 row![
@@ -1321,7 +1578,7 @@ impl App {
         )
         .padding(Padding::from([10, 12]))
         .width(Length::Fill)
-        .style(theme::card(*p, 0.0, choice.is_some()))
+        .style(theme::row_card(*p, 0.0, choice.is_some()))
         .into()
     }
 
@@ -1331,13 +1588,15 @@ impl App {
             row![
                 ui::heading(p, "Dernières exécutions"),
                 ui::fill(),
-                button(ui::colored(p.accent, "Tout voir", 13.0))
+                button(ui::strong(p.info, "Tout voir ›", 13.0))
+                    .padding(Padding::from([4, 8]))
                     .style(theme::btn(*p, Tone::Ghost))
                     .on_press(Message::ShowHistory(profile.id.clone()))
             ]
+            .padding(Padding::from([6, 10]))
             .align_y(Alignment::Center)
         ]
-        .spacing(8);
+        .spacing(2);
         let list = self
             .ws
             .runs
@@ -1345,29 +1604,46 @@ impl App {
             .map(Vec::as_slice)
             .unwrap_or_default();
         for run in list.iter().take(5) {
+            let dot = match run.outcome {
+                model::Outcome::Success => p.backup,
+                model::Outcome::Warning => p.warning,
+                _ => p.danger,
+            };
             runs = runs.push(
-                row![
-                    ui::dot(outcome_color(p, run.outcome), 9.0),
-                    ui::colored(p.text, run.label.clone(), 13.0),
-                    ui::fill(),
-                    ui::caption(
-                        p,
-                        run.started.map_or("—".into(), |s| model::relative(s, now))
-                    ),
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center),
+                container(
+                    row![
+                        ui::dot(dot, 10.0),
+                        column![
+                            ui::strong(p.text, model::ellipsize(&run.label, 48), 14.0),
+                            ui::colored(
+                                p.muted,
+                                run.started.map_or("—".into(), |s| format!(
+                                    "{} · {}",
+                                    model::relative(s, now),
+                                    model::utc_label(s)
+                                )),
+                                12.0
+                            ),
+                        ]
+                        .spacing(1)
+                        .width(Length::Fill),
+                        crate::pages::run_badges(p, run),
+                    ]
+                    .spacing(14)
+                    .align_y(Alignment::Center),
+                )
+                .padding(10),
             );
         }
         if list.is_empty() {
-            runs = runs.push(ui::muted(p, "Jamais exécuté."));
+            runs = runs.push(container(ui::muted(p, "Jamais exécuté.")).padding(10));
         }
         let schedule: El<'a, Message> = match self.schedule_of(&profile.id) {
             Some(s) => {
                 let valid = self.schedule_valid(&profile.id) == Some(true);
                 let next = draft::next_occurrence(&s.schedule.trigger, s.schedule.created_at, now);
                 column![
-                    ui::muted(p, draft::trigger_label(&s.schedule.trigger)),
+                    ui::strong(p.text, draft::trigger_label(&s.schedule.trigger), 14.0),
                     if valid {
                         ui::caption(
                             p,
@@ -1388,47 +1664,87 @@ impl App {
             }
             None => ui::muted(p, "Lancement manuel uniquement."),
         };
+        let ok = |label: String| -> El<'a, Message> {
+            row![
+                container(ui::chip(
+                    theme::alpha(p.backup, if p.is_light() { 0.22 } else { 0.16 }),
+                    p.backup_ink,
+                    "✓"
+                ))
+                .width(Length::Fixed(34.0)),
+                ui::colored(p.text, label, 13.0),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        let notice = |label: String| -> El<'a, Message> {
+            row![
+                container(ui::chip(theme::alpha(p.warning, 0.22), p.warning, "!"))
+                    .width(Length::Fixed(34.0)),
+                ui::colored(p.text, label, 13.0),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
+        };
         let filters = profile.filter.include_files().len()
             + profile.filter.exclude_files().len()
             + profile.filter.exclude_directories().len();
+        let mut guards = column![ui::eyebrow(p.muted, "Garde-fous du profil")].spacing(10);
+        guards = guards.push(if profile.mode == SyncMode::Backup {
+            ok("Jamais de suppression (sauvegarde)".to_owned())
+        } else if profile.allow_delete {
+            ok("Suppressions protégées, confirmées à chaque exécution".to_owned())
+        } else {
+            ok("Aucune suppression autorisée".to_owned())
+        });
+        guards = guards.push(if profile.trash.enabled {
+            ok("Fichiers remplacés conservés en corbeille".to_owned())
+        } else {
+            notice("Corbeille désactivée : les versions remplacées sont perdues".to_owned())
+        });
+        guards = guards.push(
+            row![
+                container(ui::tag(p, filters.to_string())).width(Length::Fixed(34.0)),
+                ui::colored(p.text, "motif(s) d’exclusion et d’inclusion", 13.0),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        );
         row![
             container(runs)
-                .padding(18)
+                .padding(12)
                 .width(Length::FillPortion(3))
                 .style(theme::card(*p, 0.0, false)),
-            container(
-                column![
-                    row![
-                        ui::heading(p, "Planification"),
-                        ui::fill(),
-                        ui::icon_button(
-                            p,
-                            Glyph::Pencil,
-                            "Revoir la planification",
-                            Some(Message::OpenSchedule(profile.id.clone()))
-                        )
+            column![
+                container(
+                    column![
+                        row![
+                            ui::eyebrow(p.muted, "Planification"),
+                            ui::fill(),
+                            ui::icon_button(
+                                p,
+                                Glyph::Pencil,
+                                "Revoir la planification",
+                                Some(Message::OpenSchedule(profile.id.clone()))
+                            )
+                        ]
+                        .align_y(Alignment::Center),
+                        schedule,
                     ]
-                    .align_y(Alignment::Center),
-                    schedule,
-                    ui::divider(p),
-                    ui::caption(
-                        p,
-                        format!("{filters} motif(s) de filtre · comparaison BLAKE3")
-                    ),
-                    ui::caption(
-                        p,
-                        if profile.allow_delete {
-                            "Suppressions protégées autorisées"
-                        } else {
-                            "Aucune suppression"
-                        }
-                    ),
-                ]
-                .spacing(8),
-            )
-            .padding(18)
-            .width(Length::FillPortion(2))
-            .style(theme::card(*p, 0.0, false)),
+                    .spacing(8),
+                )
+                .padding(20)
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false)),
+                container(guards)
+                    .padding(20)
+                    .width(Length::Fill)
+                    .style(theme::card(*p, 0.0, false)),
+            ]
+            .spacing(12)
+            .width(Length::FillPortion(2)),
         ]
         .spacing(14)
         .into()
@@ -1440,29 +1756,14 @@ fn seconds(value: f32) -> String {
     format!("{value:.1} s").replace('.', ",")
 }
 
-/// « Dossiers » / « Liste » switch of the long lists (simulation, history).
+/// « Arbre » / « À plat » switch of the long lists (simulation, history).
 pub(crate) fn mode_switch<'a>(p: &Palette, mode: ListMode) -> El<'a, Message> {
-    let chip = |label: &'static str, glyph: Glyph, value: ListMode| -> El<'a, Message> {
-        let on = mode == value;
-        button(
-            row![
-                icons::icon(glyph, 13.0, if on { p.text } else { p.muted }),
-                ui::colored(if on { p.text } else { p.muted }, label, 12.0)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding(Padding::from([4, 12]))
-        .style(theme::chip(*p, p.accent, on))
-        .on_press(Message::ListMode(value))
-        .into()
-    };
-    row![
-        chip("Dossiers", Glyph::Folder, ListMode::Tree),
-        chip("Liste", Glyph::Layers, ListMode::Flat),
-    ]
-    .spacing(6)
-    .into()
+    ui::seg(
+        p,
+        &[(ListMode::Tree, "Arbre"), (ListMode::Flat, "À plat")],
+        mode,
+        Message::ListMode,
+    )
 }
 
 /// One planned operation. In the folder view (`indent`), only its name is
@@ -1486,46 +1787,79 @@ fn op_row<'a>(p: &Palette, op: &'a OpView, compact: bool, indent: Option<f32>) -
     } else {
         shown.to_owned()
     };
+    let (tag, ink) = match op.action {
+        Action::Copy => ("+ AJOUT", p.backup_ink),
+        Action::Replace => ("~ MODIF.", p.info),
+        Action::Delete => ("− SUPPR.", p.danger),
+        Action::Conflict => ("! CONFLIT", p.warning),
+        Action::Keep => ("GARDÉ", p.muted),
+        _ => ("IGNORÉ", p.muted),
+    };
+    let wash = match op.action {
+        Action::Conflict => Some(theme::alpha(
+            p.warning,
+            if p.is_light() { 0.2 } else { 0.14 },
+        )),
+        Action::Delete => Some(theme::alpha(p.danger, 0.1)),
+        _ => None,
+    };
+    let _ = c;
     container(
         row![
-            container(ui::badge(
-                theme::alpha(c, 0.16),
-                c,
-                model::action_label(op.action)
-            ))
-            .width(Length::Fixed(110.0)),
+            container(ui::mono(ink, tag, 11.0)).width(Length::Fixed(84.0)),
             column![
-                ui::mono(p.text, model::ellipsize(&path, 90), 13.0),
+                container(ui::mono(
+                    if op.action == Action::Delete {
+                        p.danger
+                    } else if matches!(op.action, Action::Keep | Action::Skip) {
+                        p.muted
+                    } else {
+                        p.text
+                    },
+                    model::ellipsize(&path, 90),
+                    13.0
+                ))
+                .width(Length::Fill)
+                .clip(true),
                 ui::caption(p, op.reason_detail.clone())
             ]
-            .spacing(2)
+            .spacing(1)
             .width(Length::Fill),
-            container(ui::caption(p, size.map_or("—".into(), model::bytes)))
-                .width(Length::Fixed(90.0)),
-            container(ui::caption(
-                p,
+            container(ui::mono(
+                p.muted,
+                size.map_or("—".into(), model::bytes),
+                12.0
+            ))
+            .width(Length::Fixed(90.0))
+            .align_x(iced::alignment::Horizontal::Right),
+            container(ui::mono(
+                p.muted,
                 if op.to_source {
                     "côté source"
                 } else {
                     "côté destination"
-                }
+                },
+                12.0
             ))
-            .width(Length::Fixed(100.0)),
+            .width(Length::Fixed(130.0))
+            .align_x(iced::alignment::Horizontal::Right),
         ]
+        .spacing(12)
         .align_y(Alignment::Center),
     )
     .padding(Padding {
-        top: if compact { 4.0 } else { 8.0 },
-        bottom: if compact { 4.0 } else { 8.0 },
-        left: 12.0 + indent.unwrap_or(0.0),
-        right: 12.0,
+        top: if compact { 4.0 } else { 7.0 },
+        bottom: if compact { 4.0 } else { 7.0 },
+        left: 14.0 + indent.unwrap_or(0.0),
+        right: 14.0,
     })
     .width(Length::Fill)
     .style(move |_| iced::widget::container::Style {
+        background: wash.map(Into::into),
         border: iced::Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: theme::RADIUS_SM.into(),
+            radius: 6.0.into(),
         },
         ..iced::widget::container::Style::default()
     })

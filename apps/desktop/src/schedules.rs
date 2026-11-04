@@ -7,7 +7,7 @@ use crate::icons::{self, Glyph};
 use crate::model;
 use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
-use iced::widget::{Space, button, checkbox, column, container, row, scrollable, text_input};
+use iced::widget::{Space, button, column, container, row, scrollable, text_input};
 use iced::{Alignment, Length, Padding};
 
 /// Edits of a schedule draft.
@@ -79,7 +79,7 @@ pub(crate) fn apply(d: &mut ScheduleDraft, msg: ScheduleMsg) {
     }
 }
 
-/// Checkbox followed by its « i » explanation.
+/// Toggle row followed by its « i » explanation.
 fn option<'a>(
     p: &Palette,
     value: bool,
@@ -87,15 +87,16 @@ fn option<'a>(
     on: Option<fn(bool) -> ScheduleMsg>,
     info: &str,
 ) -> El<'a, ScheduleMsg> {
+    let toggle = iced::widget::toggler(value)
+        .on_toggle_maybe(on)
+        .size(22)
+        .style(theme::switch(*p, false));
     row![
-        checkbox(value)
-            .label(label)
-            .on_toggle_maybe(on)
-            .text_size(13)
-            .style(theme::check(*p)),
+        toggle,
+        container(ui::colored(p.text, label, 14.0)).width(Length::Fill),
         ui::info_tip(p, info),
     ]
-    .spacing(6)
+    .spacing(14)
     .align_y(Alignment::Center)
     .into()
 }
@@ -132,42 +133,36 @@ pub(crate) fn editor<'a>(
     deletions: bool,
     compact: bool,
 ) -> El<'a, ScheduleMsg> {
-    let tiles = TriggerKind::ALL.iter().filter(|k| k.available()).map(|k| {
+    let kinds = TriggerKind::ALL.iter().filter(|k| k.available()).map(|k| {
         let selected = d.kind == *k;
         button(
-            row![
-                ui::glyph_box(k.glyph(), if selected { p.accent } else { p.muted }, 34.0),
-                column![
-                    ui::strong(p.text, k.label(), 14.0),
-                    ui::caption(p, k.hint())
-                ]
-                .spacing(2)
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
+            iced::widget::text(k.label())
+                .size(13)
+                .font(ui::weight(iced::font::Weight::Semibold)),
         )
-        .padding(12)
-        .width(Length::Fill)
-        .style(theme::tile(*p, selected, true))
+        .padding(Padding::from([6, 14]))
+        .style(theme::pick_chip(*p, selected, true))
         .on_press(ScheduleMsg::Kind(*k))
         .into()
     });
-    let grid = iced::widget::grid(tiles)
-        .fluid(if compact { 250.0 } else { 320.0 })
-        .spacing(10)
-        .height(iced::widget::grid::Sizing::EvenlyDistribute(Length::Shrink));
-    let mut col = column![grid].spacing(18);
+    let _ = compact;
+    let mut col = column![
+        ui::eyebrow(p.muted, "Quand synchroniser ?"),
+        row(kinds).spacing(6).wrap(),
+        ui::caption(p, d.kind.hint()),
+    ]
+    .spacing(12);
     match d.kind {
         TriggerKind::Interval => {
             let presets = [(15, "15 min"), (60, "1 h"), (360, "6 h"), (1440, "24 h")]
                 .into_iter()
                 .map(|(m, label)| {
-                    button(ui::colored(p.text, label, 13.0))
-                        .padding(Padding::from([5, 12]))
-                        .style(theme::chip(
+                    button(ui::colored(p.muted, label, 12.0))
+                        .padding(Padding::from([4, 12]))
+                        .style(theme::pick_chip(
                             *p,
-                            p.accent,
                             d.interval_minutes == m.to_string(),
+                            true,
                         ))
                         .on_press(ScheduleMsg::IntervalPreset(m))
                         .into()
@@ -225,6 +220,8 @@ pub(crate) fn editor<'a>(
         }
         _ => {}
     }
+    let mut consent: Option<El<'a, ScheduleMsg>> = None;
+    let mut tail = column![].spacing(12);
     if d.kind != TriggerKind::Manual {
         if draft::window_supported() {
             col = col.push(option(
@@ -261,35 +258,41 @@ pub(crate) fn editor<'a>(
                 DELETIONS_INFO,
             ));
         }
-        col = col.push(
+        consent = Some(
             container(
-                column![
-                    row![
-                        icons::icon(Glyph::Shield, 16.0, p.warning),
-                        ui::strong(p.text, "Consentement explicite", 13.0)
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                    consents
-                ]
-                .spacing(12),
+                column![ui::eyebrow(p.warning, "Consentement explicite"), consents].spacing(10),
             )
-            .padding(14)
+            .padding(Padding::from([14, 18]))
             .width(Length::Fill)
-            .style(theme::outline(*p, p.warning, 0.6)),
+            .style(theme::tint(
+                p.warning,
+                if p.is_light() { 0.22 } else { 0.15 },
+                theme::RADIUS,
+            ))
+            .into(),
         );
-        col = col.push(ui::caption(
+        tail = tail.push(ui::caption(
             p,
             "L’autorisation porte sur la configuration exacte du profil. Changer le mode, la source ou la destination exige de la renouveler ; les autres modifications enregistrées depuis l’assistant la conservent. Les tâches Windows sont enregistrées automatiquement.",
         ));
     }
-    col.into()
+    let mut out = column![
+        container(col)
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::card(*p, 0.0, false)),
+    ]
+    .spacing(14);
+    if let Some(consent) = consent {
+        out = out.push(consent);
+    }
+    out.push(tail).into()
 }
 
 /// Occurrences bucketed per (day, hour) are bounded: a schedule every minute
 /// still fills a cell, not memory.
 const WEEK_OCCURRENCES_PER_SCHEDULE: usize = 12_000;
-const HOUR_ROW: f32 = 34.0;
+const HOUR_ROW: f32 = 30.0;
 
 /// (day index, hour) → (profile name, mode, occurrences in that hour).
 type WeekCells =
@@ -347,7 +350,14 @@ impl App {
             );
         }
         let mut grid = column![header].spacing(2);
-        for hour in 0..24_usize {
+        let (first, last) = cells
+            .keys()
+            .map(|(_, h)| *h)
+            .fold((current_hour, current_hour), |(a, b), h| {
+                (a.min(h), b.max(h))
+            });
+        let (from, to) = (first.saturating_sub(1), (last + 1).min(23));
+        for hour in from..=to {
             let mut line = row![
                 container(ui::mono(p.faint, format!("{hour:02}:00"), 11.0))
                     .width(Length::Fixed(48.0))
@@ -396,13 +406,20 @@ impl App {
                 ui::fill(),
                 ui::caption(p, "Heures UTC · sept jours à partir d’aujourd’hui"),
             ]
+            .padding(Padding::from([0, 6]))
             .align_y(Alignment::Center),
-            container(grid)
-                .padding(10)
-                .width(Length::Fill)
-                .style(theme::card(*p, 0.0, false)),
         ]
-        .spacing(12);
+        .spacing(10);
+        let grid: El<'a, Message> = grid.into();
+        body = body.push(if cells.is_empty() {
+            El::from(container(ui::muted(
+                p,
+                "Aucun passage à heure fixe cette semaine : les planifications se déclenchent à la session (liste de droite).",
+            ))
+            .padding(Padding::from([18, 6])))
+        } else {
+            grid
+        });
         if !event_driven.is_empty() {
             body = body.push(ui::muted(
                 p,
@@ -412,140 +429,107 @@ impl App {
                 ),
             ));
         }
-        body.into()
+        container(body)
+            .padding(14)
+            .width(Length::Fill)
+            .style(theme::card(*p, 0.0, false))
+            .into()
     }
 }
 
 impl App {
     pub(crate) fn schedules_page<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         let now = model::now_secs();
-        let mut list = column![].spacing(10);
+        let mut list = column![ui::eyebrow(p.muted, "Règles")].spacing(14);
         let mut rows: Vec<_> = self.ws.schedules.iter().collect();
         rows.sort_by_key(|s| s.schedule.approved.name.to_lowercase());
         for s in rows {
             let id = s.schedule.approved.id.clone();
             let valid = self.schedule_valid(&id);
-            let next = draft::next_occurrence(&s.schedule.trigger, s.schedule.created_at, now);
             let (status_color, status) = match (valid, s.running_slot, &s.result) {
                 (_, Some(_), _) => (
                     p.warning,
-                    "En cours ou interrompu — diagnostic requis".to_owned(),
+                    "En cours ou interrompu : diagnostic requis".to_owned(),
                 ),
                 (Some(false) | None, _, _) => (
                     p.danger,
-                    "Profil modifié ou retiré : autorisation à renouveler".to_owned(),
+                    "À renouveler : profil modifié ou retiré".to_owned(),
                 ),
                 (_, _, Some(r)) => (
                     match r.status {
-                        sync_scheduler::JobStatus::Succeeded => p.success,
+                        sync_scheduler::JobStatus::Succeeded => p.backup,
                         sync_scheduler::JobStatus::Failed => p.danger,
                         _ => p.warning,
                     },
                     format!("Dernier passage : {}", schedule_status(r)),
                 ),
-                _ => (p.muted, "Jamais exécuté".to_owned()),
+                _ => (p.faint, "Jamais exécuté".to_owned()),
             };
             let name = self
                 .profile(&id)
                 .map_or(s.schedule.approved.name.clone(), |pr| pr.name.clone());
             list = list.push(
-                container(
-                    row![
-                        ui::glyph_box(Glyph::Clock, p.accent, 40.0),
-                        column![
-                            ui::strong(p.text, name, 15.0),
-                            ui::muted(p, draft::trigger_label(&s.schedule.trigger)),
-                            row![
-                                ui::dot(status_color, 8.0),
-                                ui::colored(status_color, status, 12.0)
-                            ]
-                            .spacing(6)
-                            .align_y(Alignment::Center),
-                        ]
-                        .spacing(4)
-                        .width(Length::Fill),
-                        column![
-                            ui::caption(p, "Prochaine échéance"),
-                            ui::strong(
-                                p.text,
-                                next.map_or("Événement de session".to_owned(), |n| {
-                                    model::relative(n, now)
-                                }),
-                                14.0
-                            ),
-                            ui::caption(
-                                p,
+                row![
+                    ui::mode_tile(p, s.schedule.approved.mode, 36.0),
+                    column![
+                        ui::strong(p.text, model::ellipsize(&name, 26), 14.0),
+                        ui::colored(
+                            p.muted,
+                            format!(
+                                "{}{}",
+                                draft::trigger_label(&s.schedule.trigger),
                                 if s.schedule.allow_deletions {
-                                    "Suppressions protégées autorisées"
+                                    " · suppressions protégées"
                                 } else {
-                                    "Sans suppression"
+                                    ""
                                 }
                             ),
-                        ]
-                        .spacing(2)
-                        .align_x(Alignment::End),
-                        ui::icon_button(
-                            p,
-                            Glyph::Pencil,
-                            "Revoir la planification",
-                            Some(Message::OpenSchedule(id.clone()))
+                            12.0
                         ),
-                        ui::icon_button(
-                            p,
-                            Glyph::Check,
-                            "Diagnostiquer l’interruption",
-                            (s.running_slot.is_some() && !self.running_on(&id) && !self.busy())
-                                .then(|| Message::AskDiagnose(id.clone()))
-                        ),
-                        ui::icon_button(
-                            p,
-                            Glyph::Trash,
-                            "Retirer la planification",
-                            (s.running_slot.is_none() && !self.busy())
-                                .then_some(Message::RemoveSchedule(id))
-                        ),
+                        ui::status(p, status_color, model::ellipsize(&status, 44)),
                     ]
-                    .spacing(14)
-                    .align_y(Alignment::Center),
-                )
-                .padding(16)
-                .style(theme::card(*p, 0.0, false)),
+                    .spacing(1)
+                    .width(Length::Fill),
+                    ui::icon_button(
+                        p,
+                        Glyph::Pencil,
+                        "Revoir la planification",
+                        Some(Message::OpenSchedule(id.clone()))
+                    ),
+                    ui::icon_button(
+                        p,
+                        Glyph::Check,
+                        "Diagnostiquer l’interruption",
+                        (s.running_slot.is_some() && !self.running_on(&id) && !self.busy())
+                            .then(|| Message::AskDiagnose(id.clone()))
+                    ),
+                    ui::icon_button(
+                        p,
+                        Glyph::Trash,
+                        "Retirer la planification",
+                        (s.running_slot.is_none() && !self.busy())
+                            .then_some(Message::RemoveSchedule(id))
+                    ),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
             );
         }
         if self.ws.schedules.is_empty() {
-            list = list.push(empty(p));
+            list = list.push(ui::muted(p, "Aucune planification."));
         }
         let mut page = column![
             row![
                 column![
-                    ui::title(p, "Planification", 26.0),
-                    ui::muted(
-                        p,
-                        "Les horaires sont exécutés par l’agent autonome, même fenêtre fermée."
-                    ),
+                    ui::eyebrow(p.muted, "Exécutée par l’agent, même fenêtre fermée"),
+                    ui::title(p, "Planification", 32.0),
                 ]
                 .spacing(4)
                 .width(Length::Fill),
-                row([(false, "Liste"), (true, "Semaine")].map(|(week, label)| {
-                    button(ui::colored(
-                        if self.schedule_week == week {
-                            p.text
-                        } else {
-                            p.muted
-                        },
-                        label,
-                        13.0,
-                    ))
-                    .padding(Padding::from([5, 14]))
-                    .style(theme::chip(*p, p.violet, self.schedule_week == week))
-                    .on_press(Message::ScheduleWeek(week))
-                    .into()
-                }))
-                .spacing(6),
                 ui::action(
                     p,
                     Tone::Secondary,
-                    Some(Glyph::Refresh),
+                    None,
                     "Actualiser",
                     Some(Message::Refresh)
                 ),
@@ -553,7 +537,7 @@ impl App {
             .spacing(10)
             .align_y(Alignment::Center),
         ]
-        .spacing(20);
+        .spacing(18);
         if cfg!(windows) {
             if let Some(error) = &self.ws.supervision_error {
                 page = page.push(ui::callout(
@@ -593,7 +577,7 @@ impl App {
             } else {
                 (p.success, "Agent disponible")
             };
-            page = page.push(ui::colored(color, label, 13.0));
+            page = page.push(ui::status(p, color, label));
             if let Some(diagnostic) = &observed.diagnostic {
                 page = page.push(ui::callout(
                     p,
@@ -640,32 +624,37 @@ impl App {
                 "Les autorisations seront relues dès la fin de la tâche en cours.",
             ));
         }
-        page = page.push(if self.schedule_week && !self.ws.schedules.is_empty() {
-            self.week_view(p, now)
+        let calendar: El<'a, Message> = if self.ws.schedules.is_empty() {
+            empty(p)
         } else {
-            list.into()
-        }).push(
-            container(
-                row![
-                    ui::glyph_box(Glyph::Monitor, p.success, 44.0),
-                    column![
-                        ui::strong(p.text, "Agent système", 15.0),
-                        ui::muted(p, "Windows : les tâches sont enregistrées automatiquement. Une demande UAC apparaît uniquement si Windows exige des droits supplémentaires. Linux : installer les unités systemd utilisateur selon le guide."),
-                    ]
-                    .spacing(4)
-                    .width(Length::Fill),
+            self.week_view(p, now)
+        };
+        page = page.push(
+            row![
+                container(calendar).width(Length::Fill),
+                column![
+                    container(list)
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::card(*p, 0.0, false)),
+                    ui::callout(
+                        p,
+                        p.info,
+                        Glyph::Monitor,
+                        "Agent système",
+                        "Windows : les tâches sont enregistrées automatiquement ; une demande UAC n’apparaît que si Windows exige des droits supplémentaires. La fermeture de session n’est pas garantie pour une tâche longue, et deux jobs incompatibles ne tournent jamais en même temps. Linux : unités systemd utilisateur selon le guide.",
+                    ),
                 ]
-                .spacing(14)
-                .align_y(Alignment::Center),
-            )
-            .padding(16)
-            .style(theme::outline(*p, p.success, 0.5)),
+                .spacing(12)
+                .width(Length::Fixed(380.0)),
+            ]
+            .spacing(12),
         );
         scrollable(
             container(
                 container(page)
-                    .padding(Padding::from([28, 32]))
-                    .max_width(1100.0),
+                    .padding(Padding::from([26, 40]))
+                    .max_width(1280.0),
             )
             .width(Length::Fill)
             .center_x(Length::Fill),
@@ -702,7 +691,7 @@ fn schedule_status(r: &sync_scheduler::Completion) -> String {
     };
     if r.code == "trash_insufficient" {
         "bloqué : corbeille insuffisante, lancez-la manuellement".to_owned()
-    } else if r.code.is_empty() {
+    } else if r.code.is_empty() || r.status == sync_scheduler::JobStatus::Succeeded {
         status.to_owned()
     } else {
         format!("{status} ({})", r.code)

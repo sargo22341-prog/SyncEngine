@@ -57,17 +57,6 @@ impl Provider {
             Self::Onedrive => "OneDrive",
         }
     }
-    pub(crate) fn hint(self) -> &'static str {
-        match self {
-            Self::Local => "Disque interne, USB, dossier monté",
-            Self::Smb => "Chemin UNC ou partage monté",
-            Self::Sftp => "Serveur SSH, clé via l’agent",
-            Self::Webdav => "Collection HTTPS, jeton externe",
-            Self::Ftps => "FTP chiffré par TLS",
-            Self::Ftp => "Non chiffré, à éviter",
-            Self::Onedrive => "Source expérimentale, lecture seule",
-        }
-    }
     pub(crate) fn glyph(self) -> Glyph {
         match self {
             Self::Local => Glyph::Folder,
@@ -645,14 +634,6 @@ impl TriggerKind {
             Self::ManagerStart => "Gestionnaire utilisateur Linux",
         }
     }
-    pub(crate) fn glyph(self) -> Glyph {
-        match self {
-            Self::Manual => Glyph::Play,
-            Self::Interval => Glyph::Refresh,
-            Self::Daily => Glyph::Calendar,
-            Self::Logon | Self::LogonDelayed | Self::ManagerStart => Glyph::Monitor,
-        }
-    }
     pub(crate) const ALL: [Self; 6] = [
         Self::Manual,
         Self::Interval,
@@ -802,29 +783,6 @@ pub(crate) fn trigger_label(trigger: &Trigger) -> String {
             format!("{} min après l’ouverture de session", seconds / 60)
         }
         Trigger::UserManagerStart => "Au démarrage du gestionnaire utilisateur".into(),
-    }
-}
-
-/// Compact variant of [`trigger_label`] for narrow table cells.
-pub(crate) fn trigger_short(trigger: &Trigger) -> String {
-    match trigger {
-        Trigger::Interval { seconds } => {
-            let m = seconds / 60;
-            if m % 1440 == 0 {
-                match m / 1440 {
-                    1 => "Chaque jour".to_owned(),
-                    d => format!("Tous les {d} j"),
-                }
-            } else if m % 60 == 0 {
-                format!("Toutes les {} h", m / 60)
-            } else {
-                format!("Toutes les {m} min")
-            }
-        }
-        Trigger::DailyUtc { hour, minute } => format!("Chaque jour {hour:02}:{minute:02}"),
-        Trigger::Logon => "À la connexion".into(),
-        Trigger::LogonDelayed { seconds } => format!("Connexion + {} min", seconds / 60),
-        Trigger::UserManagerStart => "Au démarrage".into(),
     }
 }
 
@@ -1081,23 +1039,6 @@ pub(crate) fn regrouped(profile: &Profile, group: &str) -> Option<Profile> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn short_trigger_labels_stay_compact() {
-        assert_eq!(
-            trigger_short(&Trigger::LogonDelayed { seconds: 120 }),
-            "Connexion + 2 min"
-        );
-        assert_eq!(
-            trigger_short(&Trigger::Interval { seconds: 7200 }),
-            "Toutes les 2 h"
-        );
-        assert_eq!(
-            trigger_short(&Trigger::Interval { seconds: 86_400 }),
-            "Chaque jour"
-        );
-        assert!(trigger_short(&Trigger::UserManagerStart).chars().count() <= 20);
-    }
 
     fn local(path: &str) -> EndpointDraft {
         let mut d = EndpointDraft::default();

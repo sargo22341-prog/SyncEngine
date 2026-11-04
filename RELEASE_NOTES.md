@@ -1,6 +1,7 @@
 # Notes de la prochaine version
 
 Écrire sous la ligne `<!-- notes -->
+- Interface alignée sur les maquettes « Flux » : accueil (cartes En direct / À traiter / Prochaine planification, filtre Tous · En cours · À vérifier), assistant en pleine page avec liste d'étapes, page Activité en direct (débit, progression, fichiers en cours), historique par jour, planification en calendrier avec ses règles, réglages par sections ; nouveau logo et nouvelle icône d'application.
 - Conflits : nouveau choix « Garder les deux » (la version de la destination est conservée à côté, sous « nom (conflit destination).ext »).
 - Réglages › Performances : transferts simultanés, gros fichiers simultanés et limite de débit.
 - Planification : vue « Semaine » en calendrier.
