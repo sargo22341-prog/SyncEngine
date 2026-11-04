@@ -59,6 +59,11 @@ pub struct ExecutionOptions {
     /// Faux par défaut : réservé aux observateurs en mémoire qui ne gardent
     /// que le dernier état ; une file bornée perdrait ces événements.
     pub transfer_events: bool,
+    /// Débit maximal de l'ensemble des transferts de l'exécution, en octets
+    /// par seconde (défaut : illimité). Partagé par tous les workers ; ne
+    /// porte pas sur les relectures de vérification ni sur l'archivage des
+    /// versions.
+    pub rate_limit: Option<std::num::NonZeroU64>,
 }
 
 impl Default for ExecutionOptions {
@@ -74,6 +79,7 @@ impl Default for ExecutionOptions {
             buffer_size: DEFAULT_BUFFER_SIZE,
             progress_interval_bytes: 8 * 1024 * 1024,
             transfer_events: false,
+            rate_limit: None,
         }
     }
 }
@@ -89,6 +95,12 @@ impl ExecutionOptions {
     #[must_use]
     pub fn with_large_transfers(mut self, transfers: std::num::NonZeroUsize) -> Self {
         self.large_transfers = transfers;
+        self
+    }
+    /// Limite le débit total des transferts (voir [`Self::rate_limit`]).
+    #[must_use]
+    pub fn with_rate_limit(mut self, bytes_per_second: Option<std::num::NonZeroU64>) -> Self {
+        self.rate_limit = bytes_per_second;
         self
     }
     /// Options par défaut.

@@ -48,6 +48,7 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
     let execution_id = run.req.execution_id.clone();
     let progress = run.progress.clone();
     let context = run.context.clone();
+    let throttle = run.throttle.clone();
     std::thread::scope(|scope| {
         let (reply, receive) = mpsc::sync_channel(workers);
         let mut senders = Vec::new();
@@ -58,6 +59,7 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
             let context = context.clone();
             let execution_id = execution_id.clone();
             let progress = progress.clone();
+            let throttle = throttle.clone();
             handles.push(scope.spawn(move || {
                 while let Ok(index) = jobs.recv() {
                     let op = &operations[index];
@@ -85,6 +87,7 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
                             progress: progress.clone(),
                             leftovers: Vec::new(),
                             independent: true,
+                            throttle: throttle.clone(),
                         };
                         let status = task.status_of(op);
                         (status, task.stop, task.leftovers)

@@ -34,6 +34,9 @@
 
 use std::fmt;
 
+mod throttle;
+pub use throttle::Throttle;
+
 use connector_api::{
     CommitMode, ContentWriter, StorageConnector, StorageError, StorageErrorKind, StorageOperation,
     WriteOptions,
@@ -55,6 +58,7 @@ pub struct CopyRequest<'a> {
     options: WriteOptions,
     buffer_size: usize,
     read_limit: Option<u64>,
+    throttle: Option<&'a Throttle>,
 }
 
 impl fmt::Debug for CopyRequest<'_> {
@@ -88,6 +92,7 @@ impl<'a> CopyRequest<'a> {
             options: WriteOptions::new(),
             buffer_size: DEFAULT_BUFFER_SIZE,
             read_limit: None,
+            throttle: None,
         }
     }
 
@@ -104,6 +109,14 @@ impl<'a> CopyRequest<'a> {
     #[must_use]
     pub fn with_buffer_size(mut self, size: usize) -> Self {
         self.buffer_size = size.max(1);
+        self
+    }
+
+    /// Limite le débit de ce transfert (voir [`Throttle`], partagée entre
+    /// transferts). Les octets sont comptés après chaque écriture.
+    #[must_use]
+    pub fn with_throttle(mut self, throttle: &'a Throttle) -> Self {
+        self.throttle = Some(throttle);
         self
     }
 
@@ -407,6 +420,14 @@ pub fn stage_copy_observed(
         }
         bytes = bytes.saturating_add(read as u64);
         on_progress(read as u64);
+        if let Some(throttle) = request.throttle
+            && !throttle.pace(read as u64, cancel)
+        {
+            break CopyError::new(
+                CopyStage::Read,
+                cancelled(StorageOperation::Read, request.source_path),
+            );
+        }
     };
     Err(abandon(writer, failure))
 }

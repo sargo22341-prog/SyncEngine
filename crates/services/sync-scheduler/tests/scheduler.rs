@@ -611,3 +611,61 @@ fn resident_session_missed_policy_and_ambiguous_identity_fail_closed()
     assert!(db.dispatch(100001, Wake::Clock, &app, &token)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn occurrences_list_the_timetable_without_inventing_event_runs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let base = schedule(&temp)?;
+    // Interval anchored at creation (100), every 10 minutes.
+    let every = Schedule {
+        trigger: Trigger::Interval { seconds: 600 },
+        ..base.clone()
+    };
+    assert_eq!(every.occurrences(0, 2000, 10), vec![100, 700, 1300, 1900]);
+    // A window starting mid-period keeps the phase.
+    assert_eq!(every.occurrences(701, 2000, 10), vec![1300, 1900]);
+    // The limit bounds the answer.
+    assert_eq!(every.occurrences(0, 100_000, 3).len(), 3);
+    // Daily at 01:30 UTC, never before the creation instant.
+    let daily = Schedule {
+        trigger: Trigger::DailyUtc {
+            hour: 1,
+            minute: 30,
+        },
+        created_at: 86_400 + 10,
+        ..base.clone()
+    };
+    // Day 1 at 01:30 is after the creation instant (day 1, 00:00:10).
+    assert_eq!(
+        daily.occurrences(0, 4 * 86_400, 10),
+        vec![86_400 + 5400, 2 * 86_400 + 5400, 3 * 86_400 + 5400]
+    );
+    // Created after that day's slot: the first occurrence is the next day's.
+    let late = Schedule {
+        created_at: 86_400 + 6000,
+        ..daily.clone()
+    };
+    assert_eq!(late.occurrences(0, 3 * 86_400, 10), vec![2 * 86_400 + 5400]);
+    // Event triggers and disabled schedules have no timetable.
+    for trigger in [
+        Trigger::Logon,
+        Trigger::LogonDelayed { seconds: 30 },
+        Trigger::UserManagerStart,
+    ] {
+        let event = Schedule {
+            trigger,
+            ..base.clone()
+        };
+        assert!(event.occurrences(0, 1_000_000, 10).is_empty());
+    }
+    let off = Schedule {
+        enabled: false,
+        ..every
+    };
+    assert!(off.occurrences(0, 1_000_000, 10).is_empty());
+    // Empty or inverted windows.
+    assert!(base.occurrences(500, 500, 10).is_empty());
+    assert!(base.occurrences(900, 500, 10).is_empty());
+    Ok(())
+}

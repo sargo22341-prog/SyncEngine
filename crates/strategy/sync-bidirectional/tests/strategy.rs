@@ -297,11 +297,21 @@ fn baseline_evidence_and_direction_tampering_are_rejected() {
 
 /// Decision of the user on the conflict of `f`, for the contents currently held.
 fn decision(l: &MemoryConnector, r: &MemoryConnector, winner: PlanSide) -> Resolutions {
-    let seen = |c: &MemoryConnector| EntrySnapshot::from(inventory(c).get(&path("f")).unwrap());
+    decision_of("f", l, r, winner, false)
+}
+fn decision_of(
+    name: &str,
+    l: &MemoryConnector,
+    r: &MemoryConnector,
+    winner: PlanSide,
+    keep_both: bool,
+) -> Resolutions {
+    let seen = |c: &MemoryConnector| EntrySnapshot::from(inventory(c).get(&path(name)).unwrap());
     Resolutions::from([(
-        path("f"),
+        path(name),
         ConflictResolution {
             winner,
+            keep_both,
             seen_source: seen(l),
             seen_destination: seen(r),
         },
@@ -354,4 +364,134 @@ fn a_decision_never_applies_to_a_path_that_is_not_a_conflict() {
     let p = resolved(&l, &r, &d);
     assert_eq!(p.summary().mutations(), 0);
     assert_eq!(p.get(&path("f")).unwrap().action(), Action::Keep);
+}
+
+fn kept_both(
+    l: &MemoryConnector,
+    r: &MemoryConnector,
+    name: &str,
+    winner: PlanSide,
+) -> ExecutionPlan {
+    resolved(l, r, &decision_of(name, l, r, winner, true))
+}
+
+#[test]
+fn keep_both_copies_the_losing_content_first_and_replaces_after_it() {
+    for (winner, copy_target, replace_target, label) in [
+        (
+            PlanSide::Source,
+            PlanSide::Source,
+            PlanSide::Destination,
+            "destination",
+        ),
+        (
+            PlanSide::Destination,
+            PlanSide::Destination,
+            PlanSide::Source,
+            "source",
+        ),
+    ] {
+        let l = MemoryConnector::new("l").file("d/f.txt", b"LEFT", ts(10));
+        let r = MemoryConnector::new("r").file("d/f.txt", b"RIGHT", ts(1));
+        let p = kept_both(&l, &r, "d/f.txt", winner);
+        let name = format!("d/f (conflit {label}).txt");
+        let copy = p.get(&path(&name)).unwrap();
+        let replace = p.get(&path("d/f.txt")).unwrap();
+        assert_eq!((p.summary().copy, p.summary().replace), (1, 1));
+        assert_eq!(copy.action(), Action::Copy);
+        assert_eq!(*copy.reason(), Reason::ConflictKeptBoth);
+        assert_eq!(copy.target(), copy_target);
+        assert_eq!(copy.source_path(), &path("d/f.txt"));
+        assert_eq!(replace.target(), replace_target);
+        assert_eq!(*replace.reason(), Reason::ConflictResolved);
+        assert!(
+            replace.depends_on().contains(copy.id()),
+            "the content is copied before it is replaced"
+        );
+        // Plans with a physical source path use the extended schema.
+        assert_eq!(p.schema_version(), 3);
+        assert_eq!(ExecutionPlan::from_json(&p.to_json().unwrap()).unwrap(), p);
+    }
+}
+
+#[test]
+fn the_copy_name_keeps_the_extension_avoids_taken_names_and_handles_dot_files() {
+    let l = MemoryConnector::new("l")
+        .file("f.txt", b"LEFT", ts(10))
+        // Already taken, on the other side and with another case.
+        .file("f (conflit destination).txt", b"x", ts(1));
+    let r = MemoryConnector::new("r")
+        .file("f.txt", b"RIGHT", ts(1))
+        .file("F (CONFLIT DESTINATION 2).TXT", b"y", ts(1));
+    let p = kept_both(&l, &r, "f.txt", PlanSide::Source);
+    assert!(p.get(&path("f (conflit destination 3).txt")).is_some());
+    for (name, expected) in [
+        ("Makefile", "Makefile (conflit destination)"),
+        (".env", ".env (conflit destination)"),
+        ("archive.tar.gz", "archive.tar (conflit destination).gz"),
+    ] {
+        let l = MemoryConnector::new("l").file(name, b"LEFT", ts(10));
+        let r = MemoryConnector::new("r").file(name, b"RIGHT", ts(1));
+        let p = kept_both(&l, &r, name, PlanSide::Source);
+        assert!(p.get(&path(expected)).is_some(), "{expected}");
+    }
+}
+
+#[test]
+fn a_stale_keep_both_decision_changes_nothing() {
+    let l = MemoryConnector::new("l").file("f", b"LEFT", ts(10));
+    let r = MemoryConnector::new("r").file("f", b"RIGHT", ts(1));
+    let d = decision_of("f", &l, &r, PlanSide::Source, true);
+    l.put_file("f", b"CHANGED-LEFT", ts(20));
+    let p = resolved(&l, &r, &d);
+    assert_eq!(p.summary().conflict, 1);
+    assert_eq!(p.summary().mutations(), 0);
+}
+
+#[test]
+fn tampered_keep_both_plans_are_refused_when_loaded() {
+    let l = MemoryConnector::new("l").file("f.txt", b"LEFT", ts(10));
+    let r = MemoryConnector::new("r").file("f.txt", b"RIGHT", ts(1));
+    let json = kept_both(&l, &r, "f.txt", PlanSide::Source)
+        .to_json()
+        .unwrap();
+    let edit = |change: &dyn Fn(&mut serde_json::Value)| -> bool {
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        change(&mut value);
+        ExecutionPlan::from_json(&value.to_string()).is_err()
+    };
+    // The replacement no longer waits for the copy.
+    assert!(edit(&|v| {
+        for op in v["operations"].as_array_mut().unwrap() {
+            if op["reason"]["code"] == "conflict_resolved" {
+                op["depends_on"] = serde_json::json!([]);
+            }
+        }
+    }));
+    // The copy reads another file than the conflict it belongs to.
+    assert!(edit(&|v| {
+        for op in v["operations"].as_array_mut().unwrap() {
+            if op["reason"]["code"] == "conflict_kept_both" {
+                op["source"]["origin_paths"] = serde_json::json!(["other.txt"]);
+            }
+        }
+    }));
+    // The copy lands in another folder.
+    assert!(edit(&|v| {
+        for op in v["operations"].as_array_mut().unwrap() {
+            if op["reason"]["code"] == "conflict_kept_both" {
+                op["path"] = serde_json::json!("sub/copy.txt");
+            }
+        }
+    }));
+    // The conflict is no longer a resolved one: the copy has no companion.
+    assert!(edit(&|v| {
+        for op in v["operations"].as_array_mut().unwrap() {
+            if op["reason"]["code"] == "conflict_resolved" {
+                op["reason"] = serde_json::json!({"code": "content_differs"});
+            }
+        }
+    }));
+    // The untouched plan loads.
+    assert!(!edit(&|_| {}));
 }

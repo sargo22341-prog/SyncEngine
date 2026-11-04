@@ -30,13 +30,16 @@ pub enum BidirectionalError {
     /// Plan construction invariant failed.
     #[error(transparent)]
     Plan(#[from] PlanError),
+    /// No free sibling name for the copy kept by « keep both ».
+    #[error("no free name for the copy of a conflicting file")]
+    NoFreeName,
 }
 
 impl ClassifiedError for BidirectionalError {
     fn class(&self) -> ErrorClass {
         match self {
             Self::BindingMismatch => ErrorClass::InvalidInput,
-            Self::NotConverged => ErrorClass::Conflict,
+            Self::NotConverged | Self::NoFreeName => ErrorClass::Conflict,
             Self::Baseline(_) | Self::Plan(_) => ErrorClass::Integrity,
         }
     }
@@ -68,7 +71,8 @@ pub fn binding(
     })
 }
 
-/// Winner of a still-valid decision on a plain two-file conflict.
+/// Winner of a still-valid decision on a plain two-file conflict, and whether
+/// the losing content is also kept under another name.
 fn resolved_winner(
     resolutions: &Resolutions,
     path: &ResourcePath,
@@ -76,7 +80,7 @@ fn resolved_winner(
     reason: &Reason,
     source: &Option<EntrySnapshot>,
     destination: &Option<EntrySnapshot>,
-) -> Option<PlanSide> {
+) -> Option<(PlanSide, bool)> {
     if action != Action::Conflict || *reason != Reason::ConcurrentChange {
         return None;
     }
@@ -86,7 +90,45 @@ fn resolved_winner(
         && b.kind() == EntryKind::File
         && same_content(a, &decision.seen_source)
         && same_content(b, &decision.seen_destination))
-    .then_some(decision.winner)
+    .then_some((decision.winner, decision.keep_both))
+}
+
+/// Most numbered variants tried before giving up on a free name.
+const COPY_NAME_ATTEMPTS: usize = 1000;
+
+/// `dir/name (conflit destination).ext` (then `… destination 2).ext`…), not
+/// taken (case-insensitively) by anything seen on either side or planned.
+/// `loser` is the side whose content the copy preserves.
+fn kept_copy_path(
+    path: &ResourcePath,
+    loser: PlanSide,
+    taken: &mut BTreeSet<String>,
+) -> Result<ResourcePath, BidirectionalError> {
+    let name = path.file_name().ok_or(BidirectionalError::NoFreeName)?;
+    let parent = path.parent().ok_or(BidirectionalError::NoFreeName)?;
+    // A leading dot (« .env ») is part of the stem, not an extension.
+    let (stem, extension) = match name.rfind('.') {
+        Some(at) if at > 0 => name.split_at(at),
+        _ => (name, ""),
+    };
+    let label = match loser {
+        PlanSide::Source => "source",
+        PlanSide::Destination => "destination",
+    };
+    for attempt in 1..=COPY_NAME_ATTEMPTS {
+        let number = if attempt == 1 {
+            String::new()
+        } else {
+            format!(" {attempt}")
+        };
+        let candidate = parent
+            .join(&format!("{stem} (conflit {label}{number}){extension}"))
+            .map_err(|_| BidirectionalError::NoFreeName)?;
+        if taken.insert(candidate.as_str().to_lowercase()) {
+            return Ok(candidate);
+        }
+    }
+    Err(BidirectionalError::NoFreeName)
 }
 
 fn snapshot(entry: Option<&FileEntry>) -> Option<EntrySnapshot> {
@@ -112,11 +154,17 @@ fn reliable(entry: &FileEntry) -> bool {
 /// It only applies if both sides still hold exactly the content the user
 /// saw (`seen_*`, compared by size and BLAKE3 hash); otherwise the conflict
 /// stays a conflict and nothing is written. The decision is visible in the
-/// plan as a `Replace` with [`Reason::ConflictResolved`].
+/// plan as a `Replace` with [`Reason::ConflictResolved`] (plus, with
+/// `keep_both`, a `Copy` with [`Reason::ConflictKeptBoth`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConflictResolution {
-    /// Side whose content is kept: `Source` is the left folder.
+    /// Side whose content keeps the file name: `Source` is the left folder.
     pub winner: PlanSide,
+    /// Also keep the other side's content, as `name (conflit <côté>).ext`
+    /// next to the original, instead of replacing it for good. The copy is
+    /// written on the winner's side first; the next synchronization carries
+    /// it to the other side (a plan never copies a file it has not seen).
+    pub keep_both: bool,
     /// Left content when the user decided.
     pub seen_source: EntrySnapshot,
     /// Right content when the user decided.
@@ -184,6 +232,13 @@ impl BidirectionalStrategy {
             && right.is_complete()
             && left.issues().is_empty()
             && right.issues().is_empty();
+        // Names already used anywhere (either side, reference state) in
+        // lowercase, only needed when a copy has to be named.
+        let mut taken: BTreeSet<String> = if resolutions.values().any(|r| r.keep_both) {
+            paths.iter().map(|p| p.as_str().to_lowercase()).collect()
+        } else {
+            BTreeSet::new()
+        };
         let mut specs = BTreeMap::new();
         for path in paths {
             let l = left.get(&path);
@@ -262,16 +317,48 @@ impl BidirectionalStrategy {
                         _ => (Action::Conflict, Reason::ConcurrentChange),
                     }
                 };
+            let mut kept_copy = None;
             let (action, reason) =
                 match resolved_winner(resolutions, &path, action, &reason, &source, &destination) {
-                    Some(PlanSide::Destination) => {
-                        target = PlanSide::Source;
-                        std::mem::swap(&mut source, &mut destination);
+                    Some((winner, keep_both)) => {
+                        if winner == PlanSide::Destination {
+                            target = PlanSide::Source;
+                            std::mem::swap(&mut source, &mut destination);
+                        }
+                        // `destination` now holds the content about to be
+                        // replaced; « keep both » copies it to the winner's
+                        // side first, under its own name.
+                        if keep_both && let Some(replaced) = &destination {
+                            let copy = kept_copy_path(&path, target, &mut taken)?;
+                            let other_side = match target {
+                                PlanSide::Source => PlanSide::Destination,
+                                PlanSide::Destination => PlanSide::Source,
+                            };
+                            kept_copy = Some((
+                                copy,
+                                other_side,
+                                replaced.clone().with_origin_paths(vec![path.clone()]),
+                            ));
+                        }
                         (Action::Replace, Reason::ConflictResolved)
                     }
-                    Some(PlanSide::Source) => (Action::Replace, Reason::ConflictResolved),
                     None => (action, reason),
                 };
+            if let Some((copy, copy_target, content)) = kept_copy {
+                specs.insert(
+                    copy.clone(),
+                    (
+                        copy_target,
+                        OperationSpec {
+                            path: copy,
+                            action: Action::Copy,
+                            reason: Reason::ConflictKeptBoth,
+                            source: Some(content),
+                            destination: None,
+                        },
+                    ),
+                );
+            }
             specs.insert(
                 path.clone(),
                 (

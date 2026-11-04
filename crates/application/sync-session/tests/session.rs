@@ -511,6 +511,7 @@ fn a_resolved_conflict_is_executed_like_any_plan_and_the_reference_advances() {
         path("f"),
         sync_session::ConflictResolution {
             winner: PlanSide::Destination,
+            keep_both: false,
             seen_source: op.source().cloned().unwrap(),
             seen_destination: op.destination().cloned().unwrap(),
         },
@@ -534,4 +535,126 @@ fn a_resolved_conflict_is_executed_like_any_plan_and_the_reference_advances() {
     assert_eq!(l.content("f"), Some(b"BBB".to_vec()));
     assert_eq!(r.content("f"), Some(b"BBB".to_vec()));
     assert_eq!(plan(&h, &l, &r).summary().mutations(), 0);
+}
+
+fn conflict_on(
+    h: &mut History,
+    l: &MemoryConnector,
+    r: &MemoryConnector,
+    name: &str,
+) -> ExecutionPlan {
+    let initial = plan(h, l, r);
+    run(h, l, r, "initial", &initial);
+    l.put_file(name, b"AAA", ts(1));
+    r.put_file(name, b"BBB", ts(99));
+    plan(h, l, r)
+}
+
+fn resolve_both(
+    h: &History,
+    l: &MemoryConnector,
+    r: &MemoryConnector,
+    conflict: &ExecutionPlan,
+    name: &str,
+    winner: PlanSide,
+) -> ExecutionPlan {
+    let op = conflict.get(&path(name)).unwrap();
+    let decision = sync_session::Resolutions::from([(
+        path(name),
+        sync_session::ConflictResolution {
+            winner,
+            keep_both: true,
+            seen_source: op.source().cloned().unwrap(),
+            seen_destination: op.destination().cloned().unwrap(),
+        },
+    )]);
+    sync_session::preview_resolved(
+        h,
+        l,
+        r,
+        &context(),
+        &Filter::include_all(),
+        &policy(),
+        &CancellationToken::new(),
+        &|_, _, _| {},
+        &decision,
+    )
+    .unwrap()
+}
+
+#[test]
+fn keep_both_preserves_the_losing_content_even_when_its_name_sorts_after_the_original() {
+    // « Makefile (conflit destination) » sorts after « Makefile »: the copy
+    // must still run first, which only dependency-aware ordering guarantees.
+    let mut h = History::in_memory().unwrap();
+    let l = MemoryConnector::new("l")
+        .writable()
+        .file("Makefile", b"old", ts(1));
+    let r = MemoryConnector::new("r")
+        .writable()
+        .file("Makefile", b"old", ts(1));
+    let conflict = conflict_on(&mut h, &l, &r, "Makefile");
+    assert_eq!(conflict.summary().conflict, 1);
+    let both = resolve_both(&h, &l, &r, &conflict, "Makefile", PlanSide::Source);
+    let report = run(&mut h, &l, &r, "keep-both", &both);
+    assert_eq!(report.execution.status(), ExecutionStatus::Succeeded);
+    // The source keeps the name; the destination's version survives next to it.
+    assert_eq!(l.content("Makefile"), Some(b"AAA".to_vec()));
+    assert_eq!(r.content("Makefile"), Some(b"AAA".to_vec()));
+    assert_eq!(
+        l.content("Makefile (conflit destination)"),
+        Some(b"BBB".to_vec())
+    );
+    // Not converged yet (the copy exists on one side only): the reference
+    // does not advance, nothing is lost.
+    assert!(!report.baseline_updated);
+    // The next synchronization carries the copy over and converges.
+    let next = plan(&h, &l, &r);
+    assert_eq!((next.summary().copy, next.summary().conflict), (1, 0));
+    assert!(run(&mut h, &l, &r, "carry-over", &next).baseline_updated);
+    assert_eq!(
+        r.content("Makefile (conflit destination)"),
+        Some(b"BBB".to_vec())
+    );
+    assert_eq!(plan(&h, &l, &r).summary().mutations(), 0);
+}
+
+#[test]
+fn keep_both_with_the_destination_keeping_the_name_copies_the_source_version_across() {
+    let mut h = History::in_memory().unwrap();
+    let l = MemoryConnector::new("l")
+        .writable()
+        .file("d/n.md", b"old", ts(1));
+    let r = MemoryConnector::new("r")
+        .writable()
+        .file("d/n.md", b"old", ts(1));
+    let conflict = conflict_on(&mut h, &l, &r, "d/n.md");
+    let both = resolve_both(&h, &l, &r, &conflict, "d/n.md", PlanSide::Destination);
+    run(&mut h, &l, &r, "keep-both", &both);
+    assert_eq!(l.content("d/n.md"), Some(b"BBB".to_vec()));
+    assert_eq!(r.content("d/n.md"), Some(b"BBB".to_vec()));
+    assert_eq!(r.content("d/n (conflit source).md"), Some(b"AAA".to_vec()));
+    let next = plan(&h, &l, &r);
+    run(&mut h, &l, &r, "carry-over", &next);
+    assert_eq!(l.content("d/n (conflit source).md"), Some(b"AAA".to_vec()));
+}
+
+#[test]
+fn keep_both_stops_before_replacing_if_the_content_to_keep_changed_meanwhile() {
+    let mut h = History::in_memory().unwrap();
+    let l = MemoryConnector::new("l")
+        .writable()
+        .file("f", b"old", ts(1));
+    let r = MemoryConnector::new("r")
+        .writable()
+        .file("f", b"old", ts(1));
+    let conflict = conflict_on(&mut h, &l, &r, "f");
+    let both = resolve_both(&h, &l, &r, &conflict, "f", PlanSide::Source);
+    // The destination changes after the preview: copying it as it is now
+    // would keep something the user never saw, replacing it would lose it.
+    r.put_file("f", b"CHANGED-AFTER-PREVIEW", ts(200));
+    let report = run(&mut h, &l, &r, "late-change", &both);
+    assert_eq!(r.content("f"), Some(b"CHANGED-AFTER-PREVIEW".to_vec()));
+    assert_eq!(l.content("f (conflit destination)"), None);
+    assert!(!report.baseline_updated);
 }

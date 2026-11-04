@@ -110,6 +110,46 @@ impl Schedule {
             _ => Ok(()),
         }
     }
+    /// Timed occurrences in `from..to` (Unix seconds, UTC), oldest first, at
+    /// most `limit`. This is the timetable the triggers describe, for display:
+    /// event triggers (logon, user manager start) have none, a disabled
+    /// schedule has none, and the missed-job policy is not applied (it decides
+    /// what runs after an interruption, not when occurrences fall).
+    #[must_use]
+    pub fn occurrences(&self, from: i64, to: i64, limit: usize) -> Vec<i64> {
+        let mut found = Vec::new();
+        if !self.enabled || to <= from || limit == 0 {
+            return found;
+        }
+        let from = from.max(self.created_at);
+        match self.trigger {
+            Trigger::Interval { seconds } => {
+                let step = i64::from(seconds.max(1));
+                let first = (from - self.created_at + step - 1) / step;
+                let mut at = self.created_at.saturating_add(first.saturating_mul(step));
+                while at < to && found.len() < limit {
+                    found.push(at);
+                    at = at.saturating_add(step);
+                }
+            }
+            Trigger::DailyUtc { hour, minute } => {
+                let offset = i64::from(hour) * 3600 + i64::from(minute) * 60;
+                let mut day = from.div_euclid(86_400);
+                while found.len() < limit {
+                    let at = day * 86_400 + offset;
+                    if at >= to {
+                        break;
+                    }
+                    if at >= from {
+                        found.push(at);
+                    }
+                    day += 1;
+                }
+            }
+            Trigger::Logon | Trigger::LogonDelayed { .. } | Trigger::UserManagerStart => {}
+        }
+        found
+    }
     pub(crate) fn slot(&self, now: i64, wake: Wake) -> Option<i64> {
         if !self.enabled || now < self.created_at {
             return None;

@@ -192,6 +192,52 @@ fn stop_for(kind: StorageErrorKind, side: PlanSide) -> Option<StopCause> {
     }
 }
 
+/// Indices of the operations other than deletions, in execution order: path
+/// order (a folder always precedes its content), except that an operation
+/// never runs before the ones it depends on. Without such a dependency
+/// elsewhere in the order, this is exactly the path order.
+fn sequential_order(operations: &[Operation], index: &HashMap<&OperationId, usize>) -> Vec<usize> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    let mut waiting = vec![0_usize; operations.len()];
+    let mut children = vec![Vec::new(); operations.len()];
+    let mut ready = BinaryHeap::new();
+    for (position, op) in operations
+        .iter()
+        .enumerate()
+        .filter(|(_, op)| op.action() != Action::Delete)
+    {
+        for dependency in op.depends_on() {
+            if let Some(&parent) = index.get(dependency) {
+                waiting[position] += 1;
+                children[parent].push(position);
+            }
+        }
+        if waiting[position] == 0 {
+            ready.push(Reverse(position));
+        }
+    }
+    let mut order = Vec::with_capacity(operations.len());
+    while let Some(Reverse(position)) = ready.pop() {
+        order.push(position);
+        for &child in &children[position] {
+            waiting[child] -= 1;
+            if waiting[child] == 0 {
+                ready.push(Reverse(child));
+            }
+        }
+    }
+    // A plan is validated acyclic; should one slip through, its operations
+    // are still visited (and refused: their dependency is not done) rather
+    // than silently skipped.
+    let visited: std::collections::HashSet<usize> = order.iter().copied().collect();
+    order.extend(
+        (0..operations.len())
+            .filter(|i| operations[*i].action() != Action::Delete && !visited.contains(i)),
+    );
+    order
+}
+
 pub(crate) struct Run<'a> {
     req: ExecutionRequest<'a>,
     context: ErrorContext,
@@ -202,6 +248,8 @@ pub(crate) struct Run<'a> {
     progress: SharedProgress,
     leftovers: Vec<ResourcePath>,
     independent: bool,
+    /// Débit partagé par les workers (voir [`ExecutionOptions::rate_limit`]).
+    throttle: Option<sync_copy::Throttle>,
 }
 
 impl<'a> Run<'a> {
@@ -246,6 +294,7 @@ impl<'a> Run<'a> {
             }))),
             leftovers: Vec::new(),
             independent: false,
+            throttle: req.options.rate_limit.map(sync_copy::Throttle::new),
             req,
         };
         emit(
@@ -260,10 +309,8 @@ impl<'a> Run<'a> {
         if let Some(journal) = journal {
             parallel::execute(&mut run, journal, workers);
         } else {
-            for (index, op) in operations.iter().enumerate() {
-                if op.action() != Action::Delete {
-                    run.visit(index, op);
-                }
+            for index in sequential_order(operations, &run.index) {
+                run.visit(index, &operations[index]);
             }
         }
         // Suppressions : en dernier, du plus profond au moins profond.
@@ -556,9 +603,12 @@ impl<'a> Run<'a> {
                 }
             }));
         };
+        // The sender is read where it really is: a copy kept under another
+        // name reads the conflicting file's own path.
+        let path = if source { op.source_path() } else { op.path() };
         verify_content(
             connector,
-            op.path(),
+            path,
             hash,
             size,
             self.req.options.buffer_size,
@@ -646,6 +696,9 @@ impl<'a> Run<'a> {
         .with_buffer_size(self.req.options.buffer_size);
         if live_mirror && let Some(bytes) = source.metadata().size() {
             request = request.with_read_limit(bytes);
+        }
+        if let Some(throttle) = &self.throttle {
+            request = request.with_throttle(throttle);
         }
         let events = self.req.events;
         let interval = self.req.options.progress_interval_bytes;

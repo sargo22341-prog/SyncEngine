@@ -1098,3 +1098,28 @@ fn per_file_transfer_events_are_opt_in_and_bounded() {
         .count();
     assert_eq!(ended, 1);
 }
+
+#[test]
+fn rate_limit_spreads_the_transfer_in_time_and_keeps_the_content_intact() {
+    use std::time::{Duration, Instant};
+    let payload = vec![7_u8; 200_000];
+    let source = MemoryConnector::new("source").file("big", &payload, ts(10));
+    let destination = MemoryConnector::new("destination").writable();
+    let plan = backup_plan(&source, &destination);
+    let options = confirmed()
+        .with_buffer_size(50_000)
+        .with_rate_limit(std::num::NonZeroU64::new(400_000));
+    let started = Instant::now();
+    let report = execute(
+        &plan,
+        &source,
+        &destination,
+        options,
+        &mut MemoryJournal::new(),
+    )
+    .unwrap();
+    // 200 kB at 400 kB/s: the paid chunks span at least ~0.35 s.
+    assert!(started.elapsed() >= Duration::from_millis(300));
+    assert_eq!(report.status(), sync_core::ExecutionStatus::Succeeded);
+    assert_eq!(destination.content("big"), Some(payload));
+}

@@ -213,15 +213,36 @@ fn directory_available(operations: &[Operation], path: &ResourcePath, target: Pl
 fn expected_dependencies(operations: &[Operation], index: usize) -> Vec<OperationId> {
     let op = &operations[index];
     match op.action {
-        Action::Copy | Action::Replace => op
-            .path
-            .parent()
-            .filter(|parent| !parent.is_root())
-            .and_then(|parent| index_of(operations, &parent))
-            .and_then(|i| operations.get(i))
-            .filter(|parent| parent.action == Action::Copy && parent.target == op.target)
-            .map(|parent| vec![parent.id.clone()])
-            .unwrap_or_default(),
+        Action::Copy | Action::Replace => {
+            let mut dependencies: Vec<OperationId> = op
+                .path
+                .parent()
+                .filter(|parent| !parent.is_root())
+                .and_then(|parent| index_of(operations, &parent))
+                .and_then(|i| operations.get(i))
+                .filter(|parent| parent.action == Action::Copy && parent.target == op.target)
+                .map(|parent| parent.id.clone())
+                .into_iter()
+                .collect();
+            // A resolved conflict is replaced only once its losing content
+            // has been copied elsewhere, when « keep both » was chosen.
+            if op.action == Action::Replace && matches!(op.reason, crate::Reason::ConflictResolved)
+            {
+                dependencies.extend(
+                    operations
+                        .iter()
+                        .filter(|copy| {
+                            matches!(copy.reason, crate::Reason::ConflictKeptBoth)
+                                && copy
+                                    .source
+                                    .as_ref()
+                                    .is_some_and(|s| s.origin_paths() == [op.path.clone()])
+                        })
+                        .map(|copy| copy.id.clone()),
+                );
+            }
+            dependencies
+        }
         Action::Delete if op.kind == EntryKind::Directory => children(operations, index)
             .map(|i| operations[i].id.clone())
             .collect(),
@@ -312,6 +333,7 @@ pub(crate) fn validate(plan: &ExecutionPlan) -> Result<(), PlanError> {
             .is_some_and(|entry| !entry.origin_paths().is_empty())
             || op.source().is_some_and(|entry| {
                 !entry.origin_paths().is_empty()
+                    && !matches!(op.reason, crate::Reason::ConflictKeptBoth)
                     && (plan.mode == SyncMode::Bidirectional
                         || (entry.kind() != EntryKind::Directory
                             && entry.origin_paths().len() != 1)
@@ -362,8 +384,50 @@ pub(crate) fn validate(plan: &ExecutionPlan) -> Result<(), PlanError> {
     validate_deletions(plan)
 }
 
+/// « Garder les deux » : la copie sous un autre nom ne vaut que pour le
+/// conflit résolu du même dossier dont elle conserve le contenu perdant.
+fn validate_kept_both(plan: &ExecutionPlan, op: &Operation) -> Result<(), PlanError> {
+    let invalid = || PlanError::InvalidShape { id: op.id.clone() };
+    let [origin] = op
+        .source
+        .as_ref()
+        .map_or(&[][..], EntrySnapshot::origin_paths)
+    else {
+        return Err(invalid());
+    };
+    if plan.mode != SyncMode::Bidirectional
+        || op.action != Action::Copy
+        || op.destination.is_some()
+        || op.kind != EntryKind::File
+        || *origin == op.path
+        || origin.parent() != op.path.parent()
+    {
+        return Err(invalid());
+    }
+    // The conflict whose losing content this file preserves.
+    let companion = index_of(&plan.operations, origin)
+        .map(|i| &plan.operations[i])
+        .ok_or_else(invalid)?;
+    let same_content_as_replaced = companion
+        .destination
+        .as_ref()
+        .zip(op.source.as_ref())
+        .is_some_and(|(replaced, copied)| crate::same_content(replaced, copied));
+    if companion.action != Action::Replace
+        || !matches!(companion.reason, crate::Reason::ConflictResolved)
+        || companion.target == op.target
+        || !same_content_as_replaced
+    {
+        return Err(PlanError::BaselineEvidence);
+    }
+    Ok(())
+}
+
 fn validate_operation(plan: &ExecutionPlan, index: usize, op: &Operation) -> Result<(), PlanError> {
     let operations = &plan.operations;
+    if matches!(op.reason, crate::Reason::ConflictKeptBoth) {
+        validate_kept_both(plan, op)?;
+    }
     let id = || op.id.clone();
     let mismatch = |field| PlanError::DerivedMismatch { id: id(), field };
     let source = op.source.as_ref();

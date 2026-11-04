@@ -2,13 +2,26 @@
 use crate::{AppError, Application, DeletionCeiling, error, io, lock};
 use sync_core::ProfileId;
 
+/// What to keep of a conflicting file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKeep {
+    /// The source (left) content replaces the destination's.
+    Source,
+    /// The destination (right) content replaces the source's.
+    Destination,
+    /// Both: the source keeps the name, the destination's content is kept
+    /// next to it as `name (conflit destination).ext`. The copy is written on
+    /// the source side first; the next synchronization carries it over.
+    Both,
+}
+
 /// User choice for one conflicting file of the displayed preview.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictChoice {
     /// Logical path of the conflict, as shown by the plan.
     pub path: String,
-    /// `true` keeps the source (left) content, `false` the destination (right).
-    pub keep_source: bool,
+    /// What to keep.
+    pub keep: ConflictKeep,
 }
 
 impl Application {
@@ -88,8 +101,9 @@ impl Application {
     /// if a file changed since, its conflict is kept and nothing is replaced.
     ///
     /// Refused unless the displayed preview belongs to `id`, every path is a
-    /// conflict between two files, and the profile trash is enabled (the
-    /// replaced version must stay recoverable).
+    /// conflict between two files, and the profile trash is enabled when a
+    /// choice replaces a version for good (the replaced version must stay
+    /// recoverable; « keep both » keeps it as a file).
     /// # Errors
     /// `stale`, `invalid_input` (unknown path, not a file conflict, not
     /// bidirectional), `trash_required`, or the failures of `preview`.
@@ -111,7 +125,10 @@ impl Application {
                     "les conflits ne se résolvent qu'en bidirectionnel",
                 ));
             }
-            if !cached.profile.trash.enabled {
+            // Replacing for good needs the trash; « keep both » keeps the
+            // replaced content as a file, so it does not.
+            if !cached.profile.trash.enabled && choices.iter().any(|c| c.keep != ConflictKeep::Both)
+            {
                 return Err(error(
                     "trash_required",
                     "activez la corbeille du profil : la version remplacée doit rester récupérable",
@@ -132,11 +149,12 @@ impl Application {
                 resolutions.insert(
                     path,
                     sync_session::ConflictResolution {
-                        winner: if choice.keep_source {
-                            sync_plan::PlanSide::Source
-                        } else {
+                        winner: if choice.keep == ConflictKeep::Destination {
                             sync_plan::PlanSide::Destination
+                        } else {
+                            sync_plan::PlanSide::Source
                         },
+                        keep_both: choice.keep == ConflictKeep::Both,
                         seen_source: source.clone(),
                         seen_destination: destination.clone(),
                     },

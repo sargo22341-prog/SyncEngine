@@ -215,6 +215,13 @@ pub enum Reason {
     /// gagnant. Ce n'est pas une preuve de référence : la précondition de
     /// l'exécuteur porte sur le contenu observé du côté perdant.
     ConflictResolved,
+    /// Copie, sous un autre nom, du contenu qu'un conflit résolu va
+    /// remplacer (« Garder les deux »). Elle écrit côté gagnant le contenu du
+    /// côté perdant, lu au chemin d'origine du conflit (`origin_paths` de
+    /// l'observation envoyeuse, un seul), dans le même dossier. L'opération
+    /// `ConflictResolved` de ce chemin en dépend : le contenu est copié
+    /// avant d'être remplacé.
+    ConflictKeptBoth,
     /// Contenu différent sans date exploitable (dates égales ou inconnues) :
     /// impossible de savoir quel côté a changé ⇒ conflit.
     AmbiguousChange,
@@ -267,7 +274,7 @@ impl Reason {
     pub fn allows(&self, action: Action) -> bool {
         match self {
             Self::ConcurrentChange => action == Action::Conflict,
-            Self::MissingAtDestination => action == Action::Copy,
+            Self::MissingAtDestination | Self::ConflictKeptBoth => action == Action::Copy,
             Self::SourceNewer | Self::ContentDiffers | Self::ConflictResolved => {
                 action == Action::Replace
             }
@@ -290,7 +297,7 @@ impl Reason {
     pub(crate) fn shape(&self) -> Shape {
         match self {
             Self::ConcurrentChange => Shape::Any,
-            Self::MissingAtDestination => Shape::SourceOnly,
+            Self::MissingAtDestination | Self::ConflictKeptBoth => Shape::SourceOnly,
             Self::SourceNewer
             | Self::DestinationNewer
             | Self::ContentDiffers

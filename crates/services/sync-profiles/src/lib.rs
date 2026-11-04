@@ -178,11 +178,84 @@ impl Profile {
 }
 
 /// Presentation preferences, persisted independently of synchronization policy.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// `performance` was added after the first release: a row written before it
+/// (`{"compact":…}`) reads with the defaults; a row written with it is refused
+/// by earlier versions (unknown field), never half-interpreted.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preferences {
     /// Use a denser profile/differences table.
     pub compact: bool,
+    /// How hard executions work (interface, command line profiles and agent
+    /// all read it). Never changes what is copied.
+    #[serde(default)]
+    pub performance: Performance,
+}
+
+/// Transfer effort of the executions of this machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Performance {
+    /// Independent transfers at the same time (1 to 16, default 4); each
+    /// endpoint further bounds it to what it supports.
+    pub copy_workers: u8,
+    /// Large files (8 MiB and more) at the same time (1 to 4, default 1).
+    /// More than one slows down a single hard disk.
+    pub large_transfers: u8,
+    /// Total transfer rate limit in MiB/s (1 to 100 000); `None` is unlimited.
+    pub rate_limit_mib_s: Option<u32>,
+}
+
+impl Performance {
+    /// Largest accepted number of workers.
+    pub const MAX_WORKERS: u8 = 16;
+    /// Largest accepted number of simultaneous large transfers.
+    pub const MAX_LARGE_TRANSFERS: u8 = 4;
+    /// Largest accepted rate limit, in MiB/s.
+    pub const MAX_RATE_MIB_S: u32 = 100_000;
+
+    /// Refuses out-of-range values instead of clamping them silently.
+    /// # Errors
+    /// [`ProfileError::Invalid`] naming the setting.
+    pub fn validate(&self) -> Result<(), ProfileError> {
+        if !(1..=Self::MAX_WORKERS).contains(&self.copy_workers) {
+            return Err(ProfileError::Invalid(
+                "transferts simultanés : entre 1 et 16",
+            ));
+        }
+        if !(1..=Self::MAX_LARGE_TRANSFERS).contains(&self.large_transfers) {
+            return Err(ProfileError::Invalid(
+                "gros fichiers simultanés : entre 1 et 4",
+            ));
+        }
+        if self
+            .rate_limit_mib_s
+            .is_some_and(|limit| !(1..=Self::MAX_RATE_MIB_S).contains(&limit))
+        {
+            return Err(ProfileError::Invalid(
+                "limite de débit : entre 1 et 100 000 Mio/s",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The rate limit in bytes per second.
+    #[must_use]
+    pub fn rate_limit_bytes(&self) -> Option<u64> {
+        self.rate_limit_mib_s
+            .map(|limit| u64::from(limit) * 1024 * 1024)
+    }
+}
+
+impl Default for Performance {
+    fn default() -> Self {
+        Self {
+            copy_workers: 4,
+            large_transfers: 1,
+            rate_limit_mib_s: None,
+        }
+    }
 }
 
 /// Explicit configuration/persistence failure; never interpreted as an empty list.
@@ -292,6 +365,7 @@ impl Profiles {
     /// # Errors
     /// Persistence/serialization failure.
     pub fn save_preferences(&self, preferences: &Preferences) -> Result<(), ProfileError> {
+        preferences.performance.validate()?;
         self.0.execute("INSERT INTO preferences VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET config=excluded.config", [serde_json::to_string(preferences)?])?;
         Ok(())
     }

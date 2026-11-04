@@ -1096,7 +1096,7 @@ fn plan_and_history_folder_views_aggregate_below_each_folder()
 #[test]
 fn a_chosen_conflict_becomes_a_confirmed_replacement_with_the_loser_in_the_trash()
 -> Result<(), Box<dyn std::error::Error>> {
-    use sync_orchestrator::ConflictChoice;
+    use sync_orchestrator::{ConflictChoice, ConflictKeep};
     let (temp, app, p) = fixture(SyncMode::Bidirectional)?;
     fs::write(p.source.join("left"), b"left")?;
     let first = app.preview(p.id.clone())?;
@@ -1115,7 +1115,7 @@ fn a_chosen_conflict_becomes_a_confirmed_replacement_with_the_loser_in_the_trash
             p.id.clone(),
             vec![ConflictChoice {
                 path: "missing".into(),
-                keep_source: true
+                keep: ConflictKeep::Source
             }]
         )
         .is_err()
@@ -1125,7 +1125,7 @@ fn a_chosen_conflict_becomes_a_confirmed_replacement_with_the_loser_in_the_trash
         p.id.clone(),
         vec![ConflictChoice {
             path: "left".into(),
-            keep_source: true,
+            keep: ConflictKeep::Source,
         }],
     )?;
     assert_eq!(resolved["summary"]["conflict"], 0);
@@ -1149,7 +1149,7 @@ fn a_chosen_conflict_becomes_a_confirmed_replacement_with_the_loser_in_the_trash
 
 #[test]
 fn resolving_requires_the_profile_trash() -> Result<(), Box<dyn std::error::Error>> {
-    use sync_orchestrator::ConflictChoice;
+    use sync_orchestrator::{ConflictChoice, ConflictKeep};
     let (_temp, app, mut p) = fixture(SyncMode::Bidirectional)?;
     fs::write(p.source.join("f"), b"old")?;
     let first = app.preview(p.id.clone())?;
@@ -1164,7 +1164,7 @@ fn resolving_requires_the_profile_trash() -> Result<(), Box<dyn std::error::Erro
     let choice = || {
         vec![ConflictChoice {
             path: "f".into(),
-            keep_source: true,
+            keep: ConflictKeep::Source,
         }]
     };
     p.trash = sync_profiles::TrashPolicy::disabled();
@@ -1223,5 +1223,106 @@ fn backup_never_reports_bytes_toward_the_source() -> Result<(), Box<dyn std::err
         false,
     )?;
     assert_eq!(app.snapshot()?.bytes_to_source, 0);
+    Ok(())
+}
+
+#[test]
+fn performance_preferences_are_validated_and_used_by_the_next_execution()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_profiles::{Performance, Preferences};
+    let (_temp, app, p) = fixture(SyncMode::Backup)?;
+    let mut preferences = app.preferences()?;
+    assert_eq!(preferences.performance, Performance::default());
+    preferences.performance.copy_workers = 0;
+    assert!(app.preferences_save(preferences).is_err());
+    assert_eq!(app.preferences()?.performance, Performance::default());
+    // A small limit and one worker: the copy still completes, in order.
+    app.preferences_save(Preferences {
+        compact: false,
+        performance: Performance {
+            copy_workers: 1,
+            large_transfers: 1,
+            rate_limit_mib_s: Some(1),
+        },
+    })?;
+    fs::write(p.source.join("a.txt"), vec![1_u8; 300_000])?;
+    let preview = app.preview(p.id.clone())?;
+    let report = app.execute(
+        p.id,
+        preview["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    assert_eq!(report["status"], "succeeded");
+    assert_eq!(fs::read(p.destination.join("a.txt"))?.len(), 300_000);
+    Ok(())
+}
+
+#[test]
+fn keep_both_works_without_the_trash_and_converges_over_two_synchronizations()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_orchestrator::{ConflictChoice, ConflictKeep};
+    let (_temp, app, mut p) = fixture(SyncMode::Bidirectional)?;
+    p.trash = sync_profiles::TrashPolicy::disabled();
+    app.profile_save(p.clone())?;
+    fs::write(p.source.join("note.md"), b"old")?;
+    let first = app.preview(p.id.clone())?;
+    app.execute(
+        p.id.clone(),
+        first["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    fs::write(p.source.join("note.md"), b"from source")?;
+    fs::write(p.destination.join("note.md"), b"from destination")?;
+    app.preview(p.id.clone())?;
+    // Replacing for good is refused without a trash; keeping both is not.
+    assert!(
+        app.preview_resolving(
+            p.id.clone(),
+            vec![ConflictChoice {
+                path: "note.md".into(),
+                keep: ConflictKeep::Destination
+            }]
+        )
+        .is_err_and(|e| e.code == "trash_required")
+    );
+    app.preview(p.id.clone())?;
+    let resolved = app.preview_resolving(
+        p.id.clone(),
+        vec![ConflictChoice {
+            path: "note.md".into(),
+            keep: ConflictKeep::Both,
+        }],
+    )?;
+    assert_eq!(resolved["summary"]["conflict"], 0);
+    assert_eq!(resolved["summary"]["copy"], 1);
+    assert_eq!(resolved["summary"]["replace"], 1);
+    let report = app.execute(
+        p.id.clone(),
+        resolved["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    assert_eq!(report["baseline_updated"], false);
+    assert_eq!(fs::read(p.destination.join("note.md"))?, b"from source");
+    assert_eq!(
+        fs::read(p.source.join("note (conflit destination).md"))?,
+        b"from destination"
+    );
+    // Second synchronization: the kept copy reaches the destination.
+    let next = app.preview(p.id.clone())?;
+    assert_eq!(next["summary"]["copy"], 1);
+    let done = app.execute(
+        p.id,
+        next["plan"]["id"].as_str().ok_or("id")?.into(),
+        true,
+        false,
+    )?;
+    assert_eq!(done["baseline_updated"], true);
+    assert_eq!(
+        fs::read(p.destination.join("note (conflit destination).md"))?,
+        b"from destination"
+    );
     Ok(())
 }

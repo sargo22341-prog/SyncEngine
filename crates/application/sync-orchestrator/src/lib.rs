@@ -20,7 +20,7 @@ pub use interrupted::{
 pub use sync_journal::OutcomeCode as JournalOutcome;
 mod pages;
 pub use history::HistoryFilter;
-pub use pages::ConflictChoice;
+pub use pages::{ConflictChoice, ConflictKeep};
 mod runs;
 mod scheduled;
 pub use scheduled::{hold_execution_lock, user_lock_root};
@@ -1025,7 +1025,19 @@ impl Application {
             None
         };
         runs::begin(&self.state, &execution, &cached.profile.id, &cached.plan)?;
+        let performance = self.profiles()?.preferences().map_err(io)?.performance;
         let mut options = ExecutionOptions::new()
+            .with_copy_workers(
+                std::num::NonZeroUsize::new(usize::from(performance.copy_workers))
+                    .unwrap_or(std::num::NonZeroUsize::MIN),
+            )
+            .with_large_transfers(
+                std::num::NonZeroUsize::new(usize::from(performance.large_transfers))
+                    .unwrap_or(std::num::NonZeroUsize::MIN),
+            )
+            .with_rate_limit(std::num::NonZeroU64::new(
+                performance.rate_limit_bytes().unwrap_or(0),
+            ))
             .with_deletions_confirmed(confirm_delete)
             .with_progress_interval(LIVE_PROGRESS_BYTES)
             .with_transfer_events(true);

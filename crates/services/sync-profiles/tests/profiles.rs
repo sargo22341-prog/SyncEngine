@@ -27,7 +27,10 @@ fn migration_round_trip_edit_remove_and_preferences() -> Result<(), Box<dyn std:
     assert_eq!(store.list()?, vec![profile.clone()]);
     profile.name = "Autre nom".into();
     store.save(&profile)?;
-    store.save_preferences(&Preferences { compact: true })?;
+    store.save_preferences(&Preferences {
+        compact: true,
+        ..Preferences::default()
+    })?;
     drop(store);
     let store = Profiles::open(&path)?;
     assert_eq!(store.list()?, vec![profile.clone()]);
@@ -216,5 +219,61 @@ fn version_3_profiles_migrate_to_an_enabled_5_go_trash_and_new_choices_persist()
     p.trash = TrashPolicy::legacy();
     p.id = ProfileId::new("..")?;
     assert!(p.validate().is_err());
+    Ok(())
+}
+
+#[test]
+fn performance_defaults_legacy_rows_and_refuses_out_of_range_values()
+-> Result<(), Box<dyn std::error::Error>> {
+    use sync_profiles::Performance;
+    let dir = tempfile::tempdir()?;
+    let store = Profiles::open(dir.path().join("p.sqlite"))?;
+    // A row written before `performance` existed.
+    let legacy = rusqlite::Connection::open(dir.path().join("p.sqlite"))?;
+    legacy.execute(
+        "INSERT INTO preferences VALUES(1, ?1)",
+        [r#"{"compact":true}"#],
+    )?;
+    let read = store.preferences()?;
+    assert!(read.compact);
+    assert_eq!(read.performance, Performance::default());
+    assert_eq!(read.performance.rate_limit_bytes(), None);
+    let mut tuned = read.clone();
+    tuned.performance = Performance {
+        copy_workers: 8,
+        large_transfers: 2,
+        rate_limit_mib_s: Some(20),
+    };
+    store.save_preferences(&tuned)?;
+    assert_eq!(store.preferences()?, tuned);
+    assert_eq!(tuned.performance.rate_limit_bytes(), Some(20 * 1024 * 1024));
+    for bad in [
+        Performance {
+            copy_workers: 0,
+            ..Performance::default()
+        },
+        Performance {
+            copy_workers: 17,
+            ..Performance::default()
+        },
+        Performance {
+            large_transfers: 5,
+            ..Performance::default()
+        },
+        Performance {
+            rate_limit_mib_s: Some(0),
+            ..Performance::default()
+        },
+        Performance {
+            rate_limit_mib_s: Some(100_001),
+            ..Performance::default()
+        },
+    ] {
+        let mut refused = tuned.clone();
+        refused.performance = bad;
+        assert!(store.save_preferences(&refused).is_err());
+    }
+    // A refused save leaves the previous value in place.
+    assert_eq!(store.preferences()?, tuned);
     Ok(())
 }

@@ -96,6 +96,30 @@ du plan (schéma 2) gagne seulement une valeur de `Reason` : un plan qui la
 contient n'est pas lisible par une version antérieure (refus, jamais
 d'interprétation partielle).
 
+### « Garder les deux »
+
+Une décision `keep_both` produit deux opérations : une copie
+`Reason::ConflictKeptBoth` vers le côté gagnant (le contenu perdant, lu à son
+chemin d'origine : l'observation envoyeuse porte `origin_paths = [chemin du
+conflit]`, d'où le schéma 3), et le remplacement `ConflictResolved`, qui en
+dépend. Le plan valide que la copie reste dans le dossier du conflit, que le
+remplacement du même chemin existe, a l'autre cible et remplace exactement le
+contenu copié. Comme les noms de chemins ne garantissent pas l'ordre (« Makefile
+(conflit destination) » suit « Makefile »), l'exécuteur séquentiel suit un ordre
+topologique stable (ordre des chemins, sauf dépendance) au lieu du seul ordre
+des chemins ; sans dépendance supplémentaire c'est l'ordre des chemins. La
+copie n'existe d'abord que du côté gagnant : la référence n'avance pas et la
+synchronisation suivante la copie de l'autre côté.
+
+## Limitation de débit
+
+`sync_copy::Throttle` est un débit maximal partagé (réservation de la durée que
+coûtent les octets, attente par tranches de 50 ms avec annulation et pause
+coopératives) que l'exécuteur crée une fois par exécution et donne à tous ses
+workers (`ExecutionOptions::rate_limit`). Seul le contenu transféré est limité.
+Les réglages de performance sont dans `Preferences::performance` (base des
+profils, champ additif : une version antérieure refuse la ligne).
+
 ## Vues par dossiers
 
 `Application::plan_tree`, `history_tree` et `trash_tree` regroupent une liste
