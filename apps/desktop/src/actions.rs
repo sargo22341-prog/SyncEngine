@@ -366,7 +366,7 @@ impl App {
         let choices: Vec<_> = self
             .conflict_choices
             .drain()
-            .map(|(path, keep_source)| sync_orchestrator::ConflictChoice { path, keep_source })
+            .map(|(path, keep)| sync_orchestrator::ConflictChoice { path, keep })
             .collect();
         self.preview = None;
         self.start_job(JobKind::Preview, id.clone(), None);
@@ -743,6 +743,28 @@ impl App {
         Task::perform(
             backend::save(&app, profile, backend::ScheduleChange::Keep),
             |r| Message::Saved(r, true),
+        )
+    }
+
+    /// Saves a change of the performance settings, after checking it here so
+    /// that an invalid value never shows as the current one.
+    pub(crate) fn set_performance(
+        &mut self,
+        change: impl FnOnce(&mut sync_profiles::Performance),
+    ) -> Task<Message> {
+        let Some(app) = self.backend.clone() else {
+            return Task::none();
+        };
+        let mut preferences = self.ws.preferences.clone();
+        change(&mut preferences.performance);
+        if let Err(e) = preferences.performance.validate() {
+            self.toast(ToastKind::Warning, "Réglage refusé", e.to_string());
+            return Task::none();
+        }
+        self.ws.preferences = preferences.clone();
+        Task::perform(
+            backend::call(&app, move |a| a.preferences_save(preferences)),
+            Message::PreferencesSaved,
         )
     }
 

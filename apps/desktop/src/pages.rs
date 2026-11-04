@@ -11,7 +11,7 @@ use crate::ui_prefs::{CloseAction, ThemeChoice};
 use iced::widget::{
     Space, button, column, container, mouse_area, row, scrollable, text_input, toggler,
 };
-use iced::{Alignment, Color, Length, Padding};
+use iced::{Alignment, Color, Element, Length, Padding};
 use sync_profiles::Profile;
 
 /// One « last results » line: profile, outcome label and age; opens its history.
@@ -996,6 +996,77 @@ impl App {
         .fold(column![].spacing(8), |c, g| {
             c.push(row![icons::icon(Glyph::Shield, 15.0, p.success), ui::colored(p.text, g, 13.0)].spacing(10).align_y(Alignment::Center))
         });
+        let perf = self.ws.preferences.performance;
+        let choice = |label: String, on: bool, msg: Message| -> El<'a, Message> {
+            button(ui::colored(if on { p.text } else { p.muted }, label, 13.0))
+                .padding(Padding::from([5, 12]))
+                .style(theme::chip(*p, p.violet, on))
+                .on_press(msg)
+                .into()
+        };
+        let performance_section: El<'a, Message> = column![
+            row![
+                column![
+                    ui::strong(p.text, "Transferts simultanés", 14.0),
+                    ui::caption(p, "Fichiers copiés en même temps. Chaque emplacement borne ce nombre à ce qu’il supporte ; le bidirectionnel reste ordonné."),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                row([1_u8, 2, 4, 8, 16].map(|n| choice(n.to_string(), perf.copy_workers == n, Message::PerfWorkers(n)))).spacing(6),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            row![
+                column![
+                    ui::strong(p.text, "Gros fichiers simultanés", 14.0),
+                    ui::caption(p, "À partir de 8 Mio. Plusieurs gros flux sur un même disque dur le ralentissent : 1 est le plus sûr."),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                row([1_u8, 2, 3, 4].map(|n| choice(n.to_string(), perf.large_transfers == n, Message::PerfLarge(n)))).spacing(6),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            column![
+                row![
+                    column![
+                        ui::strong(p.text, "Limiter le débit", 14.0),
+                        ui::caption(p, "Débit total des copies (tous les fichiers confondus). Les relectures de vérification et l’archivage en corbeille ne sont pas limités. S’applique à la prochaine exécution."),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
+                    toggler(perf.rate_limit_mib_s.is_some())
+                        .on_toggle(|on| Message::PerfRate(on.then_some(20)))
+                        .size(22)
+                        .style(theme::switch(*p, false)),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+                if let Some(current) = perf.rate_limit_mib_s {
+                    Element::from(row![
+                        row([5_u32, 10, 20, 50, 100].map(|n| choice(format!("{n} Mio/s"), current == n, Message::PerfRate(Some(n))))).spacing(6),
+                        ui::fill(),
+                        container(
+                            text_input(&format!("{current}"), &self.rate_input)
+                                .on_input(Message::RateInput)
+                                .on_submit(Message::RateApply)
+                                .padding(Padding::from([6, 10]))
+                                .size(13)
+                                .style(theme::input(*p, false)),
+                        )
+                        .width(Length::Fixed(110.0)),
+                        ui::caption(p, "Mio/s · Entrée"),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center))
+                } else {
+                    Element::from(Space::new())
+                },
+            ]
+            .spacing(10),
+        ]
+        .spacing(18)
+        .into();
         let state = self
             .backend
             .as_ref()
@@ -1042,6 +1113,7 @@ impl App {
                 .spacing(18)
                 .into()
             ),
+            section("Performances", performance_section),
             section("Fenêtre", window_section),
             section("Démarrage", startup),
             section(

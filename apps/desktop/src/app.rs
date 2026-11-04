@@ -276,9 +276,17 @@ pub(crate) enum Message {
     ExcludeFolder(String),
     /// Enlarges or shrinks the agent tracker card.
     MiniToggle,
-    /// Keeps the source (`true`) or the destination (`false`) content of a
-    /// conflicting file; choosing the same side again clears the choice.
-    ConflictChoose(String, bool),
+    /// What to keep of a conflicting file; choosing the same again clears
+    /// the choice.
+    ConflictChoose(String, sync_orchestrator::ConflictKeep),
+    /// Planning page: week calendar (`true`) or list.
+    ScheduleWeek(bool),
+    /// Performance settings (saved at once, read by every execution).
+    PerfWorkers(u8),
+    PerfLarge(u8),
+    PerfRate(Option<u32>),
+    RateInput(String),
+    RateApply,
     /// Simulates again with the chosen conflicts resolved (nothing is written).
     ResolveConflicts,
     PlanQuery(String),
@@ -393,8 +401,12 @@ pub(crate) struct App {
     pub(crate) boot_wait: Option<backend::StartupObservation>,
     /// The tracker card is shown enlarged.
     pub(crate) mini_large: bool,
-    /// Choices made on the conflicts of the displayed preview (path → keep source).
-    pub(crate) conflict_choices: std::collections::HashMap<String, bool>,
+    /// The planning page shows the week calendar.
+    pub(crate) schedule_week: bool,
+    /// Text typed for a custom rate limit (MiB/s).
+    pub(crate) rate_input: String,
+    /// Choices made on the conflicts of the displayed preview.
+    pub(crate) conflict_choices: std::collections::HashMap<String, sync_orchestrator::ConflictKeep>,
     /// The window started as the compact tracker.
     pub(crate) started_mini: bool,
     pub(crate) boot_polling: bool,
@@ -491,6 +503,8 @@ impl App {
             boot_error: None,
             boot_wait: None,
             mini_large: false,
+            schedule_week: false,
+            rate_input: String::new(),
             conflict_choices: std::collections::HashMap::new(),
             started_mini: std::env::args().skip(1).any(|a| a == FOLLOW_AGENT_ARG),
             boot_polling: true,

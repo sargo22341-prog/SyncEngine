@@ -23,9 +23,9 @@ use sync_profiles::{CompareMethod, Profile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
-    Mode,
-    Source,
-    Destination,
+    /// Mode, source and destination together: they depend on each other (a
+    /// two-way profile forces local folders on both sides).
+    Locations,
     Filters,
     Safety,
     Schedule,
@@ -33,10 +33,8 @@ pub(crate) enum Step {
 }
 
 impl Step {
-    pub(crate) const ALL: [Self; 7] = [
-        Self::Mode,
-        Self::Source,
-        Self::Destination,
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Locations,
         Self::Filters,
         Self::Safety,
         Self::Schedule,
@@ -47,9 +45,7 @@ impl Step {
     }
     fn title(self) -> &'static str {
         match self {
-            Self::Mode => "Que voulez-vous faire ?",
-            Self::Source => "D’où viennent les fichiers ?",
-            Self::Destination => "Où doivent-ils aller ?",
+            Self::Locations => "Que voulez-vous faire, et où ?",
             Self::Filters => "Que faut-il ignorer ?",
             Self::Safety => "Protections et suppressions",
             Self::Schedule => "Quand synchroniser ?",
@@ -58,9 +54,7 @@ impl Step {
     }
     fn short(self) -> &'static str {
         match self {
-            Self::Mode => "Mode",
-            Self::Source => "Source",
-            Self::Destination => "Destination",
+            Self::Locations => "Mode et emplacements",
             Self::Filters => "Filtres",
             Self::Safety => "Sécurité",
             Self::Schedule => "Planification",
@@ -69,14 +63,8 @@ impl Step {
     }
     fn subtitle(self) -> &'static str {
         match self {
-            Self::Mode => {
-                "Chaque mode a sa propre stratégie, toujours prévisualisée avant écriture."
-            }
-            Self::Source => {
-                "Les fichiers de référence. Ils ne sont jamais modifiés par une sauvegarde ou un miroir."
-            }
-            Self::Destination => {
-                "La copie à maintenir. Elle doit être distincte de la source et non imbriquée."
+            Self::Locations => {
+                "Chaque mode a sa stratégie, toujours prévisualisée avant écriture. La destination doit être distincte de la source et non imbriquée."
             }
             Self::Filters => {
                 "Les mêmes règles s’appliquent aux deux côtés, en simulation comme en exécution."
@@ -169,7 +157,7 @@ impl Wizard {
         slide_t.go(1.0, now);
         Self {
             draft,
-            step: Step::Mode,
+            step: Step::Locations,
             error: None,
             saving: false,
             closing: false,
@@ -204,13 +192,21 @@ impl Wizard {
     fn step_error(&self, step: Step) -> Option<String> {
         let d = &self.draft;
         match step {
-            Step::Mode => d.mode.is_none().then(|| "Choisissez un mode pour continuer".to_owned()),
-            Step::Source => d.source.build().err(),
-            Step::Destination => {
+            Step::Locations => {
+                if d.mode.is_none() {
+                    return Some("Choisissez un mode pour continuer".to_owned());
+                }
+                if let Err(e) = d.source.build() {
+                    return Some(format!("Source — {e}"));
+                }
                 if d.destination.provider == Some(Provider::Onedrive) {
                     return Some("OneDrive ne peut être qu’une source".into());
                 }
-                d.destination.build().err().or_else(|| d.remote_pair_error())
+                d.destination
+                    .build()
+                    .err()
+                    .map(|e| format!("Destination — {e}"))
+                    .or_else(|| d.remote_pair_error())
             }
             Step::Filters => None,
             Step::Safety => d.trash().err(),
@@ -641,9 +637,7 @@ impl Wizard {
         compact: bool,
     ) -> El<'a, Message> {
         match self.step {
-            Step::Mode => self.mode_view(p),
-            Step::Source => self.endpoint_view(p, Side::Source, providers, compact),
-            Step::Destination => self.endpoint_view(p, Side::Destination, providers, compact),
+            Step::Locations => self.locations_view(p, providers),
             Step::Filters => self.filters_view(p, compact),
             Step::Safety => self.safety_view(p),
             Step::Schedule => {
@@ -652,6 +646,38 @@ impl Wizard {
             }
             Step::Summary => self.summary_view(p),
         }
+    }
+
+    /// Mode tiles, then source and destination side by side.
+    fn locations_view<'a>(&'a self, p: &Palette, providers: &[&'static str]) -> El<'a, Message> {
+        let side = |side: Side, question: &'static str, hint: &'static str| -> El<'a, Message> {
+            column![
+                ui::heading(p, question),
+                ui::caption(p, hint),
+                self.endpoint_view(p, side, providers, true),
+            ]
+            .spacing(8)
+            .width(Length::FillPortion(1))
+            .into()
+        };
+        column![
+            self.mode_view(p),
+            row![
+                side(
+                    Side::Source,
+                    "D’où viennent les fichiers ?",
+                    "Les fichiers de référence : jamais modifiés par une sauvegarde ou un miroir."
+                ),
+                side(
+                    Side::Destination,
+                    "Où doivent-ils aller ?",
+                    "La copie à maintenir."
+                ),
+            ]
+            .spacing(24),
+        ]
+        .spacing(28)
+        .into()
     }
 
     fn mode_view<'a>(&'a self, p: &Palette) -> El<'a, Message> {
@@ -1346,7 +1372,7 @@ impl Wizard {
                     }),
                     side("Destination", &d.destination),
                     ui::divider(p),
-                    item(Glyph::Layers, format!("Mode : {mode}"), Step::Mode),
+                    item(Glyph::Layers, format!("Mode : {mode}"), Step::Locations),
                     item(
                         Glyph::Filter,
                         format!(
@@ -1460,14 +1486,20 @@ mod tests {
         let now = Instant::now();
         let mut w = Wizard::open(ProfileDraft::new(""), vec![], now);
         assert!(matches!(w.update(WizardMsg::Next, now), Outcome::None));
-        assert_eq!(w.step, Step::Mode);
+        assert_eq!(w.step, Step::Locations);
         assert!(w.error.is_some());
         w.update(WizardMsg::Mode(SyncMode::Bidirectional), now);
         w.update(WizardMsg::GoTo(Step::Summary), now);
         assert_eq!(
             w.step,
-            Step::Source,
+            Step::Locations,
             "forward jumps stop at the first invalid step"
+        );
+        assert!(
+            w.error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("Source — ")),
+            "the message says which side is invalid"
         );
         w.update(WizardMsg::Provider(Side::Source, Provider::Sftp), now);
         assert_eq!(w.draft.source.provider, Some(Provider::Sftp));
@@ -1484,7 +1516,12 @@ mod tests {
         };
         w.update(WizardMsg::Field(Side::Source, Field::Path, dir.into()), now);
         w.update(WizardMsg::Next, now);
-        assert_eq!(w.step, Step::Destination);
+        assert_eq!(w.step, Step::Locations, "the destination is still missing");
+        assert!(
+            w.error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("Destination — ")),
+        );
         let dst = if cfg!(windows) {
             "C:\\data\\Copie"
         } else {

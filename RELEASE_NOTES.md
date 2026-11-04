@@ -1,6 +1,11 @@
 # Notes de la prochaine version
 
 Écrire sous la ligne `<!-- notes -->
+- Conflits : nouveau choix « Garder les deux » (la version de la destination est conservée à côté, sous « nom (conflit destination).ext »).
+- Réglages › Performances : transferts simultanés, gros fichiers simultanés et limite de débit.
+- Planification : vue « Semaine » en calendrier.
+- Assistant de création en cinq étapes (mode, source et destination sur la même page).
+- Polices Inter, Space Grotesk et JetBrains Mono embarquées.
 - Bidirectionnel : la courbe de débit distingue ce qui part vers la destination et ce qui part vers la source.
 - Bidirectionnel : les conflits entre deux fichiers se résolvent depuis le plan (garder la source ou la destination) ; la version remplacée va dans la corbeille et rien n'est écrit avant l'exécution confirmée.
 - Nouveau design « Flux » : fond neutre clair ou sombre, couleurs réservées aux signaux (lime = sauvegarde, mandarine = miroir, violet = bidirectionnel), navigation à libellés, accueil avec cartes « En direct » et « À surveiller », profils en lignes à tuile colorée, boutons à encre pleine sans lueur. Dans le plan d'une simulation, chaque dossier se retire d'un clic (« Exclure ») : le filtre est ajouté au profil et la simulation est relancée. La fenêtre ouverte par l'agent devient un mini-suivi (« Agrandir » / « Réduire ») puis l'interface complète s'ouvre à la fin. Nouvelle page « Corbeille » dans la navigation et carte « suppressions à revoir » dans le plan.

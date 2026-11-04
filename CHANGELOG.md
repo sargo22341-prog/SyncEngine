@@ -38,9 +38,22 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 - Courbe de débit à deux séries en bidirectionnel (vers la destination / vers
   la source) : `JobSnapshot::bytes_to_source` (champ ajouté, `serde(default)`,
   `agent-live.json` ancien toujours lisible). Fonds de courbe plats.
-- Non fait : assistant en
-  cinq étapes, calendrier de planification,
-  réglages de performances, polices embarquées.
+- « Garder les deux » pour un conflit : motif de plan `ConflictKeptBoth`,
+  `ConflictResolution::keep_both`, `ConflictKeep::Both`. Schéma de plan 3 pour
+  ces plans (chemin d'origine côté envoyeur). L'exécuteur séquentiel suit un
+  ordre topologique stable ; `verify_hash` lit l'envoyeur à son vrai chemin.
+- Limitation de débit (`sync_copy::Throttle`, `ExecutionOptions::rate_limit`) et
+  réglages de performance (`Preferences::performance`, section Réglages ›
+  Performances, lus aussi par l'agent). Ajout de champ : une version antérieure
+  refuse la ligne de préférences.
+- Planification : calcul des occurrences (`Schedule::occurrences`) et vue
+  calendrier sur sept jours.
+- Assistant : cinq étapes (mode et emplacements réunis).
+- Polices embarquées : Inter, Space Grotesk, JetBrains Mono (SIL OFL 1.1),
+  instances statiques dans `apps/desktop/assets/fonts/`, notices ajoutées à
+  `THIRD_PARTY_NOTICES.txt` par `scripts/third_party.py`.
+- Non fait : aperçu textuel des différences d'un conflit (la comparaison montre
+  taille et date).
 
 ### Apparence
 - Refonte visuelle : deux thèmes seulement. Sombre = fond `#000000` et cartes

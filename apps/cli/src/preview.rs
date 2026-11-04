@@ -347,6 +347,10 @@ fn reason_text(op: &Operation) -> String {
         Reason::DeletionRefused { refusal } => {
             format!("suppression refusée : {}", refusal_text(*refusal))
         }
+        Reason::ConflictResolved => "conflit tranché par l'utilisateur".to_owned(),
+        Reason::ConflictKeptBoth => {
+            "conflit : version conservée sous un autre nom avant remplacement".to_owned()
+        }
         _ => "motif non reconnu".to_owned(),
     }
 }

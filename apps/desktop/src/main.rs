@@ -46,7 +46,11 @@ fn follows_agent() -> bool {
 
 fn main() -> iced::Result {
     let mini = follows_agent();
-    iced::application(App::boot, App::update, App::view)
+    let mut application = iced::application(App::boot, App::update, App::view);
+    for font in ui::FONT_FILES {
+        application = application.font(font);
+    }
+    application
         .title(App::title)
         .subscription(App::subscription)
         .theme(|app: &App| app.palette().iced_theme())

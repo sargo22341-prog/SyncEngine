@@ -100,8 +100,8 @@ qu'appliquée à l'aveugle.
 ### Résoudre un conflit (bidirectionnel)
 
 Dans le plan, la carte « conflits préservés » propose **Voir les conflits** :
-chaque fichier montre les deux contenus (taille, date) et deux choix, **Garder
-la source** ou **Garder la destination**. **Appliquer N choix** relance une
+chaque fichier montre les deux contenus (taille, date) et trois choix : **Garder
+la source**, **Garder la destination** ou **Garder les deux**. **Appliquer N choix** relance une
 simulation : les fichiers choisis apparaissent comme remplacements, rien n'est
 écrit avant l'exécution confirmée. Garde-fous : la corbeille du profil doit
 être activée (la version remplacée y est gardée) ; un choix est lié aux
@@ -111,6 +111,33 @@ contre dossier, suppression contre modification : à régler à la main).
 Exemple : `notes.md` modifié des deux côtés › « Garder la destination » ›
 Appliquer › Exécuter : la source reçoit le contenu de la destination, l'ancien
 contenu de la source est dans la corbeille.
+
+**Garder les deux** : la source garde le nom, et la version de la destination
+est conservée à côté, dans le même dossier, sous `nom (conflit destination).ext`
+(`… destination 2)` si ce nom existe déjà, casse ignorée). Elle est d'abord
+copiée du côté source, puis la destination reçoit le contenu de la source :
+la version perdante n'existe donc jamais que dans un fichier. Cette
+synchronisation n'avance pas la référence (le fichier copié n'existe que d'un
+côté) ; **la suivante le copie vers la destination** et converge. La corbeille
+n'est pas requise pour ce choix.
+
+## Performances et planification
+
+Réglages › **Performances** : nombre de **transferts simultanés** (1 à 16, 4 par
+défaut, borné par ce que chaque emplacement supporte), de **gros fichiers
+simultanés** (1 à 4, 1 par défaut : plusieurs gros flux sur un même disque dur
+le ralentissent) et **limite de débit** (1 à 100 000 Mio/s, débit total des
+copies). La limite ne porte pas sur les relectures de vérification ni sur
+l'archivage en corbeille ; elle s'applique à la prochaine exécution, y compris
+planifiée (l'agent lit les mêmes réglages). La commande `syncengine execute`
+sans profil garde ses valeurs par défaut.
+
+Planification › **Semaine** : calendrier de sept jours à partir d'aujourd'hui
+(heures UTC), une ligne par heure, avec les profils planifiés et le nombre de
+passages. Les déclencheurs de session (ouverture de session, démarrage du
+gestionnaire utilisateur) n'ont pas d'heure fixe : ils sont listés sous la
+grille. Le calendrier montre l'horaire prévu, pas ce qui sera réellement
+exécuté après une interruption (politique des échéances manquées).
 
 ## Garde-fous
 
@@ -210,8 +237,8 @@ interrompues, elles sont présentées l'une après l'autre.
 - **Page profil** : source → destination, simulation, résultat, dernières
   exécutions, planification.
 
-`Ctrl+N` ouvre l'assistant en sept étapes : mode, source, destination, filtres,
-sécurité, planification, récapitulatif. « Enregistrer et simuler » lance
+`Ctrl+N` ouvre l'assistant en cinq étapes : mode et emplacements (source et
+destination côte à côte), filtres, sécurité, planification, récapitulatif. « Enregistrer et simuler » lance
 directement la simulation. Les filtres sont des motifs glob sur le chemin
 relatif (`*.tmp`, `build/**/*.o`, `**/node_modules`) ; ils s'appliquent à
 l'identique en simulation et en exécution. Sous Windows, comme les noms de

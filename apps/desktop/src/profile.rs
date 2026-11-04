@@ -14,6 +14,7 @@ use crate::ui::{self, El};
 use iced::widget::{Space, button, column, container, row, scrollable, text_input};
 use iced::{Alignment, Color, Length, Padding};
 use std::time::Instant;
+use sync_orchestrator::ConflictKeep;
 use sync_plan::{Action, SyncMode};
 use sync_profiles::Profile;
 
@@ -1222,14 +1223,19 @@ impl App {
     /// Entry point and « apply » bar of the conflict arbitration.
     fn conflict_bar<'a>(&'a self, p: &Palette, profile: &'a Profile) -> El<'a, Message> {
         let chosen = self.conflict_choices.len();
-        let trash_ok = profile.trash.enabled;
+        // Replacing for good needs the trash; « Garder les deux » does not.
+        let needs_trash = self
+            .conflict_choices
+            .values()
+            .any(|keep| *keep != ConflictKeep::Both);
+        let trash_ok = profile.trash.enabled || !needs_trash;
         let mut line = row![
             ui::muted(
                 p,
                 if trash_ok {
-                    "Choisissez le contenu à garder pour chaque fichier : la version remplacée ira dans la corbeille du profil."
+                    "Choisissez ce qu’il faut garder pour chaque fichier. Une version remplacée va dans la corbeille du profil ; « Garder les deux » la conserve à côté sous un autre nom."
                 } else {
-                    "Activez la corbeille du profil (Modifier › Sécurité) pour résoudre : la version remplacée doit rester récupérable."
+                    "Activez la corbeille du profil (Modifier › Sécurité) pour remplacer une version, ou choisissez « Garder les deux »."
                 }
             ),
             ui::fill(),
@@ -1276,12 +1282,12 @@ impl App {
                     .width(Length::Fill)
                     .into()
             };
-        let pick = |label: &'static str, keep_source: bool| -> El<'a, Message> {
-            let on = choice == Some(keep_source);
+        let pick = |label: &'static str, keep: ConflictKeep| -> El<'a, Message> {
+            let on = choice == Some(keep);
             button(ui::colored(if on { p.text } else { p.muted }, label, 12.0))
                 .padding(Padding::from([5, 12]))
                 .style(theme::chip(*p, p.violet, on))
-                .on_press(Message::ConflictChoose(op.path.clone(), keep_source))
+                .on_press(Message::ConflictChoose(op.path.clone(), keep))
                 .into()
         };
         container(
@@ -1290,8 +1296,11 @@ impl App {
                     ui::mono(p.text, model::ellipsize(&op.path, 90), 13.0),
                     ui::fill(),
                     match choice {
-                        Some(true) => ui::pill(p.violet, "Garder la source"),
-                        Some(false) => ui::pill(p.violet, "Garder la destination"),
+                        Some(ConflictKeep::Source) => ui::pill(p.violet, "Garder la source"),
+                        Some(ConflictKeep::Destination) => {
+                            ui::pill(p.violet, "Garder la destination")
+                        }
+                        Some(ConflictKeep::Both) => ui::pill(p.violet, "Garder les deux"),
                         None => ui::pill(p.warning, "À décider"),
                     },
                 ]
@@ -1302,8 +1311,9 @@ impl App {
                 ]
                 .spacing(16),
                 row![
-                    pick("Garder la source", true),
-                    pick("Garder la destination", false)
+                    pick("Garder la source", ConflictKeep::Source),
+                    pick("Garder la destination", ConflictKeep::Destination),
+                    pick("Garder les deux", ConflictKeep::Both),
                 ]
                 .spacing(8),
             ]

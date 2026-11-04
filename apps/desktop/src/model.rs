@@ -486,6 +486,8 @@ pub(crate) fn reason_label(code: &str) -> &str {
         "directory_not_emptied" => "Dossier conservé : contenu non supprimable",
         "deletion_refused" => "Suppression bloquée par un garde-fou",
         "concurrent_change" => "Modifications concurrentes : conflit",
+        "conflict_resolved" => "Conflit tranché par vous",
+        "conflict_kept_both" => "Conflit : version gardée sous un autre nom",
         other => other,
     }
 }
@@ -719,6 +721,15 @@ pub(crate) fn utc(secs: i64) -> (i64, u32, u32, u32, u32) {
     )
 }
 
+/// Weekday (« Lun »…) and « 05/11 » of the UTC day containing `secs`.
+pub(crate) fn day_label(secs: i64) -> (&'static str, String) {
+    const DAYS: [&str; 7] = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+    // 1970-01-01 was a Thursday.
+    let weekday = (secs.div_euclid(86_400) + 3).rem_euclid(7);
+    let (_, month, day, _, _) = utc(secs);
+    (DAYS[weekday as usize], format!("{day:02}/{month:02}"))
+}
+
 pub(crate) fn utc_label(secs: i64) -> String {
     let (y, m, d, h, min) = utc(secs);
     format!("{d:02}/{m:02}/{y} {h:02}:{min:02} UTC")
@@ -792,6 +803,18 @@ pub(crate) fn ellipsize(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn day_labels_follow_the_utc_calendar() {
+        // 1970-01-01 Thursday; 2026-11-04 (1_793_750_400) is a Wednesday.
+        assert_eq!(super::day_label(0), ("Jeu", "01/01".to_owned()));
+        assert_eq!(super::day_label(86_399), ("Jeu", "01/01".to_owned()));
+        assert_eq!(
+            super::day_label(1_793_750_400 + 3600),
+            ("Mer", "04/11".to_owned())
+        );
+        assert_eq!(super::day_label(-1), ("Mer", "31/12".to_owned()));
+    }
+
     use super::*;
     use serde_json::json;
 

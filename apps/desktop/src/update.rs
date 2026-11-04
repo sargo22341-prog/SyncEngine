@@ -417,11 +417,11 @@ impl App {
                 Task::none()
             }
             Message::ExcludeFolder(path) => self.exclude_folder(path),
-            Message::ConflictChoose(path, keep_source) => {
-                if self.conflict_choices.get(&path) == Some(&keep_source) {
+            Message::ConflictChoose(path, keep) => {
+                if self.conflict_choices.get(&path) == Some(&keep) {
                     self.conflict_choices.remove(&path);
                 } else {
-                    self.conflict_choices.insert(path, keep_source);
+                    self.conflict_choices.insert(path, keep);
                 }
                 Task::none()
             }
@@ -1001,6 +1001,28 @@ impl App {
                 self.save_prefs();
                 Task::none()
             }
+            Message::ScheduleWeek(week) => {
+                self.schedule_week = week;
+                Task::none()
+            }
+            Message::PerfWorkers(n) => self.set_performance(|p| p.copy_workers = n),
+            Message::PerfLarge(n) => self.set_performance(|p| p.large_transfers = n),
+            Message::PerfRate(limit) => {
+                self.rate_input.clear();
+                self.set_performance(|p| p.rate_limit_mib_s = limit)
+            }
+            Message::RateInput(text) => {
+                // Digits only: the field cannot hold an unparsable value.
+                self.rate_input = text.chars().filter(char::is_ascii_digit).take(6).collect();
+                Task::none()
+            }
+            Message::RateApply => match self.rate_input.parse::<u32>() {
+                Ok(limit) => {
+                    self.rate_input.clear();
+                    self.set_performance(|p| p.rate_limit_mib_s = Some(limit))
+                }
+                Err(_) => Task::none(),
+            },
             Message::Compact(compact) => {
                 let Some(app) = &self.backend else {
                     return Task::none();

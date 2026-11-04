@@ -61,6 +61,15 @@ def generate(output):
             if not package["declared_license"]:
                 package["declared_license"] = parent["declared_license"]
             missing.remove(identity)
+    # Fonts embedded in the desktop binary (SIL OFL 1.1): not Cargo packages.
+    fonts = ROOT / "apps" / "desktop" / "assets" / "fonts"
+    for notice in sorted(fonts.glob("OFL-*.txt")):
+        family = notice.stem.removeprefix("OFL-")
+        text = notice.read_text(encoding="utf-8", errors="replace")
+        identity = f"font:{family}"
+        packages.append({"package": identity, "declared_license": "OFL-1.1", "source": "embedded font files", "repository": None, "texts": [notice.name]})
+        sections.append("\n\n" + "=" * 72 + f"\n{identity}\nDeclared license: OFL-1.1\n")
+        sections.append(f"\n--- {notice.name} ---\n{text}")
     inventory = {"schema_version": 1, "scope": "all locked Cargo targets, including build tools and optional dependencies", "product_license": "GPL-3.0-only", "packages": packages, "requires_review": missing}
     output.mkdir(parents=True)
     (output / "license-inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")

@@ -8,13 +8,37 @@ use iced::{Alignment, Color, Element, Font, Length, Padding};
 
 pub(crate) type El<'a, M> = Element<'a, M>;
 
-/// Platform UI font with all weights available.
+/// Embedded fonts (SIL OFL, see `assets/fonts/OFL-*.txt`): the application is
+/// portable and must look the same without installed fonts. Static instances,
+/// because the text renderer does not apply the weight axis of variable fonts.
+pub(crate) const FONT_FILES: [&[u8]; 9] = [
+    include_bytes!("../assets/fonts/Inter-400.ttf"),
+    include_bytes!("../assets/fonts/Inter-500.ttf"),
+    include_bytes!("../assets/fonts/Inter-600.ttf"),
+    include_bytes!("../assets/fonts/Inter-700.ttf"),
+    include_bytes!("../assets/fonts/SpaceGrotesk-500.ttf"),
+    include_bytes!("../assets/fonts/SpaceGrotesk-700.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-400.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-500.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-700.ttf"),
+];
+
+/// Text font: Inter, with every weight the interface uses.
 pub(crate) fn base_font() -> Font {
-    if cfg!(windows) {
-        Font::with_name("Segoe UI")
-    } else {
-        Font::DEFAULT
+    Font::with_name("Inter")
+}
+
+/// Titles and figures: Space Grotesk (500 and 700 are embedded).
+pub(crate) fn display_font(w: Weight) -> Font {
+    Font {
+        weight: w,
+        ..Font::with_name("Space Grotesk")
     }
+}
+
+/// Paths and numbers: JetBrains Mono.
+pub(crate) fn mono_font() -> Font {
+    Font::with_name("JetBrains Mono")
 }
 
 pub(crate) fn weight(w: Weight) -> Font {
@@ -27,7 +51,7 @@ pub(crate) fn weight(w: Weight) -> Font {
 pub(crate) fn title<'a, M: 'a>(p: &Palette, value: impl Into<String>, size: f32) -> El<'a, M> {
     text(value.into())
         .size(size)
-        .font(weight(Weight::Bold))
+        .font(display_font(Weight::Bold))
         .color(p.text)
         .into()
 }
@@ -35,7 +59,7 @@ pub(crate) fn title<'a, M: 'a>(p: &Palette, value: impl Into<String>, size: f32)
 pub(crate) fn heading<'a, M: 'a>(p: &Palette, value: impl Into<String>) -> El<'a, M> {
     text(value.into())
         .size(15)
-        .font(weight(Weight::Semibold))
+        .font(display_font(Weight::Medium))
         .color(p.text)
         .into()
 }
@@ -60,7 +84,7 @@ pub(crate) fn eyebrow<'a, M: 'a>(color: Color, value: &str) -> El<'a, M> {
 pub(crate) fn mono<'a, M: 'a>(color: Color, value: impl Into<String>, size: f32) -> El<'a, M> {
     text(value.into())
         .size(size)
-        .font(Font::MONOSPACE)
+        .font(mono_font())
         .color(color)
         .wrapping(iced::widget::text::Wrapping::None)
         .into()

@@ -7,7 +7,7 @@ use crate::icons::{self, Glyph};
 use crate::model;
 use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
-use iced::widget::{button, checkbox, column, container, row, scrollable, text_input};
+use iced::widget::{Space, button, checkbox, column, container, row, scrollable, text_input};
 use iced::{Alignment, Length, Padding};
 
 /// Edits of a schedule draft.
@@ -286,6 +286,136 @@ pub(crate) fn editor<'a>(
     col.into()
 }
 
+/// Occurrences bucketed per (day, hour) are bounded: a schedule every minute
+/// still fills a cell, not memory.
+const WEEK_OCCURRENCES_PER_SCHEDULE: usize = 12_000;
+const HOUR_ROW: f32 = 34.0;
+
+/// (day index, hour) → (profile name, mode, occurrences in that hour).
+type WeekCells =
+    std::collections::BTreeMap<(usize, usize), Vec<(String, sync_plan::SyncMode, usize)>>;
+
+impl App {
+    /// Seven days from today (UTC), one row per hour, filled from the
+    /// timetable of every authorization. Sessions events have no fixed time
+    /// and are listed under the grid.
+    fn week_view<'a>(&'a self, p: &Palette, now: i64) -> El<'a, Message> {
+        let today = now.div_euclid(86_400) * 86_400;
+        let end = today + 7 * 86_400;
+        // (day index, hour) → (profile name, mode, occurrences)
+        let mut cells = WeekCells::new();
+        let mut event_driven: Vec<String> = Vec::new();
+        for s in &self.ws.schedules {
+            let id = &s.schedule.approved.id;
+            let name = self
+                .profile(id)
+                .map_or(s.schedule.approved.name.clone(), |pr| pr.name.clone());
+            let mode = s.schedule.approved.mode;
+            let times = s
+                .schedule
+                .occurrences(today, end, WEEK_OCCURRENCES_PER_SCHEDULE);
+            if times.is_empty() && s.schedule.enabled {
+                event_driven.push(name);
+                continue;
+            }
+            for at in times {
+                let day = ((at - today) / 86_400) as usize;
+                let hour = (at.rem_euclid(86_400) / 3600) as usize;
+                let entry = cells.entry((day, hour)).or_default();
+                match entry.iter_mut().find(|(n, _, _)| *n == name) {
+                    Some((_, _, count)) => *count += 1,
+                    None => entry.push((name.clone(), mode, 1)),
+                }
+            }
+        }
+        let current_hour = (now.rem_euclid(86_400) / 3600) as usize;
+        let highlight = theme::alpha(p.text, 0.08);
+        let mut header = row![container(Space::new()).width(Length::Fixed(48.0))].spacing(4);
+        for day in 0..7_usize {
+            let (weekday, date) = model::day_label(today + day as i64 * 86_400);
+            header = header.push(
+                container(
+                    column![
+                        ui::strong(if day == 0 { p.text } else { p.muted }, weekday, 12.0),
+                        ui::caption(p, date),
+                    ]
+                    .spacing(1)
+                    .align_x(Alignment::Center),
+                )
+                .width(Length::FillPortion(1))
+                .center_x(Length::FillPortion(1)),
+            );
+        }
+        let mut grid = column![header].spacing(2);
+        for hour in 0..24_usize {
+            let mut line = row![
+                container(ui::mono(p.faint, format!("{hour:02}:00"), 11.0))
+                    .width(Length::Fixed(48.0))
+                    .height(Length::Fixed(HOUR_ROW))
+                    .center_y(Length::Fixed(HOUR_ROW))
+            ]
+            .spacing(4);
+            for day in 0..7_usize {
+                let now_cell = day == 0 && hour == current_hour;
+                let mut content = column![].spacing(2);
+                if let Some(entries) = cells.get(&(day, hour)) {
+                    for (name, mode, count) in entries.iter().take(2) {
+                        let color = crate::shell::mode_color(p, *mode);
+                        let label = if *count > 1 {
+                            format!("{} ×{count}", model::ellipsize(name, 14))
+                        } else {
+                            model::ellipsize(name, 18)
+                        };
+                        content = content.push(
+                            container(ui::strong(color, label, 11.0))
+                                .padding(Padding::from([0, 6]))
+                                .width(Length::Fill)
+                                .style(theme::pill(theme::alpha(color, 0.14), color)),
+                        );
+                    }
+                    if entries.len() > 2 {
+                        content = content.push(ui::caption(p, format!("+{}", entries.len() - 2)));
+                    }
+                }
+                line = line.push(
+                    container(content)
+                        .padding(2)
+                        .width(Length::FillPortion(1))
+                        .height(Length::Fixed(HOUR_ROW))
+                        .style(move |_| iced::widget::container::Style {
+                            background: now_cell.then(|| highlight.into()),
+                            ..iced::widget::container::Style::default()
+                        }),
+                );
+            }
+            grid = grid.push(line);
+        }
+        let mut body = column![
+            row![
+                ui::heading(p, "Cette semaine"),
+                ui::fill(),
+                ui::caption(p, "Heures UTC · sept jours à partir d’aujourd’hui"),
+            ]
+            .align_y(Alignment::Center),
+            container(grid)
+                .padding(10)
+                .width(Length::Fill)
+                .style(theme::card(*p, 0.0, false)),
+        ]
+        .spacing(12);
+        if !event_driven.is_empty() {
+            body = body.push(ui::muted(
+                p,
+                format!(
+                    "Sans horaire fixe (déclenchés par la session) : {}.",
+                    event_driven.join(", ")
+                ),
+            ));
+        }
+        body.into()
+    }
+}
+
 impl App {
     pub(crate) fn schedules_page<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         let now = model::now_secs();
@@ -396,6 +526,22 @@ impl App {
                 ]
                 .spacing(4)
                 .width(Length::Fill),
+                row([(false, "Liste"), (true, "Semaine")].map(|(week, label)| {
+                    button(ui::colored(
+                        if self.schedule_week == week {
+                            p.text
+                        } else {
+                            p.muted
+                        },
+                        label,
+                        13.0,
+                    ))
+                    .padding(Padding::from([5, 14]))
+                    .style(theme::chip(*p, p.violet, self.schedule_week == week))
+                    .on_press(Message::ScheduleWeek(week))
+                    .into()
+                }))
+                .spacing(6),
                 ui::action(
                     p,
                     Tone::Secondary,
@@ -404,6 +550,7 @@ impl App {
                     Some(Message::Refresh)
                 ),
             ]
+            .spacing(10)
             .align_y(Alignment::Center),
         ]
         .spacing(20);
@@ -493,7 +640,11 @@ impl App {
                 "Les autorisations seront relues dès la fin de la tâche en cours.",
             ));
         }
-        page = page.push(list).push(
+        page = page.push(if self.schedule_week && !self.ws.schedules.is_empty() {
+            self.week_view(p, now)
+        } else {
+            list.into()
+        }).push(
             container(
                 row![
                     ui::glyph_box(Glyph::Monitor, p.success, 44.0),
