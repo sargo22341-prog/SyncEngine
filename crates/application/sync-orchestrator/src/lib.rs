@@ -975,7 +975,7 @@ impl Application {
         if runs::unfinished(&self.state, &cached.profile.id)? {
             return Err(error(
                 "interrupted",
-                "unfinished execution: explicit diagnosis required",
+                "une exécution précédente de ce profil a été interrompue : diagnostic requis avant de relancer",
             ));
         }
         let (source, destination) = self.roots(&cached.profile)?;

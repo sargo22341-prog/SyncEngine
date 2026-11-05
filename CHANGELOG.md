@@ -5,6 +5,27 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Groupes repliables, retour au début, exclusion depuis l'historique
+- Accueil : l'en-tête d'un groupe replie/déplie ses profils (même réglage que le menu contextuel).
+- Un clic sur l'onglet déjà affiché ramène à la racine de la section (`back_to_section_start`).
+- Historique : « Exclure du profil » (`exclusion.rs`) ajoute au filtre du profil un fichier, un nom ou une extension (`*.ext`) ; refus si le nom contient un caractère de motif. Le profil est modifié : une planification existante est à renouveler.
+
+### Vérification en parallèle, mini-suivi, interruptions
+- Exécuteur : la vérification (relecture BLAKE3) et la publication d'un fichier
+  se font pendant que la copie suivante avance (`Pool`, signal `Staged`, deux
+  threads de vérification) ; le bidirectionnel utilise le même pool, une copie à
+  la fois. Plus de débit à 0 en fin de très gros fichier.
+- `QueuedProfile` publie le mode du profil (champ optionnel, lisible par les
+  versions antérieures) : le mini-suivi d'un miroir n'affiche plus « Bidirectionnel ».
+- Une exécution interrompue qui bloque un profil ouvre son diagnostic dès le
+  refus ; la recherche des interruptions est répétée quand l'agent libère l'état.
+  Le message d'erreur est en français.
+- Plan : source et destination distantes affichées lisiblement (plus de JSON).
+- Interface : pourcentage et temps restant dans « En direct » et le suivi du
+  panneau latéral (courbe, barre, pause/annulation en icônes, jusqu'à trois
+  profils en attente) ; mini-suivi de l'agent en bas à droite de l'écran, durée
+  restante et pourcentage dans l'infobulle de la zone de notification.
+
 ### Interface alignée sur les maquettes
 - Primitives communes (`ui.rs`, `theme.rs`) : puces teintées (`chip`, `mode_chip`),
   tuile de mode à flèche (`mode_tile`), statut à pastille, contrôle segmenté

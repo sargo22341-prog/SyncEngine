@@ -153,6 +153,11 @@ impl App {
                     charts::mark(Mark { from: p.backup, to: p.violet, turn }, if large { 40.0 } else { 30.0 }),
                     ui::title(p, "SyncEngine", if large { 22.0 } else { 18.0 }),
                     ui::fill(),
+                    ui::status(
+                        p,
+                        if wait.resident.available { p.backup } else { p.faint },
+                        if wait.resident.available { "Agent actif" } else { "Agent arrêté" },
+                    ),
                     ui::action(
                         p,
                         Tone::Secondary,
@@ -163,7 +168,7 @@ impl App {
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center),
-                ui::caption(p, "Suivi de la synchronisation planifiée. L'interface complète s'ouvrira automatiquement à la fin de l'opération ; pause et annulation restent disponibles."),
+                ui::caption(p, "Synchronisation planifiée en cours. L’interface complète s’ouvrira à la fin ; pause et annulation restent disponibles."),
             ].spacing(16);
             if live.is_some()
                 && let Some(job) = &self.agent_job
@@ -195,6 +200,15 @@ impl App {
             }
             if let Some(queue) = self.agent_queue_panel(p) {
                 body = body.push(queue);
+            }
+            if live.is_some() && wait.resident.available {
+                body = body.push(ui::action(
+                    p,
+                    Tone::Secondary,
+                    Some(Glyph::Power),
+                    "Arrêter l’agent",
+                    (!self.ws.agent_stopped).then_some(Message::StopAgent),
+                ));
             }
             return scrollable(
                 container(container(body).max_width(if large { 1040.0 } else { 420.0 }))
@@ -403,15 +417,26 @@ impl App {
         .into()
     }
 
-    /// Discord « voice connected »-style live panel at the bottom of the sidebar.
+    /// Profiles waiting behind the live job: the agent's queue for a
+    /// scheduled run, the chain of a group run otherwise.
+    fn waiting_names(&self, job: &crate::app::Job) -> Vec<String> {
+        if job.agent {
+            self.agent_queue.as_ref().map_or_else(Vec::new, |queue| {
+                queue.pending.iter().map(|q| q.name.clone()).collect()
+            })
+        } else {
+            self.group_waiting()
+        }
+    }
+
+    /// Tracker at the bottom of the sidebar: label and percentage, curve of
+    /// the throughput, progress bar with pace and time left, controls, and
+    /// the profiles waiting behind (at most three shown).
     fn job_card(&self, p: &Palette) -> El<'_, Message> {
+        const SHOWN: usize = 3;
         let Some(job) = self.live_job() else {
             return Space::new().into();
         };
-        let turn = self
-            .now
-            .saturating_duration_since(job.started)
-            .as_secs_f32();
         let (label, color) = match (job.agent, job.kind) {
             (true, JobKind::Preview) => ("Planifiée : analyse", p.accent),
             (true, JobKind::Execute) => ("Planifiée : écritures", p.success),
@@ -419,6 +444,18 @@ impl App {
             (false, JobKind::Execute) => ("Exécution réelle", p.success),
         };
         let s = &job.snapshot;
+        let rates = self.job_rates(job);
+        let progress = job.progress();
+        let total = rates.forward.last().copied().unwrap_or(0.0)
+            + rates
+                .reverse
+                .as_ref()
+                .and_then(|r| r.last())
+                .copied()
+                .unwrap_or(0.0);
+        let left = job
+            .remaining_label(self.now)
+            .map(|l| l.trim_start_matches("reste ").to_owned());
         let detail = match job.kind {
             JobKind::Preview if s.hash_target > 0 => format!(
                 "{} / {} empreintes",
@@ -426,41 +463,38 @@ impl App {
                 model::count(s.hash_target)
             ),
             JobKind::Preview => format!("{} entrées analysées", model::count(s.entries_scanned)),
-            // Same weighted ratio as the main progress card.
-            JobKind::Execute => match job.progress() {
-                Some(f) => format!(
-                    "{} · {} copiés",
-                    model::percent(f),
-                    model::bytes(s.bytes_transferred)
-                ),
-                None => format!(
-                    "{} opérations · {} copiés",
-                    model::count(s.entries_done),
-                    model::bytes(s.bytes_transferred)
-                ),
-            },
+            JobKind::Execute => {
+                let (value, unit) = crate::profile::rate_parts(total);
+                match left {
+                    Some(left) => format!("{value} {unit} · {left}"),
+                    None => format!("{value} {unit}"),
+                }
+            }
         };
-        let progress = job.progress();
-        container(
+        let curve = charts::spark(
+            rates.forward.clone(),
+            color,
+            rates.reverse.clone().map(|r| (r, p.violet)),
+            Color::TRANSPARENT,
+            30.0,
+        );
+        let mut card = column![
             row![
-                charts::ring(
-                    charts::Ring {
-                        progress,
-                        phase: turn * 0.8,
-                        color,
-                        track: theme::alpha(color, 0.2),
-                        width: 3.0
-                    },
-                    30.0
+                ui::strong(color, label, 12.0),
+                ui::fill(),
+                ui::mono(
+                    p.text,
+                    progress.map_or_else(|| "…".to_owned(), model::percent),
+                    12.0
                 ),
-                column![
-                    ui::strong(color, label, 13.0),
-                    ui::caption(p, model::ellipsize(&job.name, 24)),
-                    ui::caption(p, detail),
-                ]
-                .spacing(1)
-                .width(Length::Fill),
-                crate::profile::pause_button(p, job),
+            ]
+            .align_y(Alignment::Center),
+            ui::caption(p, model::ellipsize(&job.name, 28)),
+            curve,
+            ui::progress(p, progress.unwrap_or(0.0), color, 4.0),
+            row![
+                container(ui::caption(p, detail)).width(Length::Fill),
+                crate::profile::pause_icon(p, job),
                 ui::icon_button(
                     p,
                     Glyph::Stop,
@@ -472,12 +506,29 @@ impl App {
                     (!job.cancel_requested).then_some(crate::profile::cancel_message(job))
                 ),
             ]
-            .spacing(10)
+            .spacing(2)
             .align_y(Alignment::Center),
-        )
-        .padding(Padding::from([10, 12]))
-        .style(theme::panel(theme::mix(p.sidebar, p.rail, 0.6)))
-        .into()
+        ]
+        .spacing(6);
+        let waiting = self.waiting_names(job);
+        if !waiting.is_empty() {
+            let mut list = column![ui::eyebrow(p.muted, "Ensuite")].spacing(3);
+            for name in waiting.iter().take(SHOWN) {
+                list = list.push(ui::colored(p.text, model::ellipsize(name, 30), 12.0));
+            }
+            if waiting.len() > SHOWN {
+                list = list.push(ui::caption(
+                    p,
+                    format!("+ {} autre(s) en attente", waiting.len() - SHOWN),
+                ));
+            }
+            card = card.push(list);
+        }
+        container(card)
+            .padding(Padding::from([10, 12]))
+            .width(Length::Fill)
+            .style(theme::panel(theme::mix(p.sidebar, p.rail, 0.6)))
+            .into()
     }
 
     fn content(&self, p: &Palette) -> El<'_, Message> {

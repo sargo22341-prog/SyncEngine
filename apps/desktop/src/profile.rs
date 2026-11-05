@@ -479,9 +479,7 @@ impl App {
         };
         let two_ways = job.kind == JobKind::Execute
             && (job.snapshot.bytes_to_source > 0
-                || self
-                    .profile(&job.profile)
-                    .is_some_and(|pr| pr.mode == SyncMode::Bidirectional));
+                || self.job_mode(job) == Some(SyncMode::Bidirectional));
         let forward = match job.kind {
             JobKind::Execute if two_ways => series(|s| s.bytes.saturating_sub(s.to_source)),
             JobKind::Execute => series(|s| s.bytes),
@@ -514,11 +512,14 @@ impl App {
         let elapsed = self.now.saturating_duration_since(job.started);
         let progress = job.progress();
         let rates = self.job_rates(job);
-        let mode = self
-            .profile(&job.profile)
-            .map_or(SyncMode::Bidirectional, |pr| pr.mode);
+        // Unknown mode (profiles not loaded yet): no chip rather than a wrong one.
+        let mode = self.job_mode(job);
+        let mode_chip = |p: &Palette| -> El<'a, Message> {
+            mode.map_or_else(|| Space::new().into(), |m| ui::mode_chip(p, m))
+        };
         let execute = job.kind == JobKind::Execute;
-        let color = mode_fill(p, mode);
+        let color = mode.map_or(p.violet, |m| mode_fill(p, m));
+        let remaining = job.remaining_label(self.now);
         let forward = rates.forward.last().copied();
         let total_rate = forward.map(|f| {
             f + rates
@@ -553,7 +554,7 @@ impl App {
                 column![
                     row![
                         ui::strong(p.text, model::ellipsize(&job.name, 22), 14.0),
-                        ui::mode_chip(p, mode),
+                        mode_chip(p),
                         ui::fill(),
                         ui::mono(
                             p.muted,
@@ -572,6 +573,13 @@ impl App {
                         36.0
                     ),
                     ui::progress(p, progress.unwrap_or(0.0), color, 6.0),
+                    ui::caption(
+                        p,
+                        match &remaining {
+                            Some(r) => format!("écoulé {} · {r}", clock(elapsed.as_secs())),
+                            None => format!("écoulé {}", clock(elapsed.as_secs())),
+                        }
+                    ),
                     controls,
                 ]
                 .spacing(10),
@@ -620,7 +628,7 @@ impl App {
                 ui::eyebrow(p.muted, &heading),
                 row![
                     ui::title(p, model::ellipsize(&job.name, 40), 32.0),
-                    ui::mode_chip(p, mode),
+                    mode_chip(p),
                     kind_chip,
                 ]
                 .spacing(12)
@@ -665,22 +673,9 @@ impl App {
             ]
         };
         let secs = elapsed.as_secs();
-        let remaining = progress
-            .filter(|f| *f > 0.02 && *f < 1.0 && secs >= 3)
-            .map(|f| (secs as f32 * (1.0 - f) / f).round() as u64);
-        let timing = match remaining {
-            Some(r) if r >= 90 => format!(
-                "écoulé {:02}:{:02} · reste ≈ {} min",
-                secs / 60,
-                secs % 60,
-                (r + 30) / 60
-            ),
-            Some(_) => format!(
-                "écoulé {:02}:{:02} · reste moins de 2 min",
-                secs / 60,
-                secs % 60
-            ),
-            None => format!("écoulé {:02}:{:02}", secs / 60, secs % 60),
+        let timing = match &remaining {
+            Some(r) => format!("écoulé {} · {r}", clock(secs)),
+            None => format!("écoulé {}", clock(secs)),
         };
         let phase_row = row(phases)
             .spacing(6)
@@ -1883,13 +1878,38 @@ pub(crate) fn pause_button<'a>(p: &Palette, job: &Job) -> El<'a, Message> {
         Tone::Secondary,
         Some(if paused { Glyph::Play } else { Glyph::Pause }),
         if paused { "Reprendre" } else { "Pause" },
-        (job.snapshot.active
-            && !job.cancel_requested
-            && (!job.agent || job.snapshot.control_id.is_some()))
-        .then(|| Message::SetPaused {
-            agent: job.agent,
-            control_id: job.snapshot.control_id.clone(),
-            paused: !paused,
-        }),
+        pause_message(job),
     )
+}
+
+/// Pause or resume request, when the job can take it.
+fn pause_message(job: &Job) -> Option<Message> {
+    (job.snapshot.active
+        && !job.cancel_requested
+        && (!job.agent || job.snapshot.control_id.is_some()))
+    .then(|| Message::SetPaused {
+        agent: job.agent,
+        control_id: job.snapshot.control_id.clone(),
+        paused: !job.snapshot.pause_requested,
+    })
+}
+
+/// Icon-only pause/resume for the narrow sidebar tracker.
+pub(crate) fn pause_icon<'a>(p: &Palette, job: &Job) -> El<'a, Message> {
+    let paused = job.snapshot.pause_requested;
+    ui::icon_button(
+        p,
+        if paused { Glyph::Play } else { Glyph::Pause },
+        if paused {
+            "Reprendre"
+        } else {
+            "Mettre en pause"
+        },
+        pause_message(job),
+    )
+}
+
+/// « 08:29 » (minutes and seconds elapsed, hours folded into minutes).
+fn clock(secs: u64) -> String {
+    format!("{:02}:{:02}", secs / 60, secs % 60)
 }

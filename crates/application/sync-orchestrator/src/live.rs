@@ -246,10 +246,12 @@ mod queue_tests {
         let a = sync_scheduler::QueuedProfile {
             id: sync_core::ProfileId::new("a")?,
             name: "Photos".into(),
+            mode: Some(sync_plan::SyncMode::Mirror),
         };
         let b = sync_scheduler::QueuedProfile {
             id: sync_core::ProfileId::new("b")?,
             name: "Documents".into(),
+            mode: None,
         };
         LiveQueue::publish(temp.path(), Some(&a), std::slice::from_ref(&b))?;
         let queue = LiveQueue::read(temp.path())?.ok_or("missing queue")?;

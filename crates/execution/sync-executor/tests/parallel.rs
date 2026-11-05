@@ -623,3 +623,184 @@ fn large_files_are_transferred_one_at_a_time_beside_small_ones()
     no_partial(&destination);
     Ok(())
 }
+
+/// Given two large files and a verification that waits for the next copy to
+/// begin, When the plan runs, Then the second file is copied while the first
+/// is still being verified (a sequential pipeline would wait for the timeout).
+#[test]
+fn a_large_file_is_verified_while_the_next_one_is_copied() -> Result<(), Box<dyn std::error::Error>>
+{
+    use connector_api::{
+        ContentReader, ContentWriter, ListPage, PageToken, StorageCapabilities, StorageConnector,
+        StorageError, WriteOptions,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::{Duration, Instant};
+    use sync_core::{ConnectorId, FileEntry, ResourcePath};
+    use sync_executor::LARGE_TRANSFER_BYTES;
+    #[derive(Default)]
+    struct Flags {
+        second_copy_started: AtomicBool,
+        verified_during_second_copy: AtomicBool,
+        first_verification_seen: AtomicBool,
+    }
+    struct Source {
+        inner: MemoryConnector,
+        flags: Arc<Flags>,
+    }
+    struct Destination {
+        inner: MemoryConnector,
+        flags: Arc<Flags>,
+    }
+    struct Starter {
+        inner: Box<dyn ContentReader>,
+        flags: Option<Arc<Flags>>,
+    }
+    impl ContentReader for Starter {
+        fn read(&mut self, bytes: &mut [u8]) -> Result<usize, StorageError> {
+            if let Some(flags) = self.flags.take() {
+                flags.second_copy_started.store(true, Ordering::SeqCst);
+            }
+            self.inner.read(bytes)
+        }
+    }
+    struct Verifier {
+        inner: Box<dyn ContentReader>,
+        flags: Arc<Flags>,
+        waited: bool,
+    }
+    impl ContentReader for Verifier {
+        fn read(&mut self, bytes: &mut [u8]) -> Result<usize, StorageError> {
+            if !self.waited {
+                self.waited = true;
+                if !self
+                    .flags
+                    .first_verification_seen
+                    .swap(true, Ordering::SeqCst)
+                {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while !self.flags.second_copy_started.load(Ordering::SeqCst)
+                        && Instant::now() < deadline
+                    {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    self.flags.verified_during_second_copy.store(
+                        self.flags.second_copy_started.load(Ordering::SeqCst),
+                        Ordering::SeqCst,
+                    );
+                }
+            }
+            self.inner.read(bytes)
+        }
+    }
+    impl StorageConnector for Source {
+        fn transfer_concurrency(&self) -> NonZeroUsize {
+            parallel()
+        }
+        fn connector_id(&self) -> &ConnectorId {
+            self.inner.connector_id()
+        }
+        fn capabilities(&self) -> &StorageCapabilities {
+            self.inner.capabilities()
+        }
+        fn list(
+            &self,
+            p: &ResourcePath,
+            t: Option<&PageToken>,
+            c: &CancellationToken,
+        ) -> Result<ListPage, StorageError> {
+            self.inner.list(p, t, c)
+        }
+        fn stat(&self, p: &ResourcePath, c: &CancellationToken) -> Result<FileEntry, StorageError> {
+            self.inner.stat(p, c)
+        }
+        fn open_read(
+            &self,
+            p: &ResourcePath,
+            c: &CancellationToken,
+        ) -> Result<Box<dyn ContentReader>, StorageError> {
+            Ok(Box::new(Starter {
+                inner: self.inner.open_read(p, c)?,
+                flags: p.as_str().starts_with("big_b").then(|| self.flags.clone()),
+            }))
+        }
+    }
+    impl StorageConnector for Destination {
+        fn transfer_concurrency(&self) -> NonZeroUsize {
+            parallel()
+        }
+        fn connector_id(&self) -> &ConnectorId {
+            self.inner.connector_id()
+        }
+        fn capabilities(&self) -> &StorageCapabilities {
+            self.inner.capabilities()
+        }
+        fn list(
+            &self,
+            p: &ResourcePath,
+            t: Option<&PageToken>,
+            c: &CancellationToken,
+        ) -> Result<ListPage, StorageError> {
+            self.inner.list(p, t, c)
+        }
+        fn stat(&self, p: &ResourcePath, c: &CancellationToken) -> Result<FileEntry, StorageError> {
+            self.inner.stat(p, c)
+        }
+        fn open_read(
+            &self,
+            p: &ResourcePath,
+            c: &CancellationToken,
+        ) -> Result<Box<dyn ContentReader>, StorageError> {
+            Ok(Box::new(Verifier {
+                inner: self.inner.open_read(p, c)?,
+                flags: self.flags.clone(),
+                waited: false,
+            }))
+        }
+        fn create_directory(
+            &self,
+            p: &ResourcePath,
+            c: &CancellationToken,
+        ) -> Result<FileEntry, StorageError> {
+            self.inner.create_directory(p, c)
+        }
+        fn open_write(
+            &self,
+            p: &ResourcePath,
+            o: &WriteOptions,
+            c: &CancellationToken,
+        ) -> Result<Box<dyn ContentWriter>, StorageError> {
+            self.inner.open_write(p, o, c)
+        }
+    }
+    let flags = Arc::new(Flags::default());
+    let big = vec![7_u8; usize::try_from(LARGE_TRANSFER_BYTES)?];
+    let source = Source {
+        inner: MemoryConnector::new("source")
+            .file("big_a", &big, ts(10))
+            .file("big_b", &big, ts(10)),
+        flags: flags.clone(),
+    };
+    let destination = Destination {
+        inner: MemoryConnector::new("destination").writable(),
+        flags: flags.clone(),
+    };
+    let plan = backup_plan(&source, &destination);
+    let report = execute(
+        &plan,
+        &source,
+        &destination,
+        confirmed().with_copy_workers(parallel()),
+        &mut MemoryJournal::new(),
+    )?;
+    assert_eq!(report.status(), ExecutionStatus::Succeeded);
+    assert_eq!(report.totals().done, 2);
+    assert!(flags.verified_during_second_copy.load(Ordering::SeqCst));
+    assert_eq!(destination.inner.content("big_a"), Some(big.clone()));
+    assert_eq!(destination.inner.content("big_b"), Some(big));
+    no_partial(&destination.inner);
+    Ok(())
+}

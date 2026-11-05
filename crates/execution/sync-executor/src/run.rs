@@ -5,22 +5,9 @@ use std::sync::{Arc, Mutex};
 mod parallel;
 
 pub(crate) fn start(req: ExecutionRequest<'_>) -> Result<ExecutionReport, ExecutionError> {
-    let workers = if req.plan.mode() == sync_plan::SyncMode::Bidirectional {
-        1
-    } else {
-        req.options
-            .copy_workers
-            .get()
-            .min(req.source.transfer_concurrency().get())
-            .min(req.destination.transfer_concurrency().get())
-            .min(
-                req.versions
-                    .map_or(16, |store| store.transfer_concurrency().get()),
-            )
-            .min(16)
-    };
-    if workers == 1 {
-        return Run::start(req, None, 1);
+    let pool = parallel::Pool::of(&req);
+    if pool.threads == 1 {
+        return Run::start(req, None);
     }
     let cancel = req.cancel.child_token();
     let journal = Mutex::new(req.journal);
@@ -30,7 +17,7 @@ pub(crate) fn start(req: ExecutionRequest<'_>) -> Result<ExecutionReport, Execut
         cancel: &cancel,
         ..req
     };
-    Run::start(req, Some(&journal), workers)
+    Run::start(req, Some((&journal, pool)))
 }
 
 use connector_api::{CommitMode, StorageError, StorageErrorKind, WriteOptions};
@@ -250,13 +237,16 @@ pub(crate) struct Run<'a> {
     independent: bool,
     /// Débit partagé par les workers (voir [`ExecutionOptions::rate_limit`]).
     throttle: Option<sync_copy::Throttle>,
+    /// Appelé par un worker du pool quand la copie est terminée et que la
+    /// vérification commence : le coordinateur peut alors lancer la copie
+    /// suivante pendant que celle-ci relit son dépôt.
+    staged: Option<&'a dyn Fn()>,
 }
 
 impl<'a> Run<'a> {
     fn start(
         req: ExecutionRequest<'a>,
-        journal: Option<&Mutex<&mut dyn sync_journal::JournalSink>>,
-        workers: usize,
+        parallel: Option<(&Mutex<&mut dyn sync_journal::JournalSink>, parallel::Pool)>,
     ) -> Result<ExecutionReport, ExecutionError> {
         let plan = req.plan;
         let summary = plan.summary();
@@ -295,6 +285,7 @@ impl<'a> Run<'a> {
             leftovers: Vec::new(),
             independent: false,
             throttle: req.options.rate_limit.map(sync_copy::Throttle::new),
+            staged: None,
             req,
         };
         emit(
@@ -306,8 +297,8 @@ impl<'a> Run<'a> {
         run.progress.publish(run.req.events);
 
         // Copies, créations, remplacements : dans l'ordre des chemins.
-        if let Some(journal) = journal {
-            parallel::execute(&mut run, journal, workers);
+        if let Some((journal, pool)) = parallel {
+            parallel::execute(&mut run, journal, pool);
         } else {
             for index in sequential_order(operations, &run.index) {
                 run.visit(index, &operations[index]);
@@ -713,7 +704,7 @@ impl<'a> Run<'a> {
         if file_events.is_some() {
             emit(file_events, file_progress(0));
         }
-        let _ended = TransferEnded {
+        let ended = TransferEnded {
             events: file_events,
             operation: op.id(),
         };
@@ -782,6 +773,12 @@ impl<'a> Run<'a> {
                 self.abort(staged, op);
                 return Err(failure);
             }
+        }
+        // La copie est finie : le flux de données est libre pour le fichier
+        // suivant pendant que celui-ci est relu puis publié.
+        drop(ended);
+        if let Some(signal) = self.staged {
+            signal();
         }
         let mut staged = staged;
         let reread = if self.req.options.verify == VerifyMode::Content {

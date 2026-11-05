@@ -2,8 +2,8 @@
 //! « flow » between source and destination. Purely presentational.
 
 use iced::mouse;
-use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineDash, Path, Stroke, path::Arc};
-use iced::{Color, Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme};
+use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineDash, Path, Stroke};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 use std::f32::consts::PI;
 
 /// Area chart of the latest samples (values are already scaled). An optional
@@ -108,86 +108,6 @@ pub(crate) fn spark<'a, M: 'a>(
     .width(Length::Fill)
     .height(Length::Fixed(height))
     .into()
-}
-
-/// Circular progress. `progress = None` draws an indeterminate comet whose
-/// position follows `phase` (turns).
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Ring {
-    pub(crate) progress: Option<f32>,
-    pub(crate) phase: f32,
-    pub(crate) color: Color,
-    pub(crate) track: Color,
-    pub(crate) width: f32,
-}
-
-impl<M> canvas::Program<M> for Ring {
-    type State = ();
-    fn draw(
-        &self,
-        _: &(),
-        renderer: &Renderer,
-        _: &Theme,
-        bounds: Rectangle,
-        _: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let center = frame.center();
-        let radius = bounds.width.min(bounds.height) / 2.0 - self.width;
-        frame.stroke(
-            &Path::circle(center, radius),
-            Stroke::default()
-                .with_color(self.track)
-                .with_width(self.width),
-        );
-        let (start, sweep) = match self.progress {
-            Some(p) => (-PI / 2.0, p.clamp(0.0, 1.0) * 2.0 * PI),
-            None => {
-                let head = self.phase * 2.0 * PI;
-                let breathe = 0.9 + 0.6 * (self.phase * 2.0 * PI).sin().abs();
-                (head - PI / 2.0, breathe)
-            }
-        };
-        if sweep > 0.001 {
-            let arc = Path::new(|b| {
-                b.arc(Arc {
-                    center,
-                    radius,
-                    start_angle: Radians(start),
-                    end_angle: Radians(start + sweep),
-                });
-            });
-            frame.stroke(
-                &arc,
-                Stroke::default()
-                    .with_color(self.color)
-                    .with_width(self.width)
-                    .with_line_cap(LineCap::Round),
-            );
-            // Pulsing light dot at the head of a determinate arc.
-            if self.progress.is_some() {
-                let end = start + sweep;
-                let head = Point::new(center.x + radius * end.cos(), center.y + radius * end.sin());
-                let pulse = 0.5 + 0.5 * (self.phase * 2.0 * PI * 1.5).sin();
-                frame.fill(
-                    &Path::circle(head, self.width * (0.9 + 0.5 * pulse)),
-                    Color {
-                        a: 0.30 * (1.0 - pulse * 0.6),
-                        ..self.color
-                    },
-                );
-                frame.fill(&Path::circle(head, self.width * 0.32), Color::WHITE);
-            }
-        }
-        vec![frame.into_geometry()]
-    }
-}
-
-pub(crate) fn ring<'a, M: 'a>(ring: Ring, size: f32) -> Element<'a, M> {
-    canvas::Canvas::new(ring)
-        .width(Length::Fixed(size))
-        .height(Length::Fixed(size))
-        .into()
 }
 
 /// Dashed connector between endpoints; dashes travel when `phase` moves.

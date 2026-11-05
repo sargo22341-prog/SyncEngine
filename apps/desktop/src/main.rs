@@ -12,6 +12,7 @@ mod app_update;
 mod backend;
 mod charts;
 mod draft;
+mod exclusion;
 mod group_run;
 mod icons;
 mod interrupted;
@@ -59,9 +60,9 @@ fn main() -> iced::Result {
         .window(iced::window::Settings {
             size: if mini { app::MINI_SIZE } else { app::FULL_SIZE },
             min_size: Some(if mini {
-                iced::Size::new(380.0, 460.0)
+                app::MINI_MIN_SIZE
             } else {
-                iced::Size::new(980.0, 640.0)
+                app::FULL_MIN_SIZE
             }),
             icon: charts::window_icon(),
             exit_on_close_request: false,

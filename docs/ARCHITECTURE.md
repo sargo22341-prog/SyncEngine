@@ -47,6 +47,13 @@ connecteurs ──► scanner ──► comparaison ──► stratégie ──�
 
 La simulation et l'exécution utilisent le **même** plan.
 
+La vérification ne bloque pas le débit : une copie cède son emplacement dès
+que le dépôt temporaire est écrit (`Staged`), avant sa relecture BLAKE3 et sa
+publication. Deux threads de plus (`VERIFY_THREADS`) relisent les fichiers déjà
+copiés pendant que le suivant avance, y compris en bidirectionnel (une seule
+copie à la fois, ordre des opérations conservé). Un connecteur qui n'annonce
+qu'un transfert à la fois reste séquentiel. Voir [le débit de copie](DEBIT_COPIE.md).
+
 Les copies locales/SMB indépendantes peuvent utiliser un pool borné (quatre
 workers demandés par défaut, huit annoncés par ces connecteurs, plafond moteur
 de seize). Un seul fichier d'au moins 8 Mio est transféré à la fois

@@ -76,6 +76,7 @@ impl App {
     pub(crate) fn interrupted(&mut self, msg: InterruptedMsg) -> Task<Message> {
         match msg {
             InterruptedMsg::Found(Ok(list)) => {
+                self.interruptions_unchecked = false;
                 if !list.is_empty() {
                     self.open_dialog(Dialog::Interrupted(Box::new(InterruptedDialog {
                         pending: list,
@@ -86,7 +87,11 @@ impl App {
                 Task::none()
             }
             InterruptedMsg::Found(Err(e)) => {
-                if e.code != "busy" {
+                // Busy: a scheduled run owns the state, so none is interrupted
+                // right now; the search is repeated when the agent is idle.
+                if e.code == "busy" {
+                    self.interruptions_unchecked = true;
+                } else {
                     self.fail(&e);
                 }
                 Task::none()

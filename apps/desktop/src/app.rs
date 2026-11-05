@@ -109,6 +109,15 @@ impl Job {
             JobKind::Preview => model::fraction(s.entries_hashed, s.hash_target),
         }
     }
+
+    /// « reste ≈ 6 min », once the pace is meaningful.
+    pub(crate) fn remaining_label(&self, now: Instant) -> Option<String> {
+        model::remaining_secs(
+            self.progress(),
+            now.saturating_duration_since(self.started).as_secs(),
+        )
+        .map(model::remaining_label)
+    }
 }
 
 /// Exact cached preview plus its current filtered page.
@@ -186,6 +195,8 @@ pub(crate) enum Dialog {
     },
     /// Content of a profile trash (« Voir la corbeille »).
     Trash(Box<crate::trash::TrashDialog>),
+    /// « Exclure du profil » from a row of the history.
+    Exclusion(Box<crate::exclusion::ExclusionDialog>),
     /// Executions interrupted by a crash, shown at start-up.
     Interrupted(Box<crate::interrupted::InterruptedDialog>),
     /// « Supprimer toutes les données de SyncEngine ».
@@ -243,6 +254,8 @@ pub(crate) enum Message {
     Resized(Size),
     SystemTheme(iced::theme::Mode),
     WindowOpened(window::Id),
+    /// Size of the monitor of the window, to place the tracker window.
+    MonitorKnown(window::Id, Option<Size>),
     CloseRequested(window::Id),
     Tray(TrayEvent),
     /// Integrated title bar and resize grips.
@@ -274,6 +287,7 @@ pub(crate) enum Message {
     /// Adds a folder of the plan to the profile's excluded directories, then
     /// simulates again (the filters stay identical in preview and execution).
     ExcludeFolder(String),
+    Exclusion(crate::exclusion::ExclusionMsg),
     /// Enlarges or shrinks the agent tracker card.
     MiniToggle,
     /// What to keep of a conflicting file; choosing the same again clears
@@ -461,6 +475,9 @@ pub(crate) struct App {
     /// The window started as the compact tracker.
     pub(crate) started_mini: bool,
     pub(crate) boot_polling: bool,
+    /// The search for interrupted executions found the state busy (a
+    /// scheduled run owned it): it is repeated once the agent is idle.
+    pub(crate) interruptions_unchecked: bool,
     pub(crate) boot_cancel_requested: bool,
     pub(crate) boot_control_error: Option<Failure>,
     pub(crate) agent_queue: Option<sync_orchestrator::LiveQueue>,
@@ -517,6 +534,8 @@ pub(crate) struct App {
     pub(crate) close_after: Option<window::Id>,
     /// Main window, known once opened (minimize/restore/close target).
     pub(crate) window_id: Option<window::Id>,
+    /// Logical size of the monitor showing the window, once known.
+    pub(crate) monitor: Option<Size>,
     /// Integrated frame state (maximized, focused, pending bar press).
     pub(crate) frame: titlebar::Frame,
     /// Notification-area icon, or why none could be created.
@@ -530,8 +549,14 @@ pub(crate) struct App {
 }
 
 /// Compact tracker size (window opened by the agent) and normal window size.
-pub(crate) const MINI_SIZE: iced::Size = iced::Size::new(440.0, 640.0);
+pub(crate) const MINI_SIZE: iced::Size = iced::Size::new(400.0, 600.0);
+/// Gap kept between the tracker window and the screen edges. The bottom one
+/// also clears a standard taskbar (the work area is not exposed by the
+/// toolkit): on a taller or side taskbar the window stays fully visible.
+pub(crate) const MINI_MARGIN: iced::Size = iced::Size::new(14.0, 64.0);
 pub(crate) const FULL_SIZE: iced::Size = iced::Size::new(1280.0, 820.0);
+pub(crate) const FULL_MIN_SIZE: iced::Size = iced::Size::new(980.0, 640.0);
+pub(crate) const MINI_MIN_SIZE: iced::Size = iced::Size::new(360.0, 420.0);
 /// Enlarged tracker, still the agent card (the interface opens at the end).
 pub(crate) const MINI_LARGE_SIZE: iced::Size = iced::Size::new(1000.0, 760.0);
 pub(crate) const SEARCH_ID: &str = "profile-search";
@@ -560,6 +585,7 @@ impl App {
             conflict_choices: std::collections::HashMap::new(),
             started_mini: std::env::args().skip(1).any(|a| a == FOLLOW_AGENT_ARG),
             boot_polling: true,
+            interruptions_unchecked: false,
             boot_cancel_requested: false,
             boot_control_error: None,
             agent_queue: None,
@@ -608,6 +634,7 @@ impl App {
             startup: None,
             close_after: None,
             window_id: None,
+            monitor: None,
             frame: titlebar::Frame::default(),
             tray: Tray::create(charts::icon_rgba(), charts::ICON_SIZE),
             busy_refresh: false,
@@ -670,6 +697,22 @@ impl App {
                 Some(job) => format!("SyncEngine — synchronisation planifiée de {}", job.name),
                 None => "SyncEngine".into(),
             },
+        }
+    }
+
+    /// Notification-area tooltip: the window title, with the progress and the
+    /// time left while a job runs.
+    pub(crate) fn tray_tooltip(&self) -> String {
+        let title = self.title();
+        let Some(job) = self.live_job() else {
+            return title;
+        };
+        let Some(progress) = job.progress() else {
+            return title;
+        };
+        match job.remaining_label(self.now) {
+            Some(left) => format!("{title} — {} · {left}", model::percent(progress)),
+            None => format!("{title} — {}", model::percent(progress)),
         }
     }
 
@@ -743,6 +786,19 @@ impl App {
     }
 
     /// Job shown live: the one of this window first, else the agent's.
+    /// Mode of the profile of a live job: from the profile list, or, while
+    /// the window only follows the agent (the store is not opened), from the
+    /// queue the agent publishes.
+    pub(crate) fn job_mode(&self, job: &Job) -> Option<sync_plan::SyncMode> {
+        self.profile(&job.profile).map(|p| p.mode).or_else(|| {
+            self.agent_queue
+                .as_ref()
+                .and_then(|q| q.current.as_ref())
+                .filter(|current| current.id == job.profile)
+                .and_then(|current| current.mode)
+        })
+    }
+
     pub(crate) fn live_job(&self) -> Option<&Job> {
         self.job.as_ref().or(self.agent_job.as_ref())
     }

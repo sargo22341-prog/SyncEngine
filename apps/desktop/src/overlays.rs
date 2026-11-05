@@ -281,6 +281,7 @@ impl App {
                 self.execute_dialog(&dp, profile, *confirm_delete, *confirm_permanent),
             ),
             Dialog::Trash(trash) => (720.0, self.trash_dialog(&dp, trash)),
+            Dialog::Exclusion(d) => (560.0, self.exclusion_dialog(&dp, d)),
             Dialog::Interrupted(d) => (680.0, self.interrupted_dialog(&dp, d)),
             Dialog::Purge(d) => (640.0, self.purge_dialog(&dp, d)),
             Dialog::Update => (640.0, self.update_dialog(&dp)),

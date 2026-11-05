@@ -66,6 +66,19 @@ impose un rythme régulier. SyncEngine garde son `sync_all` avant publication
 4. La courbe date chaque échantillon à la lecture du compteur, pas à l’image
    qui l’a déclenchée.
 
+5. **Vérification en parallèle des copies** (`sync-executor`, `run/parallel.rs`).
+   Avant, un seul worker faisait copie, relecture et publication : à la fin
+   d'un très gros fichier (21 Go) le débit tombait à 0 pendant toute la relecture
+   et le fichier suivant attendait. La copie cède maintenant son emplacement
+   (`Report::Staged`) dès que le dépôt est écrit ; deux threads de vérification
+   relisent et publient derrière, et la copie suivante démarre aussitôt. Le
+   bidirectionnel passe par le même pool (une copie à la fois, dépendances et
+   ordre de lancement inchangés). Test : `a_large_file_is_verified_while_the_next_one_is_copied`.
+   FreeFileSync, qui ne vérifie pas par défaut, n'a pas ce palier ; ici la
+   vérification est conservée (intégrité d'abord) mais ne suspend plus le flux.
+   Limite : la relecture d'un disque dur concurrence l'écriture suivante sur ce
+   même disque ; elle vient en général du cache pour les fichiers récents.
+
 ## Résultats
 
 | Essai (même machine) | Avant | Après |

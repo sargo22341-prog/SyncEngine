@@ -26,9 +26,13 @@ pub struct ExecutionOptions {
     /// Rewritten prefixes and truncations are still refused.
     /// Other modes and all destination/deletion preconditions stay strict.
     pub refresh_mirror_source: bool,
-    /// Requested workers (default 4), capped at 16 and by both endpoints.
-    /// Independent copies/replacements respect parent dependencies; the version
-    /// store further bounds concurrency. Deletions and bidirectional runs are ordered.
+    /// Requested simultaneous copies (default 4), capped at 16 and by both
+    /// endpoints. Independent copies/replacements respect parent dependencies;
+    /// the version store further bounds concurrency. Deletions are ordered, and
+    /// a bidirectional run starts one copy at a time. With content verification,
+    /// up to two more threads re-read and publish the files already copied while
+    /// the next copies go on, as far as the endpoints allow it (a connector
+    /// announcing one transfer at a time stays fully sequential).
     pub copy_workers: std::num::NonZeroUsize,
     /// Gros transferts (au moins [`LARGE_TRANSFER_BYTES`]) menés en même
     /// temps parmi les workers (défaut 1, comme les « opérations parallèles »

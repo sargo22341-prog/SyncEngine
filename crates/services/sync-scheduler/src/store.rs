@@ -286,6 +286,7 @@ impl Scheduler {
                 .map(|(state, _)| crate::QueuedProfile {
                     id: state.schedule.approved.id.clone(),
                     name: state.schedule.approved.name.clone(),
+                    mode: Some(state.schedule.approved.mode),
                 })
                 .collect::<Vec<_>>()
         };
@@ -316,6 +317,7 @@ impl Scheduler {
             let current = crate::QueuedProfile {
                 id: state.schedule.approved.id.clone(),
                 name: state.schedule.approved.name.clone(),
+                mode: Some(state.schedule.approved.mode),
             };
             app.queue_changed(Some(&current), &pending(&waiting));
             let result = app.run(&state.schedule, cancel);

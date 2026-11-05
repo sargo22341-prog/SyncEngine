@@ -1,6 +1,15 @@
 # Notes de la prochaine version
 
 Écrire sous la ligne `<!-- notes -->
+- Accueil : un clic sur le nom d'un groupe le replie ou le déplie.
+- Navigation : recliquer sur l'onglet affiché ramène au début de la page (liste des profils, historique général, première section des réglages).
+- Historique : une icône sur chaque ligne ouvre « Exclure du profil » pour ignorer ce fichier, tous les fichiers de ce nom ou de cette extension (ex. `*.db-shm`) et éviter de nouveaux avertissements.
+- Gros fichiers : la vérification se fait désormais en parallèle de la copie suivante, le débit ne retombe plus à zéro en fin de fichier (bidirectionnel compris).
+- Mini-suivi de l'agent : ouvert en bas à droite de l'écran, avec le bon mode (Miroir n'apparaît plus comme « Bidirectionnel »), le pourcentage et le temps restant ; l'infobulle de la zone de notification les reprend.
+- Panneau latéral : suivi compact avec courbe de débit, pourcentage, temps restant, pause/annulation alignées et les prochains profils en attente.
+- « En direct » : pourcentage et durée estimée affichés.
+- Exécution refusée à cause d'une synchronisation interrompue : le diagnostic s'ouvre directement (message en français), y compris si l'agent occupait l'état au démarrage.
+- Confirmation d'exécution : les emplacements distants s'affichent lisiblement au lieu du JSON.
 - Interface alignée sur les maquettes « Flux » : accueil (cartes En direct / À traiter / Prochaine planification, filtre Tous · En cours · À vérifier), assistant en pleine page avec liste d'étapes, page Activité en direct (débit, progression, fichiers en cours), historique par jour, planification en calendrier avec ses règles, réglages par sections ; nouveau logo et nouvelle icône d'application.
 - Conflits : nouveau choix « Garder les deux » (la version de la destination est conservée à côté, sous « nom (conflit destination).ext »).
 - Réglages › Performances : transferts simultanés, gros fichiers simultanés et limite de débit.

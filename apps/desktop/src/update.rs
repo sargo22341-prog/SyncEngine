@@ -18,9 +18,10 @@ use sync_orchestrator::DeletionCeiling;
 impl App {
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.dispatch(message);
-        let title = self.title();
+        // The Windows tooltip holds 127 characters at most.
+        let tooltip = model::ellipsize(&self.tray_tooltip(), 120);
         if let Ok(tray) = &mut self.tray {
-            tray.set_tooltip(&title);
+            tray.set_tooltip(&tooltip);
         }
         task
     }
@@ -43,8 +44,13 @@ impl App {
                 let restore = if self.started_mini {
                     self.started_mini = false;
                     self.mini_large = false;
-                    self.window_id
-                        .map_or_else(Task::none, |id| window::resize(id, crate::app::FULL_SIZE))
+                    self.window_id.map_or_else(Task::none, |id| {
+                        Task::batch([
+                            window::set_min_size(id, Some(crate::app::FULL_MIN_SIZE)),
+                            window::resize(id, crate::app::FULL_SIZE),
+                            self.place_centered(id, crate::app::FULL_SIZE),
+                        ])
+                    })
                 } else {
                     Task::none()
                 };
@@ -160,7 +166,16 @@ impl App {
             }
             Message::WindowOpened(id) => {
                 self.window_id = Some(id);
-                self.sync_maximized()
+                let place = if self.started_mini {
+                    window::monitor_size(id).map(move |size| Message::MonitorKnown(id, size))
+                } else {
+                    Task::none()
+                };
+                Task::batch([self.sync_maximized(), place])
+            }
+            Message::MonitorKnown(id, size) => {
+                self.monitor = size;
+                self.place_tracker(id)
             }
             Message::Chrome(action) => self.chrome(action),
             Message::CloseRequested(id) => {
@@ -229,11 +244,16 @@ impl App {
                 self.refresh()
             }
             Message::Nav(nav) => {
+                // Clicking the section already shown means « back to its start ».
+                let again = self.nav == nav;
                 self.go(nav);
                 if nav == Nav::History {
                     self.history_limit = crate::app::HISTORY_PAGE;
                     self.expanded_run = None;
                     self.history = None;
+                }
+                if again {
+                    self.back_to_section_start(nav);
                 }
                 Task::none()
             }
@@ -417,6 +437,7 @@ impl App {
                 Task::none()
             }
             Message::ExcludeFolder(path) => self.exclude_folder(path),
+            Message::Exclusion(msg) => self.exclusion(msg),
             Message::ConflictChoose(path, keep) => {
                 if self.conflict_choices.get(&path) == Some(&keep) {
                     self.conflict_choices.remove(&path);
@@ -429,14 +450,14 @@ impl App {
             Message::MiniToggle => {
                 self.mini_large = !self.mini_large;
                 match self.window_id {
-                    Some(id) => window::resize(
-                        id,
-                        if self.mini_large {
-                            crate::app::MINI_LARGE_SIZE
-                        } else {
-                            crate::app::MINI_SIZE
-                        },
-                    ),
+                    Some(id) if self.mini_large => Task::batch([
+                        window::resize(id, crate::app::MINI_LARGE_SIZE),
+                        self.place_centered(id, crate::app::MINI_LARGE_SIZE),
+                    ]),
+                    Some(id) => Task::batch([
+                        window::resize(id, crate::app::MINI_SIZE),
+                        self.place_tracker(id),
+                    ]),
                     None => Task::none(),
                 }
             }
@@ -544,6 +565,14 @@ impl App {
                     }
                     Err(e) => self.fail(e),
                 }
+                // A refused run because of an interrupted one: offer its
+                // diagnosis right away instead of only naming it.
+                let diagnosis = match (&result, &self.backend) {
+                    (Err(e), Some(app)) if e.code == "interrupted" => {
+                        crate::interrupted::lookup(app)
+                    }
+                    _ => Task::none(),
+                };
                 let group = self
                     .group_run
                     .is_some()
@@ -556,8 +585,8 @@ impl App {
                 });
                 let refresh = self.finish_job_tasks();
                 match group {
-                    Some(next) => Task::batch([refresh, next]),
-                    None => refresh,
+                    Some(next) => Task::batch([refresh, diagnosis, next]),
+                    None => Task::batch([refresh, diagnosis]),
                 }
             }
             Message::SetPaused {
@@ -1098,6 +1127,54 @@ impl App {
 impl App {
     /// Restores and focuses the main window (icon click, pending quit,
     /// followed scheduled run), including from the notification area.
+    /// Leaves what is open inside a section: the profile of the profiles
+    /// page, the profile of the history, the open settings section.
+    fn back_to_section_start(&mut self, nav: Nav) {
+        let deep = match nav {
+            Nav::Profiles | Nav::History => self.selected.take().is_some(),
+            Nav::Settings => {
+                let moved = self.settings_tab != crate::app::SettingsTab::default();
+                self.settings_tab = crate::app::SettingsTab::default();
+                moved
+            }
+            Nav::Activity | Nav::Schedules | Nav::Trash => false,
+        };
+        if deep {
+            self.expanded_run = None;
+            self.history = None;
+            self.page_t.replay(0.0, 1.0, self.now);
+        }
+    }
+
+    /// Bottom-right corner of the screen, where the tracker window sits.
+    pub(crate) fn place_tracker(&self, id: window::Id) -> Task<Message> {
+        let Some(monitor) = self.monitor else {
+            return Task::none();
+        };
+        let size = crate::app::MINI_SIZE;
+        window::move_to(
+            id,
+            iced::Point::new(
+                (monitor.width - size.width - crate::app::MINI_MARGIN.width).max(0.0),
+                (monitor.height - size.height - crate::app::MINI_MARGIN.height).max(0.0),
+            ),
+        )
+    }
+
+    /// Centers a window of `size` on its monitor.
+    pub(crate) fn place_centered(&self, id: window::Id, size: iced::Size) -> Task<Message> {
+        let Some(monitor) = self.monitor else {
+            return Task::none();
+        };
+        window::move_to(
+            id,
+            iced::Point::new(
+                ((monitor.width - size.width) / 2.0).max(0.0),
+                ((monitor.height - size.height) / 2.0).max(0.0),
+            ),
+        )
+    }
+
     pub(crate) fn show_window(&self) -> Task<Message> {
         match self.window_id {
             Some(id) => Task::batch([

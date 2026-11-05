@@ -219,6 +219,11 @@ pub struct QueuedProfile {
     pub id: sync_core::ProfileId,
     /// User-facing profile name.
     pub name: String,
+    /// Synchronization mode, so that a window which cannot open the profile
+    /// store (the agent owns it) still labels the run correctly. Absent in
+    /// observations written by an earlier version.
+    #[serde(default)]
+    pub mode: Option<sync_profiles::SyncMode>,
 }
 
 /// Application port. Repeat authorization/root validation, preserve partial work,

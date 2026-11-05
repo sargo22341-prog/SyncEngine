@@ -17,7 +17,68 @@ impl JournalSink for JournalProxy<'_, '_> {
     }
 }
 
-pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, workers: usize) {
+/// Threads de l'exécution et part qui peut copier en même temps.
+///
+/// `copy_slots` borne les opérations en phase de **copie** (lecture de la
+/// source, écriture du dépôt). Une copie finie cède son emplacement avant
+/// d'être relue et publiée : jusqu'à [`VERIFY_THREADS`] threads de plus
+/// vérifient les fichiers déjà copiés pendant que la copie suivante avance,
+/// de sorte que la relecture d'un très gros fichier ne suspend pas le débit.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Pool {
+    pub(super) copy_slots: usize,
+    pub(super) threads: usize,
+}
+
+/// Vérifications simultanées derrière les copies.
+const VERIFY_THREADS: usize = 2;
+
+impl Pool {
+    pub(super) fn of(req: &ExecutionRequest<'_>) -> Self {
+        // Plafond imposé par les deux connecteurs et le magasin de versions.
+        let bound = req
+            .source
+            .transfer_concurrency()
+            .get()
+            .min(req.destination.transfer_concurrency().get())
+            .min(
+                req.versions
+                    .map_or(16, |store| store.transfer_concurrency().get()),
+            )
+            .min(16);
+        // Le bidirectionnel reste ordonné : une seule copie à la fois, mais
+        // sa vérification peut chevaucher la copie suivante.
+        let copy_slots = if req.plan.mode() == sync_plan::SyncMode::Bidirectional {
+            1
+        } else {
+            req.options.copy_workers.get()
+        }
+        .min(bound);
+        let extra = if req.options.verify == VerifyMode::Content {
+            VERIFY_THREADS
+        } else {
+            0
+        };
+        Self {
+            copy_slots,
+            threads: (copy_slots + extra).min(bound),
+        }
+    }
+}
+
+/// Messages des workers vers le coordinateur.
+enum Report {
+    /// La copie de l'opération est terminée ; la vérification continue.
+    Staged(usize),
+    Done {
+        worker: usize,
+        index: usize,
+        result: (OutcomeStatus, Option<StopCause>, Vec<ResourcePath>),
+    },
+}
+
+pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, pool: Pool) {
+    let (workers, copy_slots) = (pool.threads, pool.copy_slots);
     let operations = run.req.plan.operations();
     let mut waiting = vec![0_usize; operations.len()];
     let mut children = vec![Vec::new(); operations.len()];
@@ -50,7 +111,7 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
     let context = run.context.clone();
     let throttle = run.throttle.clone();
     std::thread::scope(|scope| {
-        let (reply, receive) = mpsc::sync_channel(workers);
+        let (reply, receive) = mpsc::sync_channel(workers * 2);
         let mut senders = Vec::new();
         let mut handles = Vec::new();
         for worker in 0..workers {
@@ -63,8 +124,18 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
             handles.push(scope.spawn(move || {
                 while let Ok(index) = jobs.recv() {
                     let op = &operations[index];
+                    let staged = || {
+                        // Un coordinateur parti n'a plus besoin du signal.
+                        let _gone = reply.send(Report::Staged(index)).is_err();
+                    };
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let mut proxy = JournalProxy(journal);
+                        // Une opération vers la source lit la destination.
+                        let (source, destination) = if op.target() == PlanSide::Source {
+                            (destination, source)
+                        } else {
+                            (source, destination)
+                        };
                         let req = ExecutionRequest {
                             plan,
                             source,
@@ -88,6 +159,7 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
                             leftovers: Vec::new(),
                             independent: true,
                             throttle: throttle.clone(),
+                            staged: Some(&staged),
                         };
                         let status = task.status_of(op);
                         (status, task.stop, task.leftovers)
@@ -111,7 +183,14 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
                     if result.1.is_some() {
                         cancel.cancel();
                     }
-                    if reply.send((worker, index, result)).is_err() {
+                    if reply
+                        .send(Report::Done {
+                            worker,
+                            index,
+                            result,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -131,13 +210,18 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
         };
         let large_slots = options.large_transfers.get();
         let mut large_busy = 0;
+        // Opérations encore en phase de copie : elles occupent un
+        // emplacement de copie (et de gros transfert) jusqu'à leur signal
+        // `Staged` ou, à défaut, jusqu'à leur résultat.
+        let mut copying = vec![false; operations.len()];
+        let mut copy_busy = 0;
         let mut deferred = VecDeque::new();
         loop {
             if large_busy < large_slots {
                 // Eligibility is checked again when they are popped.
                 ready.extend(deferred.drain(..));
             }
-            while !free.is_empty() {
+            while !free.is_empty() && copy_busy < copy_slots {
                 let Some(Reverse(index)) = ready.pop() else {
                     break;
                 };
@@ -159,6 +243,8 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
                         break;
                     }
                     busy += 1;
+                    copying[index] = true;
+                    copy_busy += 1;
                     if large(index) {
                         large_busy += 1;
                     }
@@ -173,14 +259,33 @@ pub(super) fn execute(run: &mut Run<'_>, journal: &Mutex<&mut dyn JournalSink>, 
             if busy == 0 {
                 break;
             }
-            let Ok((worker, index, (status, stop, leftovers))) = receive.recv() else {
+            let Ok(report) = receive.recv() else {
                 run.stop = Some(StopCause::WorkerFailure);
                 cancel.cancel();
                 break;
             };
+            let (worker, index, (status, stop, leftovers)) = match report {
+                Report::Staged(index) => {
+                    if std::mem::take(&mut copying[index]) {
+                        copy_busy -= 1;
+                        if large(index) {
+                            large_busy -= 1;
+                        }
+                    }
+                    continue;
+                }
+                Report::Done {
+                    worker,
+                    index,
+                    result,
+                } => (worker, index, result),
+            };
             busy -= 1;
-            if large(index) {
-                large_busy -= 1;
+            if std::mem::take(&mut copying[index]) {
+                copy_busy -= 1;
+                if large(index) {
+                    large_busy -= 1;
+                }
             }
             free.push(worker);
             // An origin failure takes precedence over sibling cancellations.

@@ -220,21 +220,22 @@ impl App {
             (JobKind::Preview, Some(r)) => (model::count(*r as u64), "éléments/s".to_owned()),
             (_, Some(_)) => crate::profile::rate_parts(total),
         };
-        let color = mode_fill(
-            p,
-            self.profile(&job.profile)
-                .map_or(sync_plan::SyncMode::Bidirectional, |pr| pr.mode),
-        );
+        let color = self
+            .job_mode(job)
+            .map_or(p.violet, |mode| mode_fill(p, mode));
         let progress = job.progress();
+        // Percentage and estimated time left, under the bar.
         let caption = match progress {
-            Some(f) => format!(
-                "{} {}",
-                model::percent(f),
-                match job.kind {
-                    JobKind::Execute => "du volume",
-                    JobKind::Preview => "des empreintes",
+            Some(f) => {
+                let done = model::percent(f);
+                match job.remaining_label(self.now) {
+                    Some(left) => format!("{done} · {left}"),
+                    None => match job.kind {
+                        JobKind::Execute => format!("{done} du volume"),
+                        JobKind::Preview => format!("{done} des empreintes"),
+                    },
                 }
-            ),
+            }
             None => "Analyse en cours…".to_owned(),
         };
         button(
@@ -246,18 +247,18 @@ impl App {
                         ui::status(p, p.violet, model::ellipsize(&job.name, 26)),
                     ]
                     .align_y(Alignment::Center),
-                    ui::metric(p, rate.0, rate.1, 44.0),
+                    ui::metric(p, rate.0, rate.1, 38.0),
                     charts::spark(
                         rates.forward.clone(),
                         p.violet,
                         rates.reverse.clone().map(|r| (r, p.backup)),
                         Color::TRANSPARENT,
-                        40.0,
+                        32.0,
                     ),
                     ui::progress(p, progress.unwrap_or(0.0), color, 10.0),
                     ui::caption(p, caption),
                 ]
-                .spacing(8),
+                .spacing(6),
             )
             .padding(20)
             .width(Length::Fill)
@@ -558,18 +559,40 @@ impl App {
                 group.clone()
             };
             let count = members.len();
+            let collapsed = self.prefs.collapsed.contains(&group);
             let rows = members
                 .iter()
+                .filter(|_| !collapsed)
                 .map(|pr| self.profile_card(p, pr))
-                .chain((self.overview_filter == OverviewFilter::All).then(|| add_card(p, &group)));
+                .chain(
+                    (!collapsed && self.overview_filter == OverviewFilter::All)
+                        .then(|| add_card(p, &group)),
+                );
             let hot = self.drop_zone.as_deref() == Some(group.as_str());
-            let mut head = row![
-                ui::eyebrow(p.muted, &label),
-                ui::badge(p.surface_hi, p.muted, count.to_string()),
-                ui::fill(),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center);
+            // The heading opens and closes the group (also in its context menu).
+            let toggle = button(
+                row![
+                    icons::icon(
+                        if collapsed {
+                            Glyph::ChevronRight
+                        } else {
+                            Glyph::ChevronDown
+                        },
+                        14.0,
+                        p.muted
+                    ),
+                    ui::eyebrow(p.muted, &label),
+                    ui::badge(p.surface_hi, p.muted, count.to_string()),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding::from([4, 6]))
+            .style(theme::row_btn(*p, false))
+            .on_press(Message::ToggleGroup(group.clone()));
+            let mut head = row![toggle, ui::fill()]
+                .spacing(8)
+                .align_y(Alignment::Center);
             if let Some(f) = filter.take() {
                 head = head.push(f);
             }
@@ -1015,6 +1038,8 @@ impl App {
 
     fn history_rows<'a>(&'a self, p: &Palette) -> El<'a, Message> {
         use sync_orchestrator::HistoryFilter;
+        // Rows can be excluded from the profile being shown.
+        let excludable = self.selected.is_some();
         let filters = row([
             (HistoryFilter::All, "Toutes"),
             (HistoryFilter::Problems, "Problèmes"),
@@ -1064,7 +1089,7 @@ impl App {
                 p,
                 &self.history_tree,
                 Message::HistoryTree,
-                &|r, indent| history_row(&pal, r, Some(indent)),
+                &|r, indent| history_row(&pal, r, Some(indent), excludable),
                 &|folder| crate::tree::action_summary(&pal, folder),
                 &|_| None,
                 empty,
@@ -1083,7 +1108,7 @@ impl App {
         };
         let mut col = column![].spacing(2);
         for r in &page.rows {
-            col = col.push(history_row(p, r, None));
+            col = col.push(history_row(p, r, None, excludable));
         }
         if page.rows.is_empty() {
             col = col.push(ui::muted(p, empty));
@@ -1590,7 +1615,12 @@ fn onboarding<'a>(p: &Palette) -> El<'a, Message> {
 
 /// One historical operation and its outcome. In the folder view
 /// (`indent`), only its name is shown, below its folder.
-fn history_row<'a>(p: &Palette, r: &'a model::HistoryRow, indent: Option<f32>) -> El<'a, Message> {
+fn history_row<'a>(
+    p: &Palette,
+    r: &'a model::HistoryRow,
+    indent: Option<f32>,
+    excludable: bool,
+) -> El<'a, Message> {
     let (status_color, glyph) = match r.status.as_str() {
         "done" => (p.success, Glyph::Check),
         "no_action" => (p.faint, Glyph::Check),
@@ -1608,6 +1638,19 @@ fn history_row<'a>(p: &Palette, r: &'a model::HistoryRow, indent: Option<f32>) -
     if let Some(v) = &r.version {
         detail = format!("{detail}  · version préservée {v}");
     }
+    // Ignoring what a row reports: only for a real entry of the profile.
+    let exclude: El<'a, Message> = match &r.op {
+        Some(op) if excludable && !op.path.is_empty() => ui::icon_button(
+            p,
+            Glyph::Shield,
+            "Exclure du profil…",
+            Some(Message::Exclusion(crate::exclusion::ExclusionMsg::Ask {
+                path: op.path.clone(),
+                directory: op.kind == "directory",
+            })),
+        ),
+        _ => Space::new().into(),
+    };
     row![
         icons::icon(glyph, 14.0, status_color),
         container(ui::caption(p, action)).width(Length::Fixed(90.0)),
@@ -1622,6 +1665,7 @@ fn history_row<'a>(p: &Palette, r: &'a model::HistoryRow, indent: Option<f32>) -
             model::outcome_label(&r.status).to_owned(),
             12.0
         ),
+        exclude,
     ]
     .spacing(10)
     .padding(Padding {

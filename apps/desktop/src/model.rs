@@ -142,8 +142,8 @@ impl PreviewView {
                 .ok_or("identifiant de plan absent")?
                 .to_owned(),
             profile: plan["profile"].as_str().unwrap_or("").to_owned(),
-            source: pretty_path(plan["source"]["location"].as_str().unwrap_or("")),
-            destination: pretty_path(plan["destination"]["location"].as_str().unwrap_or("")),
+            source: plan_location(plan["source"]["location"].as_str().unwrap_or("")),
+            destination: plan_location(plan["destination"]["location"].as_str().unwrap_or("")),
             source_complete: plan["source"]["complete"].as_bool().unwrap_or(false),
             destination_complete: plan["destination"]["complete"].as_bool().unwrap_or(false),
             summary,
@@ -629,6 +629,23 @@ pub(crate) fn destination_of(profile: &Profile) -> String {
     endpoint_location(&profile.destination, profile.remote_destination.as_ref())
 }
 
+/// Seconds left, extrapolated from the average pace since the start; `None`
+/// while the estimate would be noise (under 2 % done, first seconds, finished).
+pub(crate) fn remaining_secs(progress: Option<f32>, elapsed_secs: u64) -> Option<u64> {
+    progress
+        .filter(|f| *f > 0.02 && *f < 1.0 && elapsed_secs >= 3)
+        .map(|f| (elapsed_secs as f32 * (1.0 - f) / f).round() as u64)
+}
+
+/// « reste ≈ 6 min » (minutes up to 90 min, then hours and minutes).
+pub(crate) fn remaining_label(secs: u64) -> String {
+    match secs {
+        0..90 => "reste moins de 2 min".to_owned(),
+        90..5400 => format!("reste ≈ {} min", (secs + 30) / 60),
+        _ => format!("reste ≈ {} h {:02}", secs / 3600, (secs % 3600) / 60),
+    }
+}
+
 /// Binary-prefixed byte count with French decimal comma.
 pub(crate) fn bytes(value: u64) -> String {
     const UNITS: [&str; 5] = ["o", "Ko", "Mo", "Go", "To"];
@@ -743,6 +760,16 @@ pub(crate) fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Readable form of the location stored in a plan: a local path, or the
+/// serialized remote endpoint (names only, never a secret) shown as in the
+/// profile list (`user@host:/root`, a share path…) instead of raw JSON.
+pub(crate) fn plan_location(value: &str) -> String {
+    match serde_json::from_str::<RemoteEndpoint>(value) {
+        Ok(remote) => pretty_path(&endpoint_location(std::path::Path::new(""), Some(&remote))),
+        Err(_) => pretty_path(value),
+    }
 }
 
 /// Removes the Windows verbatim prefix added by canonicalization.
@@ -907,6 +934,31 @@ mod tests {
         assert_eq!(pretty_path(r"\\?\C:\data"), r"C:\data");
         assert_eq!(pretty_path(r"\\?\UNC\nas\share"), r"\\nas\share");
         assert_eq!(pretty_path("/home/a"), "/home/a");
+    }
+
+    #[test]
+    fn remaining_time_is_extrapolated_and_worded_by_magnitude() {
+        // Given 50 % in 60 s, Then about 60 s remain, worded as under 2 min.
+        assert_eq!(remaining_secs(Some(0.5), 60), Some(60));
+        assert_eq!(remaining_label(60), "reste moins de 2 min");
+        assert_eq!(remaining_label(360), "reste ≈ 6 min");
+        assert_eq!(remaining_label(7_500), "reste ≈ 2 h 05");
+        // Unknown, barely started or finished: no estimate.
+        assert_eq!(remaining_secs(None, 60), None);
+        assert_eq!(remaining_secs(Some(0.01), 60), None);
+        assert_eq!(remaining_secs(Some(0.5), 1), None);
+        assert_eq!(remaining_secs(Some(1.0), 60), None);
+    }
+
+    #[test]
+    fn a_plan_location_is_readable_whatever_its_provider() {
+        // Given the serialized endpoints stored in a plan, Then no JSON shows.
+        let smb = serde_json::to_string(&RemoteEndpoint::Smb {
+            root: r"\\Nas\New Anime".into(),
+        })
+        .unwrap();
+        assert_eq!(plan_location(&smb), r"\\Nas\New Anime");
+        assert_eq!(plan_location(r"\\?\E:\Videos"), r"E:\Videos");
     }
 
     #[test]

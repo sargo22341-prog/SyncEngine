@@ -4,13 +4,14 @@
 
 mod endpoints;
 pub use endpoints::RemoteEndpoint;
+/// Mode of a profile, re-exported for the observers of a scheduled run.
+pub use sync_plan::SyncMode;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use sync_core::ProfileId;
 use sync_filter::{Filter, FilterRules};
-use sync_plan::SyncMode;
 use thiserror::Error;
 
 /// How a one-way preview establishes that two files present on both sides

@@ -132,6 +132,16 @@ impl App {
         self.group_next()
     }
 
+    /// Names of the profiles still waiting their turn in the chain.
+    pub(crate) fn group_waiting(&self) -> Vec<String> {
+        self.group_run.as_ref().map_or_else(Vec::new, |run| {
+            run.queue
+                .iter()
+                .filter_map(|id| self.profile(id).map(|p| p.name.clone()))
+                .collect()
+        })
+    }
+
     /// Profile the chain is waiting for, if any.
     pub(crate) fn group_waits_for(&self, id: &ProfileId) -> bool {
         self.group_run

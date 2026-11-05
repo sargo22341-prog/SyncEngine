@@ -105,7 +105,17 @@ impl App {
             return Task::none();
         }
         self.agent_polling = true;
-        Task::perform(
+        // An interrupted execution blocks its profile until it is diagnosed:
+        // search again as soon as the agent no longer owns the state.
+        let recheck = (self.interruptions_unchecked
+            && self.agent_job.is_none()
+            && self.job.is_none()
+            && self.dialog.is_none())
+        .then(|| {
+            self.interruptions_unchecked = false;
+            crate::interrupted::lookup(app)
+        });
+        let poll = Task::perform(
             backend::call(app, |app| {
                 Ok((
                     app.agent_live()?,
@@ -116,7 +126,11 @@ impl App {
                 ))
             }),
             Message::AgentLive,
-        )
+        );
+        match recheck {
+            Some(lookup) => Task::batch([lookup, poll]),
+            None => poll,
+        }
     }
 
     /// Follows a scheduled run from the agent's snapshot. An unreadable read
