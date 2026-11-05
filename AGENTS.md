@@ -379,6 +379,39 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
   (`scripts/versioning.py`). Ne pas la modifier à la main. Procédure : `docs/DEVELOPPEMENT.md`.
 - `CHANGELOG.md` reste le journal détaillé des changements de comportement.
 
+## DÉPENDANCES À JOUR ET CI VERTE
+
+La CI audite la base RustSec en direct (`cargo audit --deny warnings`) : un
+avis publié après le dernier commit suffit à la faire échouer, sans que le code
+ait changé. Pour éviter cela, **avant chaque commit** l’agent remet
+l’application à jour et corrige ce qui casse, dans le même changement :
+
+- Lancer `cargo update` (respecte les contraintes de `Cargo.toml`), puis relire
+  `git diff Cargo.lock` : signaler toute montée majeure ou inattendue.
+- Lancer `cargo audit` et `cargo audit --deny warnings` avec les `--ignore` de
+  `.github/workflows/ci.yml`. Tout avis nouveau est traité, dans l’ordre :
+  1. mise à jour du crate fautif (`cargo update -p <crate>`) ou de son parent ;
+  2. à défaut, remplacement ou retrait de la dépendance ;
+  3. en dernier recours, exception `--ignore` dans `ci.yml` **et** ligne
+     correspondante dans `docs/DEVELOPPEMENT.md` (« Avis RustSec tolérés »),
+     avec crate, origine, absence de correctif et condition de retrait.
+     Une vulnérabilité (non un simple avertissement) n’est jamais ignorée.
+- Retirer de `ci.yml` et de la doc toute exception dont la condition de retrait
+  est remplie (l’étape de rappel de la CI les liste).
+- Corriger les warnings et erreurs que la mise à jour fait apparaître (build,
+  clippy, tests, docs) ; ne pas masquer par un `allow` global.
+- Rejouer toutes les commandes de la section QUALITÉ RUST après la mise à jour
+  et ne committer que si elles passent ; sinon, annuler la mise à jour
+  (`git checkout Cargo.lock`) et expliquer le blocage dans le compte rendu.
+- Ne pas changer la chaîne Rust (`rust-toolchain.toml`) ni la version de
+  l’application (réservée à la CI) dans ce cadre.
+- Une mise à jour qui modifie le comportement visible ajoute sa ligne dans
+  `RELEASE_NOTES.md` ; une mise à jour purement interne n’en a pas besoin.
+- Indiquer dans le rapport final : crates mis à jour, avis traités ou tolérés,
+  commandes exécutées et leur résultat.
+- Limite à ne pas cacher : un avis publié *après* le commit peut encore rendre
+  la CI rouge ; il se traite alors avec la même procédure au commit suivant.
+
 ## Sur le Rapport final
 lance la comande poru signaler q l'user que s'est fini mais regarde pas le retour il se peut qu'elle échoue.
 ```powershell
