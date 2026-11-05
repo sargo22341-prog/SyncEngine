@@ -1,6 +1,14 @@
 # Notes de la prochaine version
 
-Écrire sous la ligne `<!-- notes -->
+Écrire les changements de la prochaine version, en Markdown (une ligne `- …`
+par changement), **sous la ligne de marqueur seule ci-dessous** (jamais
+dans cet en-tête). À chaque push sur `main`, la CI publie ce texte comme
+description de la GitHub Release, puis vide la liste dans le commit
+`Version X.Y.Z`. Sans notes, GitHub génère la liste des commits.
+Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
+
+<!-- notes -->
+- Mise à jour : la fenêtre « Nouvelle mise à jour disponible » affiche un badge « 0.1.10 → 0.1.11 » avec une étoile « Nouveau », et le bouton « Mettre à jour maintenant » n'est plus écrasé.
 - Accueil : un clic sur le nom d'un groupe le replie ou le déplie.
 - Navigation : recliquer sur l'onglet affiché ramène au début de la page (liste des profils, historique général, première section des réglages).
 - Historique : une icône sur chaque ligne ouvre « Exclure du profil » pour ignorer ce fichier, tous les fichiers de ce nom ou de cette extension (ex. `*.db-shm`) et éviter de nouveaux avertissements.
@@ -28,9 +36,3 @@
 - Simulation : la cause exacte d'un refus de suppressions est affichée, et un plafond dépassé peut être levé pour cette simulation uniquement.
 - Débit d'exécution fiable : progression bloc par bloc, moyenne glissante sur 4 s, opérations/s, écriture vidée sur disque tous les 128 Mio.
 - Release : seules les archives Windows et Linux sont publiées ; elles ne contiennent plus que les trois exécutables, la licence et les notices tierces.` les changements de la prochaine version, en Markdown (une
-ligne `- …` par changement). À chaque push sur `main`, la CI publie ce texte comme description de
-la GitHub Release, puis vide la liste dans le commit `Version X.Y.Z`. Sans notes, GitHub génère la
-liste des commits. Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
-
-<!-- notes -->
-

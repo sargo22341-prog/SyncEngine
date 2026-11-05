@@ -95,6 +95,13 @@ class VersioningTests(unittest.TestCase):
             self.assertEqual(notes.read_text(), "# Title\nhow-to\n<!-- notes -->\n\n")
             self.assertEqual(versioning.notes(notes), "")
 
+    def test_repository_notes_file_has_one_marker_line(self):
+        # Un marqueur cité dans l'en-tête faisait ranger les notes au mauvais endroit
+        # (release publiée sans notes) : il ne doit apparaître que seul sur sa ligne.
+        text = versioning.read(versioning.ROOT / "RELEASE_NOTES.md")
+        self.assertEqual(text.count(versioning.MARKER), 1)
+        self.assertIn(versioning.MARKER, text.splitlines())
+
     def test_missing_marker_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             notes = Path(tmp) / "RELEASE_NOTES.md"

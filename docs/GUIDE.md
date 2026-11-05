@@ -353,7 +353,7 @@ classique).
 publiée sur GitHub (ni brouillon ni pré-version, sans compte ni jeton). Si elle
 est plus récente que la version installée (comparaison semver : `0.1.10` est
 plus récente que `0.1.9`) et qu'une archive existe pour cette plateforme, la
-fenêtre **« Nouvelle mise à jour disponible »** affiche les deux versions, la
+fenêtre **« Nouvelle mise à jour disponible »** affiche un badge « ancienne → nouvelle version » (étiquette « Nouveau »), la
 date de publication et les notes de version (« Afficher plus » si elles sont
 longues). **« Plus tard »** la ferme ; elle reviendra à la prochaine ouverture.
 Rien n'est installé sans clic sur **« Mettre à jour maintenant »**. Un échec de

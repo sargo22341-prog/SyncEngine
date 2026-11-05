@@ -372,8 +372,16 @@ Priorité : sécurité des données, interfaces stables, modularité, honnêtet�
 - Toute modification de l’application (fonctionnalité, correction, changement
   visible ou de comportement) ajoute **une ligne courte** `- …` en français dans
   `RELEASE_NOTES.md`, sous la ligne `<!-- notes -->`, dans le même changement.
+- Écrire les lignes **uniquement sous la ligne de marqueur**, celle qui ne
+  contient que `<!-- notes -->` (dernière ligne de l’en-tête). Ne jamais
+  recopier ce marqueur dans l’en-tête ni insérer une note ailleurs : un
+  marqueur cité en ligne a déjà fait publier une release sans notes
+  (`scripts/test_versioning.py` le vérifie).
 - Ne jamais toucher à l’en-tête ni au marqueur, ni vider la liste à la main :
-  la CI la publie comme description de la GitHub Release puis la vide.
+  à chaque push sur `main`, la CI publie la liste comme description de la
+  GitHub Release, puis un commit `Version X.Y.Z [skip ci]` la vide. Les notes
+  sont donc lues par la mise à jour intégrée dans la fenêtre « Nouvelle mise
+  à jour disponible ». Après une release, faire `git pull` avant de reprendre.
 - Un changement purement interne (tests, documentation, CI) n’a pas besoin de note.
 - La version vit dans `[workspace.package]` de `Cargo.toml` ; seule la CI la monte
   (`scripts/versioning.py`). Ne pas la modifier à la main. Procédure : `docs/DEVELOPPEMENT.md`.

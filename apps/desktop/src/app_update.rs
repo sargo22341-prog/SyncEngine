@@ -16,7 +16,7 @@ use crate::theme::{self, Palette, Tone};
 use crate::ui::{self, El};
 use app_update::{Check, Installed, Progress, Staged, Target, Update, UpdateError, UpdateSource};
 use iced::widget::{Space, column, container, row, scrollable};
-use iced::{Alignment, Length, Padding, Task};
+use iced::{Alignment, Color, Length, Padding, Task};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -686,18 +686,38 @@ impl App {
         col.into()
     }
 
+    /// « 0.1.10 → ✦ 0.1.11 NOUVEAU » badge, with the publication date when known.
+    fn version_badge<'a>(&self, p: &Palette, update: &'a Update) -> El<'a, Message> {
+        let current = ui::chip(p.surface_hi, p.muted, env!("CARGO_PKG_VERSION"));
+        let fresh = container(
+            row![
+                icons::icon(Glyph::Bolt, 14.0, Color::WHITE),
+                ui::strong(Color::WHITE, update.version.clone(), 14.0),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding(Padding::from([5, 12]))
+        .style(theme::pill(p.violet, Color::WHITE));
+        let mut badge = row![
+            current,
+            icons::icon(Glyph::ArrowRight, 16.0, p.faint),
+            fresh,
+            ui::chip(theme::alpha(p.violet, 0.16), p.violet, "NOUVEAU"),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        if let Some(date) = published(update.published_at.as_deref()) {
+            badge = badge.push(ui::fill());
+            badge = badge.push(ui::caption(p, format!("publiée le {date}")));
+        }
+        badge.into()
+    }
+
     /// Body of an available update: versions, date, notes, actions.
     fn available_view<'a>(&self, p: &Palette, update: &'a Update, dialog: bool) -> El<'a, Message> {
-        let mut facts = format!(
-            "Version actuelle : {} · nouvelle version : {}",
-            env!("CARGO_PKG_VERSION"),
-            update.version
-        );
-        if let Some(date) = published(update.published_at.as_deref()) {
-            facts.push_str(&format!(" · publiée le {date}"));
-        }
         let mut col =
-            column![ui::strong(p.text, facts, 14.0), self.notes_view(p, update),].spacing(12);
+            column![self.version_badge(p, update), self.notes_view(p, update),].spacing(12);
         if let Some(problem) = update.checksum_problem() {
             col = col.push(self.error_view(p, &failure(problem)));
         }
@@ -719,10 +739,6 @@ impl App {
         let ready = self.update_blocker().is_none() && update.checksum_problem().is_none();
         let mut actions = row![].spacing(10).align_y(Alignment::Center);
         if dialog {
-            actions = actions.push(ui::caption(
-                p,
-                "Rien n’est installé sans votre accord. Profils et historique sont conservés.",
-            ));
             actions = actions.push(ui::fill());
             actions = actions.push(ui::action(
                 p,

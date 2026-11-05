@@ -5,6 +5,10 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Fenêtre de mise à jour, notes de version
+- La fenêtre « Nouvelle mise à jour disponible » montre un badge `ancienne → ✦ nouvelle NOUVEAU` ; la phrase de réassurance est retirée, ce qui libère la place du bouton « Mettre à jour maintenant » (il était écrasé).
+- `RELEASE_NOTES.md` : les notes avaient été insérées dans l'en-tête (marqueur cité en ligne) au lieu de sous la ligne de marqueur, d'où une release 0.1.11 sans notes. En-tête réécrit sans marqueur, test `test_repository_notes_file_has_one_marker_line`, règle précisée dans `AGENTS.md`.
+
 ### Groupes repliables, retour au début, exclusion depuis l'historique
 - Accueil : l'en-tête d'un groupe replie/déplie ses profils (même réglage que le menu contextuel).
 - Un clic sur l'onglet déjà affiché ramène à la racine de la section (`back_to_section_start`).
