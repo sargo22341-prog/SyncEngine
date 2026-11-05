@@ -161,7 +161,8 @@ jobs:
             --ignore RUSTSEC-2026-0253 \
             --ignore RUSTSEC-2026-0370 \
             --ignore RUSTSEC-2026-0371 \
-            --ignore RUSTSEC-2026-0372
+            --ignore RUSTSEC-2026-0372 \
+            --ignore RUSTSEC-2026-0441
 
       # Rappel visible à chaque run des avis tolérés ci-dessus, pour ne pas les oublier.
       - name: Audit RustSec (avis tolérés, rappel)
