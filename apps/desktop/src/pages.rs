@@ -301,8 +301,7 @@ impl App {
          -> El<'a, Message> {
             row![
                 ui::metric(p, value.to_string(), "", 24.0),
-                ui::colored(p.text, label, 14.0),
-                ui::fill(),
+                container(ui::colored(p.text, label, 14.0)).width(Length::Fill),
                 ui::action_sm(
                     p,
                     if primary {
