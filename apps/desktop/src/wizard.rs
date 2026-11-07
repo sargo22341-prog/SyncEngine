@@ -703,10 +703,6 @@ impl Wizard {
                 .width(Length::FillPortion(1)),
             ]
             .height(Length::Shrink),
-            ui::caption(
-                p,
-                "La destination doit être distincte de la source et non imbriquée. Une sauvegarde ou un miroir ne modifie jamais la source."
-            ),
         ]
         .spacing(20)
         .into()
@@ -1365,10 +1361,6 @@ impl Wizard {
                     row(chips).spacing(6).wrap(),
                 ]
                 .spacing(12)
-            ),
-            ui::caption(
-                p,
-                "« Enregistrer et simuler » calcule le plan sans modifier aucun fichier."
             ),
         ]
         .spacing(14)

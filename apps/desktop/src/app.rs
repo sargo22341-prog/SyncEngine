@@ -199,6 +199,10 @@ pub(crate) enum Dialog {
     Exclusion(Box<crate::exclusion::ExclusionDialog>),
     /// Executions interrupted by a crash, shown at start-up.
     Interrupted(Box<crate::interrupted::InterruptedDialog>),
+    /// « Exécutions à vérifier » (carte « À traiter »).
+    Review(Box<crate::review::ReviewDialog>),
+    /// « Autorisations à renouveler » (carte « À traiter »).
+    Renew(Box<crate::review::RenewDialog>),
     /// « Supprimer toutes les données de SyncEngine ».
     Purge(Box<crate::purge_view::PurgeDialog>),
     Remove {
@@ -344,6 +348,8 @@ pub(crate) enum Message {
     /// Journal clean-up warnings once acknowledged.
     Diagnosed(Result<Vec<String>, Failure>),
     Interrupted(crate::interrupted::InterruptedMsg),
+    Review(crate::review::ReviewMsg),
+    Renew(crate::review::RenewMsg),
     Purge(crate::purge_view::PurgeMsg),
     /// Application update (Réglages › « Mises à jour » and its dialog).
     AppUpdate(crate::app_update::UpdateMsg),
@@ -374,6 +380,8 @@ pub(crate) enum Message {
     /// Shows the next page of the global history.
     HistoryMore,
     ShowRunProblems(ProfileId, String),
+    /// Opens the history of a profile with this precise run expanded.
+    ShowRun(ProfileId, String),
     HistoryFilter(sync_orchestrator::HistoryFilter),
     HistoryQuery(String),
     HistorySearch,
@@ -549,14 +557,14 @@ pub(crate) struct App {
 }
 
 /// Compact tracker size (window opened by the agent) and normal window size.
-pub(crate) const MINI_SIZE: iced::Size = iced::Size::new(400.0, 600.0);
+pub(crate) const MINI_SIZE: iced::Size = iced::Size::new(460.0, 600.0);
 /// Gap kept between the tracker window and the screen edges. The bottom one
 /// also clears a standard taskbar (the work area is not exposed by the
 /// toolkit): on a taller or side taskbar the window stays fully visible.
 pub(crate) const MINI_MARGIN: iced::Size = iced::Size::new(14.0, 64.0);
 pub(crate) const FULL_SIZE: iced::Size = iced::Size::new(1280.0, 820.0);
 pub(crate) const FULL_MIN_SIZE: iced::Size = iced::Size::new(980.0, 640.0);
-pub(crate) const MINI_MIN_SIZE: iced::Size = iced::Size::new(360.0, 420.0);
+pub(crate) const MINI_MIN_SIZE: iced::Size = iced::Size::new(420.0, 420.0);
 /// Enlarged tracker, still the agent card (the interface opens at the end).
 pub(crate) const MINI_LARGE_SIZE: iced::Size = iced::Size::new(1000.0, 760.0);
 pub(crate) const SEARCH_ID: &str = "profile-search";

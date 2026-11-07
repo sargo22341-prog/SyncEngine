@@ -123,7 +123,6 @@ run).
 | RUSTSEC-2026-0253 | `lru` 0.16 (« unsound » : `LruCache::pop()` si le `Drop` d'une clé panique sous `catch_unwind`) | `cryoglyph` 0.1 (rendu du texte d'`iced_wgpu` 0.14) | iced publié avec `cryoglyph` sur `lru` ≥ 0.18.2 (déjà le cas sur la branche principale d'iced) |
 | RUSTSEC-2026-0192 | `ttf-parser` (non maintenu) | `fontdb` 0.23 / `cosmic-text` 0.15 (iced 0.14), `ab_glyph` (décorations Wayland de `winit`) | iced publié sur `cosmic-text`/`fontdb` 0.24 (`skrifa`) |
 | RUSTSEC-2024-0436 | `paste` (non maintenu) | `metal` 0.32 via `wgpu` 27 ; **macOS uniquement**, jamais compilé pour Windows ou Linux | iced publié sur `wgpu` ≥ 30 (`objc2-metal`) |
-| RUSTSEC-2026-0441 | `pin-utils` (non maintenu) | `wasmtimer` via `iced_futures` ; **cible wasm32 uniquement** (`cargo tree -i pin-utils` est vide pour Windows et Linux) | iced publié sans `wasmtimer`/`pin-utils` |
 
 La branche principale d'iced (0.15 en développement) règle `lru`, `ttf-parser`
 et `paste`, mais refond l'API des widgets et n'est pas publiée : la migration

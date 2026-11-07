@@ -1131,9 +1131,6 @@ impl App {
         ]
         .spacing(14);
 
-        if profile.mode == sync_plan::SyncMode::Mirror {
-            col=col.push(ui::caption(p,"Miroir : les fichiers déjà prévus à la copie sont relus dans leur état actuel au démarrage de leur transfert. Un fichier modifié pendant sa lecture reste refusé ; les suppressions et la destination gardent leurs contrôles."));
-        }
         if !preview.view.source_complete || !preview.view.destination_complete {
             col = col.push(ui::callout(
                 p,
@@ -1605,7 +1602,7 @@ impl App {
                 _ => p.danger,
             };
             runs = runs.push(
-                container(
+                button(
                     row![
                         ui::dot(dot, 10.0),
                         column![
@@ -1627,7 +1624,10 @@ impl App {
                     .spacing(14)
                     .align_y(Alignment::Center),
                 )
-                .padding(10),
+                .padding(10)
+                .width(Length::Fill)
+                .style(theme::row_btn(*p, false))
+                .on_press(Message::ShowRun(profile.id.clone(), run.execution.clone())),
             );
         }
         if list.is_empty() {

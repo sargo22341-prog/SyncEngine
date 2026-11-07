@@ -694,6 +694,8 @@ impl App {
                 self.refresh()
             }
             Message::Interrupted(msg) => self.interrupted(msg),
+            Message::Review(msg) => self.review(msg),
+            Message::Renew(msg) => self.renew(msg),
             Message::Purge(msg) => self.purge(msg),
             Message::AppUpdate(msg) => self.app_update(msg),
             Message::Remove(id) => {
@@ -965,6 +967,15 @@ impl App {
                 self.selected = Some(id);
                 self.expanded_run = Some(execution.clone());
                 self.history_filter = sync_orchestrator::HistoryFilter::Problems;
+                self.history_query.clear();
+                self.history = None;
+                self.go(Nav::History);
+                self.reload_history(execution)
+            }
+            Message::ShowRun(id, execution) => {
+                self.selected = Some(id);
+                self.expanded_run = Some(execution.clone());
+                self.history_filter = sync_orchestrator::HistoryFilter::All;
                 self.history_query.clear();
                 self.history = None;
                 self.go(Nav::History);

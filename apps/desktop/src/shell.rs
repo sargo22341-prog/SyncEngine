@@ -90,11 +90,28 @@ impl App {
         if queue.pending.is_empty() {
             rows = rows.push(ui::caption(p, "Aucun autre profil en attente."));
         }
-        Some(container(column![
-            ui::strong(p.text, format!("File d’attente · {} profil(s)", queue.pending.len() + 1), 16.0),
-            container(scrollable(rows).height(Length::Shrink).style(theme::scroll(*p))).max_height(220.0),
-            ui::caption(p, "Un seul profil est exécuté à la fois. Les suivants démarrent après sa fin ; toute modification reste revérifiée avant exécution."),
-        ].spacing(14)).padding(20).width(Length::Fill).style(theme::card(*p, 0.0, false)).into())
+        Some(
+            container(
+                column![
+                    ui::strong(
+                        p.text,
+                        format!("File d’attente · {} profil(s)", queue.pending.len() + 1),
+                        16.0
+                    ),
+                    container(
+                        scrollable(rows)
+                            .height(Length::Shrink)
+                            .style(theme::scroll(*p))
+                    )
+                    .max_height(220.0),
+                ]
+                .spacing(14),
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::card(*p, 0.0, false))
+            .into(),
+        )
     }
     pub(crate) fn view(&self) -> El<'_, Message> {
         let p = self.palette();
@@ -150,26 +167,45 @@ impl App {
             let large = self.mini_large;
             let mut body = column![
                 row![
-                    charts::mark(Mark { from: p.backup, to: p.violet, turn }, if large { 40.0 } else { 30.0 }),
+                    charts::mark(
+                        Mark {
+                            from: p.backup,
+                            to: p.violet,
+                            turn
+                        },
+                        if large { 40.0 } else { 30.0 }
+                    ),
                     ui::title(p, "SyncEngine", if large { 22.0 } else { 18.0 }),
                     ui::fill(),
                     ui::status(
                         p,
-                        if wait.resident.available { p.backup } else { p.faint },
-                        if wait.resident.available { "Agent actif" } else { "Agent arrêté" },
+                        if wait.resident.available {
+                            p.backup
+                        } else {
+                            p.faint
+                        },
+                        if wait.resident.available {
+                            "Agent actif"
+                        } else {
+                            "Agent arrêté"
+                        },
                     ),
                     ui::action(
                         p,
                         Tone::Secondary,
-                        Some(if large { Glyph::ChevronUp } else { Glyph::ChevronDown }),
+                        Some(if large {
+                            Glyph::ChevronUp
+                        } else {
+                            Glyph::ChevronDown
+                        }),
                         if large { "Réduire" } else { "Agrandir" },
                         Some(Message::MiniToggle),
                     ),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center),
-                ui::caption(p, "Synchronisation planifiée en cours. L’interface complète s’ouvrira à la fin ; pause et annulation restent disponibles."),
-            ].spacing(16);
+            ]
+            .spacing(16);
             if live.is_some()
                 && let Some(job) = &self.agent_job
             {
@@ -211,7 +247,7 @@ impl App {
                 ));
             }
             return scrollable(
-                container(container(body).max_width(if large { 1040.0 } else { 420.0 }))
+                container(container(body).max_width(if large { 1040.0 } else { 480.0 }))
                     .padding(if large { 24 } else { 16 })
                     .width(Length::Fill)
                     .center_x(Length::Fill),

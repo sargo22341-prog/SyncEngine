@@ -283,6 +283,8 @@ impl App {
             Dialog::Trash(trash) => (720.0, self.trash_dialog(&dp, trash)),
             Dialog::Exclusion(d) => (560.0, self.exclusion_dialog(&dp, d)),
             Dialog::Interrupted(d) => (680.0, self.interrupted_dialog(&dp, d)),
+            Dialog::Review(d) => (640.0, self.review_dialog(&dp, d)),
+            Dialog::Renew(d) => (560.0, self.renew_dialog(&dp, d)),
             Dialog::Purge(d) => (640.0, self.purge_dialog(&dp, d)),
             Dialog::Update => (640.0, self.update_dialog(&dp)),
             Dialog::Remove { profile } => {
@@ -678,7 +680,12 @@ impl App {
     }
 }
 
-fn dialog_head<'a>(p: &Palette, glyph: Glyph, color: iced::Color, title: &str) -> El<'a, Message> {
+pub(crate) fn dialog_head<'a>(
+    p: &Palette,
+    glyph: Glyph,
+    color: iced::Color,
+    title: &str,
+) -> El<'a, Message> {
     row![
         ui::glyph_box(glyph, color, 40.0),
         ui::title(p, title.to_owned(), 19.0),

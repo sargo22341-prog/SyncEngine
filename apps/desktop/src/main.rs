@@ -23,6 +23,7 @@ mod pages;
 mod profile;
 mod purge;
 mod purge_view;
+mod review;
 mod schedules;
 mod shell;
 mod speed;

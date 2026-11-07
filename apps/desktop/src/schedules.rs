@@ -307,7 +307,6 @@ impl App {
         let end = today + 7 * 86_400;
         // (day index, hour) → (profile name, mode, occurrences)
         let mut cells = WeekCells::new();
-        let mut event_driven: Vec<String> = Vec::new();
         for s in &self.ws.schedules {
             let id = &s.schedule.approved.id;
             let name = self
@@ -317,10 +316,6 @@ impl App {
             let times = s
                 .schedule
                 .occurrences(today, end, WEEK_OCCURRENCES_PER_SCHEDULE);
-            if times.is_empty() && s.schedule.enabled {
-                event_driven.push(name);
-                continue;
-            }
             for at in times {
                 let day = ((at - today) / 86_400) as usize;
                 let hour = (at.rem_euclid(86_400) / 3600) as usize;
@@ -420,15 +415,6 @@ impl App {
         } else {
             grid
         });
-        if !event_driven.is_empty() {
-            body = body.push(ui::muted(
-                p,
-                format!(
-                    "Sans horaire fixe (déclenchés par la session) : {}.",
-                    event_driven.join(", ")
-                ),
-            ));
-        }
         container(body)
             .padding(14)
             .width(Length::Fill)

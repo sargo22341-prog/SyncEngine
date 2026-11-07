@@ -297,7 +297,7 @@ impl App {
                     label: &'static str,
                     button_label: &'static str,
                     primary: bool,
-                    to: Nav|
+                    to: Message|
          -> El<'a, Message> {
             row![
                 ui::metric(p, value.to_string(), "", 24.0),
@@ -312,7 +312,7 @@ impl App {
                     },
                     None,
                     button_label,
-                    Some(Message::Nav(to)),
+                    Some(to),
                 ),
             ]
             .spacing(10)
@@ -348,9 +348,9 @@ impl App {
                 } else {
                     "exécutions à vérifier"
                 },
-                "Voir",
+                "Examiner",
                 true,
-                Nav::History,
+                Message::Review(crate::review::ReviewMsg::Open),
             ));
         }
         if renew > 0 {
@@ -361,9 +361,9 @@ impl App {
                 } else {
                     "autorisations à renouveler"
                 },
-                "Ouvrir",
+                "Renouveler",
                 problems == 0,
-                Nav::Schedules,
+                Message::Renew(crate::review::RenewMsg::Open),
             ));
         }
         container(body)
@@ -549,10 +549,9 @@ impl App {
                 .into_iter()
                 .filter(|pr| self.passes_filter(pr))
                 .collect();
-            if members.is_empty() && self.overview_filter != OverviewFilter::All {
-                continue;
-            }
-            shown += 1;
+            // Empty groups stay visible (with their filter bar): only the
+            // profiles are filtered out.
+            shown += members.len();
             let label = if group.is_empty() {
                 "Sans groupe".to_owned()
             } else {
