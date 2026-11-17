@@ -233,7 +233,10 @@ fenêtre s'ouvre au démarrage suivant :
   dernières opérations terminées.
 - **Reprendre** : acquitte l'interruption, retire les fichiers temporaires de
   la copie interrompue (seulement ceux nommés `.syncengine-….partial` et
-  consignés dans le journal ; les autres sont listés pour vérification), puis
+  consignés dans le journal ; les autres sont listés pour vérification) ainsi
+  que, dans les dossiers locaux où le plan écrivait des fichiers, les
+  temporaires `.syncengine-<n° du processus arrêté>-….partial` que l'arrêt
+  brutal a laissés sans les consigner (copies parallèles), puis
   lance une **nouvelle simulation complète**. Le journal n'est jamais rejoué :
   les fichiers déjà copiés apparaissent identiques et sont sautés. Il reste à
   confirmer l'exécution comme d'habitude.

@@ -63,6 +63,7 @@ fn crashed() -> Result<(tempfile::TempDir, Application, Profile), Failure> {
         source: "source".into(),
         destination: "destination".into(),
         versions: None,
+        process: Some(41),
     })?;
     journal.append(JournalRecord::OperationStarted {
         operation: op("op-1")?,
@@ -184,10 +185,39 @@ fn a_recorded_path_without_the_staging_name_is_never_removed() -> Result<(), Fai
     let path = journal(&temp);
     let text = fs::read_to_string(&path)?.replace(STAGING, "done.txt");
     fs::write(&path, text)?;
-    // When the user resumes, Then that file is listed to check, not removed.
+    // When the user resumes, Then that file is listed to check, not removed;
+    // only the real temporary of the killed process (pid 41) goes (M6).
     let resumed = app.resume_interrupted(&p.id)?;
-    assert!(resumed.removed.is_empty());
+    assert_eq!(resumed.removed, [STAGING]);
     assert_eq!(resumed.leftovers.len(), 1);
     assert!(Path::new(&p.destination.join("done.txt")).exists());
+    Ok(())
+}
+
+#[test]
+fn resuming_removes_unjournaled_temporaries_of_the_killed_process_only() -> Result<(), Failure> {
+    // M6 — Given a process killed while parallel copies had created more
+    // temporary files than its journal recorded (one in a sub-folder),
+    let (_temp, app, p) = crashed()?;
+    let unrecorded = ".syncengine-41-8-1.partial";
+    fs::write(p.destination.join(unrecorded), b"orphan")?;
+    // …a temporary of another process and a user file that looks like one,
+    let foreign = ".syncengine-99-8-1.partial";
+    fs::write(p.destination.join(foreign), b"other process")?;
+    fs::write(p.destination.join(".syncengine-41.partial"), b"user")?;
+    // When the user resumes,
+    let resumed = app.resume_interrupted(&p.id)?;
+    // Then every temporary of the killed process is removed from the folders
+    // its plan writes to, and nothing else.
+    assert!(resumed.leftovers.is_empty(), "{:?}", resumed.leftovers);
+    assert!(!p.destination.join(STAGING).exists());
+    assert!(!p.destination.join(unrecorded).exists());
+    assert!(p.destination.join(foreign).exists());
+    assert!(p.destination.join(".syncengine-41.partial").exists());
+    assert!(
+        resumed.removed.iter().any(|r| r == unrecorded),
+        "{:?}",
+        resumed.removed
+    );
     Ok(())
 }

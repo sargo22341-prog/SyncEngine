@@ -260,6 +260,7 @@ impl<'a> Run<'a> {
                 source: plan.source().location().to_owned(),
                 destination: plan.destination().location().to_owned(),
                 versions: req.versions.map(|store| store.folder().clone()),
+                process: Some(std::process::id()),
             })
             .map_err(ExecutionError::Journal)?;
         let mut context = ErrorContext::new().with_execution(req.execution_id.clone());

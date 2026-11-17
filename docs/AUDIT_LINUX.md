@@ -356,7 +356,7 @@ visible, `CHANGELOG.md` pour un changement de comportement.
 5. [x] **M7** Imbrication par identité de dossier (bind mount ; vérifier `subst` sous Windows).
 6. [x] **M1** État réel de l'agent Linux et installation des unités depuis l'interface.
 7. [x] **M5** Ordre `disable --now` → fichiers → `daemon-reload` + test à faux `systemctl`.
-8. [ ] **M6** `.partial` orphelins : journal d'intention ou nettoyage par pid.
+8. [x] **M6** `.partial` orphelins : journal d'intention ou nettoyage par pid.
 9. [ ] **M4** Secrets/agent SSH pour systemd et lanceur ; message avant simulation.
 10. [ ] **M3** FTP sans MLSD : message, `FEAT`, documentation (repli `LIST` optionnel).
 11. [ ] **M8** Spool distant configurable hors `/tmp`, contrôle d'espace.

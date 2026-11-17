@@ -31,6 +31,7 @@ fn started() -> JournalRecord {
         source: "C:/source".to_owned(),
         destination: "C:/destination".to_owned(),
         versions: None,
+        process: Some(41),
     }
 }
 

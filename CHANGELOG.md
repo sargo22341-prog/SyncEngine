@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Fichiers temporaires orphelins après arrêt brutal (audit Linux M6)
+- Après un `SIGKILL` pendant des copies parallèles, des `.syncengine-<pid>-….partial` créés mais pas encore consignés restaient pour toujours (masqués par le scanner). Le journal consigne désormais le processus qui exécute (`JournalRecord::ExecutionStarted::process`, `RecoveryReport::process`, champ additif ; un journal produit par cette version n'est pas relu par une version antérieure) et « Reprendre » retire aussi les temporaires de ce processus dans les dossiers locaux où le plan écrivait. Non fait : signalement des `.partial` présents en simulation.
+
 ### Agent planifié Linux (audit Linux M1, M5)
 - Sous Linux, une planification enregistrée dans l'interface ne s'exécutait jamais (aucune unité installée) alors que l'interface affichait « Agent actif ». L'interface installe désormais les unités systemd utilisateur à l'enregistrement d'une planification (`daemon-reload`, `enable --now` du minuteur, `enable` de l'unité de session), les retire après la dernière planification active, et affiche l'état observé (« Agent actif », « inactif », « non installé », « systemd indisponible »). Un fichier d'unité de même nom qui n'est pas de SyncEngine n'est jamais remplacé. Nouveau module `apps/desktop/src/systemd.rs` ; nouvelle trace temporaire `.<unité>.syncengine-tmp` inventoriée et purgée.
 - « Supprimer toutes les données » retirait les fichiers d'unité **avant** `systemctl --user disable --now` : `disable` échouait et un minuteur chargé pouvait relancer l'agent. Ordre corrigé : `disable --now`, fichiers et liens, puis `daemon-reload` (test avec un faux `systemctl` dans le `PATH`).

@@ -117,6 +117,12 @@ pub enum JournalRecord {
         destination: String,
         /// Dossier du magasin de versions, si la conservation est active.
         versions: Option<ResourcePath>,
+        /// Identifiant du processus qui exécute (ajout audit Linux M6) : les
+        /// dépôts locaux portent ce numéro (`.syncengine-<pid>-….partial`),
+        /// ce qui permet de retrouver ceux qu'un arrêt brutal a laissés sans
+        /// les consigner. Absent des journaux antérieurs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        process: Option<u32>,
     },
     /// Une mutation commence (préconditions sur le point d'être revérifiées).
     OperationStarted {
@@ -432,6 +438,8 @@ pub struct RecoveryReport {
     pub in_flight: Vec<InFlight>,
     /// Mutations prévues par le plan (consignées au début de l'exécution).
     pub mutations_planned: u64,
+    /// Processus qui exécutait, s'il est consigné.
+    pub process: Option<u32>,
     /// Vrai si la dernière ligne était incomplète.
     pub truncated_tail: bool,
 }
@@ -496,11 +504,13 @@ impl Recovery {
                 execution,
                 plan,
                 mutations,
+                process,
                 ..
             } => {
                 report.execution = Some(execution.clone());
                 report.plan = Some(plan.clone());
                 report.mutations_planned = *mutations;
+                report.process = *process;
             }
             JournalRecord::OperationStarted {
                 operation,

@@ -8,6 +8,7 @@ description de la GitHub Release, puis vide la liste dans le commit
 Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- « Reprendre » après un arrêt brutal retire aussi les fichiers temporaires que l’arrêt n’avait pas eu le temps de consigner.
 - Linux : enregistrer une planification installe et active l’agent systemd ; son état réel est affiché.
 - Linux : « Supprimer toutes les données » arrête l’agent systemd avant d’en retirer les fichiers.
 - Linux : une destination qui est une vue « mount --bind » de la source est refusée comme une destination imbriquée.

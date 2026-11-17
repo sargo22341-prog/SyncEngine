@@ -259,7 +259,11 @@ issue, les refus et les 100 dernières opérations. `acknowledge_interrupted`
 acquitte puis supprime les journaux (échecs rendus comme avertissements) ;
 `resume_interrupted` acquitte, retire par le connecteur du profil les seuls
 dépôts consignés portant le nom local `.syncengine-….partial` (sans suivre de
-lien), puis supprime les journaux. Le journal n'est jamais rejoué : l'interface
+lien), puis, si le journal consigne le processus (`ExecutionStarted::process`,
+champ additif), les fichiers `.syncengine-<processus>-….partial` des dossiers
+locaux où le plan stocké écrivait des fichiers (dépôts créés mais pas encore
+consignés par des copies parallèles), puis supprime les journaux. Le verrou
+d'exécution est tenu : aucun dépôt de ce compte n'est alors vivant. Le journal n'est jamais rejoué : l'interface
 lance ensuite une nouvelle simulation complète.
 
 Les fichiers en cours ne lisent pas le journal : avec

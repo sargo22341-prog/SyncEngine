@@ -539,6 +539,19 @@ pub(super) fn running(root: &Path, id: Option<&ProfileId>) -> Result<Vec<Running
     .map_err(io)
 }
 
+/// Stored plan (JSON text) of an attempt, if any.
+pub(super) fn plan_text(root: &Path, execution: &str) -> Result<Option<String>, AppError> {
+    let db = open(root)?;
+    let mut stmt = db
+        .prepare("SELECT plan FROM runs WHERE execution=?1")
+        .map_err(io)?;
+    let mut rows = stmt.query([execution]).map_err(io)?;
+    match rows.next().map_err(io)? {
+        Some(row) => row.get(0).map(Some).map_err(io),
+        None => Ok(None),
+    }
+}
+
 /// Marks the running attempts of a profile as failed by interruption and
 /// returns their identities (their journals can then be discarded).
 pub(super) fn acknowledge(root: &Path, id: &ProfileId) -> Result<Vec<String>, AppError> {
