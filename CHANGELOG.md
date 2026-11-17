@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Sauvegarde vers une destination distante (audit Linux C1)
+- Une sauvegarde ou un miroir vers SFTP, FTP, FTPS ou WebDAV ne copiait rien : chaque absence d'un listing sans garantie de cohérence devenait « présence inconnue » puis un saut. Un dossier distant listé jusqu'au bout sans erreur donne maintenant une absence non vérifiée (`Presence::AbsentUnverified`, `Uncertainty::AbsenceUnverified`) qui autorise la **seule copie** d'un élément de la source ; l'exécuteur revérifie la cible et publie sans écrasement. Suppressions, remplacements et bidirectionnel inchangés : aucune suppression n'est déduite d'un listing distant. Contrat arbitré (option A). Format du plan inchangé.
+
 ### Fenêtre de suivi des planifications
 - Avec « Afficher la fenêtre de suivi », la fenêtre était restaurée et recevait le focus à chaque profil d'une série planifiée : elle prenait la saisie de l'application en cours et annulait une réduction. Elle n'est désormais montrée qu'au premier profil de la série (`follow::WindowFollow`) ; la série se termine quand la file de l'agent est vide ou après 60 s sans exécution active.
 

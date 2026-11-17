@@ -31,6 +31,17 @@ une session par connecteur, abandonnée après erreur ; un listing transitoire p
 être recommencé une fois avec une nouvelle session. Aucune mutation n’est rejouée.
 Le compteur « dossiers à cohérence incertaine » est distinct des erreurs de
 lecture : il ne permet jamais de conclure qu’un fichier absent doit être supprimé.
+Un dossier de ce type listé jusqu’au bout sans erreur ni entrée omise donne une
+absence **non vérifiée** (`Presence::AbsentUnverified`) : elle autorise seulement
+la **copie** d’un élément de la source vers une destination distante. L’exécuteur
+revérifie la cible (`stat`) juste avant d’écrire puis publie sans écrasement
+(SFTP : `rename` v3 qui refuse une cible existante ; WebDAV : `Overwrite: F` ;
+FTP/FTPS : `stat` sous le verrou de destination et `exclusive_writers`). Une cible
+apparue entre-temps est un refus « destination apparue », jamais un écrasement.
+Elle ne justifie ni suppression miroir, ni décision bidirectionnelle.
+Exemple : sauvegarde d’un dossier local vers un serveur SFTP vide → la simulation
+prévoit toutes les copies et zéro suppression ; l’exécution se termine « réussie
+avec réserves » car l’inventaire distant reste non garanti.
 Exemple : pour une sauvegarde NAS vers PC, choisir le partage SMB comme source
 et le dossier du PC comme destination, lancer une simulation et examiner séparément
 les erreurs et les incertitudes avant toute confirmation.

@@ -346,7 +346,7 @@ Chaque correction suit AGENTS.md : test qui échoue d'abord, correction,
 documentation `docs/` concernée, ligne `RELEASE_NOTES.md` pour un changement
 visible, `CHANGELOG.md` pour un changement de comportement.
 
-1. [ ] **C1** Copies vers destinations distantes (arbitrage du contrat
+1. [x] **C1** Copies vers destinations distantes (option A arbitrée : copies seules ; façade FTP/FTPS et WebDAV testées, SFTP : voir compte rendu) (arbitrage du contrat
    scanner/compare d'abord) + tests de façade `remote_destination` par protocole.
 2. [ ] **C2** Publication locale sans lien physique (`renameat2 RENAME_NOREPLACE`
    + replis) + test exFAT/FAT FUSE.

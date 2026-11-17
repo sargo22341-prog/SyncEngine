@@ -76,6 +76,13 @@ pub enum Uncertainty {
         /// Raison donnée par l'inventaire.
         reason: UnknownReason,
     },
+    /// Absent d'un côté d'après un listing achevé sans erreur mais sans
+    /// garantie de cohérence (stockage distant) : absence plausible, non
+    /// établie. Jamais un `LeftOnly`/`RightOnly`.
+    AbsenceUnverified {
+        /// Côté où l'absence n'est pas vérifiée.
+        side: Side,
+    },
     /// Le chemin est hors du filtre d'un côté (par exemple un répertoire
     /// exclu portant le nom d'un fichier inclus de l'autre côté).
     ExcludedOnSide {

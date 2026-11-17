@@ -64,7 +64,9 @@ brusquement alors que l’analyse réseau continue normalement.
 « Dossiers à cohérence incertaine » désigne une limite déclarée du connecteur,
 comptée par dossier, pas une lecture échouée. SMB et les autres fournisseurs non
 caractérisés gardent cette incertitude ; une absence ne permet donc pas de
-suppression miroir. « Erreurs de lecture » compte séparément les problèmes réels
+suppression miroir. Elle n’empêche plus les **copies** vers une destination
+distante (SFTP, FTP, FTPS, WebDAV) : chaque fichier est revérifié juste avant
+d’être publié et n’écrase jamais une cible apparue. « Erreurs de lecture » compte séparément les problèmes réels
 (listing, noms non représentables, métadonnées ou empreintes indisponibles).
 Exemple : 500 dossiers à cohérence incertaine et 0 erreur signifie qu’aucune
 anomalie de lecture n’a été rapportée, sans garantir un instantané cohérent du NAS.

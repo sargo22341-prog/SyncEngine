@@ -292,7 +292,15 @@ Les listings natifs SMB suivent désormais le contrat du système de fichiers :
 une énumération achevée sans erreur permet une absence pour le plan, sans
 promesse de snapshot atomique. Une erreur d’énumération, page perdue, omission ou annulation
 reste incomplète et bloque les suppressions. Les connecteurs dont la cohérence
-reste inconnue ou éventuelle gardent la politique conservatrice. L’exécuteur
+reste inconnue ou éventuelle gardent la politique conservatrice pour les
+suppressions et le bidirectionnel. Un de leurs dossiers listé jusqu’au bout sans
+erreur ni omission donne `Presence::AbsentUnverified`, comparée en
+`Uncertainty::AbsenceUnverified` : `sync-decisions` en tire seulement une copie
+source → destination (`MissingAtDestination`, format de plan inchangé), que
+l’exécuteur revérifie par `stat` et publie en `CreateNew`. Une absence non
+vérifiée côté source n’est jamais un `RightOnly`. Contrairement à FreeFileSync,
+qui tient tout listing achevé pour sûr (copies et suppressions), SyncEngine ne
+déduit aucune suppression d’un listing distant. L’exécuteur
 revérifie chaque absence, y compris après l’archivage d’une version avant
 suppression. Les collisions de noms demeurent des conflits explicites, jamais
 des disparitions. Voir [les preuves et la comparaison FreeFileSync](ABSENCE_SMB_ET_CONFLITS.md).

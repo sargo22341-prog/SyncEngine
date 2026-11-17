@@ -159,13 +159,55 @@ fn unknown_or_eventual_consistency_never_proves_absence() -> Result<(), Box<dyn 
             inventory.presence(&path("present")),
             Presence::Present(_)
         ));
+        // Listing achevé sans erreur : absence plausible mais non garantie.
+        // Elle n'est jamais `Absent` (le miroir ne peut pas en déduire une
+        // suppression) ; seule une copie revérifiée à l'exécution l'utilise.
         assert_eq!(
             inventory.presence(&path("missing")),
-            Presence::Unknown(UnknownReason::IncompleteDirectory(
-                IncompleteReason::UnreliableConsistency
-            ))
+            Presence::AbsentUnverified
+        );
+        assert_eq!(
+            inventory.presence(&path("nouveau/dossier/x")),
+            Presence::AbsentUnverified
         );
     }
+    Ok(())
+}
+
+#[test]
+fn unreliable_listing_with_failures_stays_unknown() -> Result<(), Box<dyn std::error::Error>> {
+    use connector_api::{ListingConsistency, StorageConnector};
+    let connector = MemoryConnector::new("network-like")
+        .file("ok/a", b"a", ts(1))
+        .file("omis/a", b"a", ts(1))
+        .file("panne/a", b"a", ts(1))
+        .listing_issue(
+            "omis",
+            ListingIssue::new(
+                "b",
+                ListingIssueKind::EntryUnreadable(StorageErrorKind::PermissionDenied),
+            ),
+        )
+        .fail("panne", StorageOperation::List, StorageErrorKind::Transient);
+    let mut caps = connector.capabilities().clone();
+    caps.listing_consistency = ListingConsistency::Unknown;
+    let inventory = scan_all(&connector.with_capabilities(caps))?;
+    assert_eq!(
+        inventory.presence(&path("ok/b")),
+        Presence::AbsentUnverified
+    );
+    assert_eq!(
+        inventory.presence(&path("omis/b")),
+        Presence::Unknown(UnknownReason::IncompleteDirectory(
+            IncompleteReason::OmittedEntries
+        ))
+    );
+    assert!(matches!(
+        inventory.presence(&path("panne/b")),
+        Presence::Unknown(UnknownReason::IncompleteDirectory(
+            IncompleteReason::ListFailed(_)
+        ))
+    ));
     Ok(())
 }
 
@@ -185,10 +227,11 @@ fn uncertain_listing_warnings_remain_distinct_from_failed_reads() {
             .all(|issue| matches!(issue.kind(), ScanIssueKind::UnreliableConsistency))
     );
     assert!(!inventory.is_complete());
-    assert!(matches!(
+    // Jamais une absence établie : au mieux une absence non vérifiée.
+    assert_eq!(
         inventory.presence(&path("missing")),
-        Presence::Unknown(_)
-    ));
+        Presence::AbsentUnverified
+    );
 }
 
 #[test]

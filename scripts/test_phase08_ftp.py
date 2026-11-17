@@ -95,8 +95,17 @@ def run(mode, workspace):
                 return result
             (data / "file").write_bytes(b"abc")  # independent application fixture
             env["SYNCENGINE_SECRET_FTP_FIXTURE"] = "fixture-only"
+            result = subprocess.run(["cargo","test","-p","sync-orchestrator","--features",mode,"--locked",
+                                     "--test","wire_profiles",f"isolated_{mode}_profile","--","--ignored"],
+                                    cwd=workspace,env=env,timeout=180).returncode
+            if result:
+                return result
+            # C1: backup towards an empty remote destination (copies, never deletions).
+            destination = data / "c1-destination"
+            destination.mkdir()
+            env["SYNCENGINE_FTP_DESTINATION"] = str(destination)
             return subprocess.run(["cargo","test","-p","sync-orchestrator","--features",mode,"--locked",
-                                   "--test","wire_profiles",f"isolated_{mode}_profile","--","--ignored"],
+                                   "--test","wire_profiles",f"isolated_{mode}_remote_destination","--","--ignored"],
                                   cwd=workspace,env=env,timeout=180).returncode
         finally:
             server.close_all()
