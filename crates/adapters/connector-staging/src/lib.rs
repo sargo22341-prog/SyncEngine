@@ -349,12 +349,17 @@ mod tests {
                     .map(|(_, v)| OsString::from(v))
             }
         };
+        // Absolute on the running platform (`/srv` is not absolute on Windows).
+        const FORCED: &str = if cfg!(windows) {
+            r"C:\spool"
+        } else {
+            "/srv/spool"
+        };
+        const FORCED_ENV: &[(&str, &str)] =
+            &[("SYNCENGINE_SPOOL_DIR", FORCED), ("HOME", "/home/u")];
         assert_eq!(
-            spool_dir_with(&env(&[
-                ("SYNCENGINE_SPOOL_DIR", "/srv/spool"),
-                ("HOME", "/home/u")
-            ])),
-            std::path::PathBuf::from("/srv/spool")
+            spool_dir_with(&env(FORCED_ENV)),
+            std::path::PathBuf::from(FORCED)
         );
         if !cfg!(windows) {
             assert_eq!(
