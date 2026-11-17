@@ -34,12 +34,27 @@ def run(mode, workspace):
             fail_next_listing = False
 
             def ftp_MLSD(self, path):
+                if Handler.no_mlsd:
+                    return self.respond("500 Unknown command.")
                 if Handler.fail_next_listing:
                     Handler.fail_next_listing = False
                     self.respond("421 fixture transient listing failure")
                     self.close_when_done()
                     return
                 return super().ftp_MLSD(path)
+
+            no_mlsd = False
+
+            # vsftpd-like server: FEAT without MLST, MLSD/MLST unknown (M3).
+            def ftp_FEAT(self, line):
+                if not Handler.no_mlsd:
+                    return super().ftp_FEAT(line)
+                self.push("211-Features:\r\n EPSV\r\n PASV\r\n SIZE\r\n MDTM\r\n UTF8\r\n211 End\r\n")
+
+            def ftp_MLST(self, path):
+                if Handler.no_mlsd:
+                    return self.respond("500 Unknown command.")
+                return super().ftp_MLST(path)
 
             def on_login(self, username):
                 Handler.login_count += 1
@@ -93,6 +108,14 @@ def run(mode, workspace):
                                     cwd=workspace,env=env,timeout=180).returncode
             if result:
                 return result
+            if mode == "ftp":
+                Handler.no_mlsd = True
+                result = subprocess.run(["cargo","test","-p","connector-ftp","--features","ftp","--locked","--test","wire",
+                                         "isolated_ftp_without_mlsd_is_explained","--","--ignored"],
+                                        cwd=workspace,env=env,timeout=180).returncode
+                Handler.no_mlsd = False
+                if result:
+                    return result
             (data / "file").write_bytes(b"abc")  # independent application fixture
             env["SYNCENGINE_SECRET_FTP_FIXTURE"] = "fixture-only"
             result = subprocess.run(["cargo","test","-p","sync-orchestrator","--features",mode,"--locked",

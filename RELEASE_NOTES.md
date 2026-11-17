@@ -8,6 +8,7 @@ description de la GitHub Release, puis vide la liste dans le commit
 Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- FTP/FTPS : un serveur sans MLSD (vsftpd) est refusé avec une explication claire au lieu de « non pris en charge () ».
 - La page d’un profil distant signale, avant toute simulation, la variable de secret ou l’agent SSH absent ; le guide explique comment les fournir sous Linux.
 - « Reprendre » après un arrêt brutal retire aussi les fichiers temporaires que l’arrêt n’avait pas eu le temps de consigner.
 - Linux : enregistrer une planification installe et active l’agent systemd ; son état réel est affiché.

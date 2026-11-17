@@ -105,6 +105,13 @@ un compatible.
   vérifié ; une autorité privée peut être fournie en fichier PEM sans toucher
   au magasin système. Jamais de repli en FTP clair.
 - **FTP** : identifiants et fichiers circulent en clair ; préférer FTPS ou SFTP.
+- **FTP et FTPS : MLSD/MLST obligatoires** (RFC 3659). SyncEngine lit les
+  dossiers uniquement par `MLSD` (dates et types normalisés) et vérifie `FEAT`
+  à la connexion ; il ne se replie jamais sur `LIST`, dont le format libre ne
+  permet pas de prouver le contenu d'un dossier. vsftpd (serveur par défaut de
+  Debian, Ubuntu, RHEL et de nombreux NAS) ne propose pas MLSD : la connexion
+  est refusée avec « le serveur FTP ne prend pas en charge MLSD/MLST… ».
+  Utiliser alors SFTP, ou un serveur qui les annonce (proftpd, Pure-FTPd).
 - **SMB** : chemin UNC (`\\serveur\partage`) sous Windows ; sous Linux, un
   montage CIFS existant, en lecture seule. SyncEngine ne monte rien et ne
   demande aucun privilège.

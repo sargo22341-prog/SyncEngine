@@ -33,3 +33,24 @@ fn invalid_credentials_never_expose_secrets() {
     assert!(err.is_some());
     assert!(!format!("{err:?}").contains("fixture-secret"));
 }
+
+/// M3 — Étant donné un serveur sans MLSD/MLST (vsftpd), quand on liste la
+/// racine, alors l'erreur est `NotSupported` et dit pourquoi, au lieu d'un
+/// « non pris en charge () » muet.
+#[test]
+#[ignore = "serveur isolé requis : scripts/test_phase08_ftp.py"]
+fn isolated_ftp_without_mlsd_is_explained() -> Result<(), Box<dyn std::error::Error>> {
+    use connector_api::StorageConnector;
+    let connector = FtpConnector::new(opts(), credentials()?, true)?;
+    let error = connector
+        .list(
+            &sync_core::ResourcePath::root(),
+            None,
+            &sync_core::CancellationToken::new(),
+        )
+        .err()
+        .ok_or("listing without MLSD succeeded")?;
+    assert_eq!(error.kind(), connector_api::StorageErrorKind::NotSupported);
+    assert!(error.to_string().contains("MLSD"), "{error}");
+    Ok(())
+}

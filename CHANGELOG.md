@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### FTP sans MLSD (audit Linux M3)
+- Contre vsftpd, FTP/FTPS échouait avec « list : non pris en charge () ». La connexion vérifie maintenant `FEAT` (absence de `MLST` ⇒ refus) et un `MLSD` refusé (500/502) donne `NotSupported` avec un message expliquant l'exigence MLSD/MLST et les alternatives. Pas de repli `LIST` (choix de sûreté documenté).
+
 ### Secrets et agent SSH sous Linux (audit Linux M4)
 - Un secret absent donnait « identifiant runtime indisponible » sans dire quoi faire. Le message nomme désormais la variable attendue (`SYNCENGINE_SECRET_<réf>`, ou `SSH_AUTH_SOCK` pour SFTP sous Unix, vérifié avant toute connexion) ; la façade expose `missing_credentials` (présence seulement, jamais la valeur) et la page du profil l'annonce avant toute simulation. Voies Linux documentées (`environment.d` en `0600`, `systemctl --user import-environment SSH_AUTH_SOCK`, cron) ; aucune unité ne reçoit de secret.
 
