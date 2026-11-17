@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Précision des dates selon le volume (audit Linux M9)
+- Le connecteur local annonçait la nanoseconde sous Linux quel que soit le volume : des fichiers identiques copiés avec leurs dates sur exFAT/FAT étaient « à remplacer » à chaque passage. Sous Linux, la précision est désormais déduite du type de système de fichiers de la racine (`statfs` : FAT 2 s, exFAT et FUSE 1 s, SMB/CIFS 2 s, NTFS 100 ns). Windows inchangé (`GetVolumeInformationW` à faire et à vérifier sous Windows).
+
 ### Dépôt d'envoi distant hors de /tmp (audit Linux M8)
 - Les envois vers un serveur distant déposaient tout le fichier dans `/tmp`, souvent un tmpfs en RAM sous Linux. Le dépôt est désormais sous `~/.cache/SyncEngine/spool` (`$XDG_CACHE_HOME`, dossier `0700`), réglable par `SYNCENGINE_SPOOL_DIR`, avec contrôle de l'espace libre avant chaque fichier de taille connue (Linux). Nouvelle trace inventoriée et purgée. Windows inchangé (`%TEMP%`).
 

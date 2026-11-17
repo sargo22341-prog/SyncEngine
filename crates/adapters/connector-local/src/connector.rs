@@ -181,8 +181,11 @@ impl LocalConnector {
         if !root.is_absolute() {
             return Err(LocalConfigError::RootNotAbsolute);
         }
+        // Explicit option first, then the volume (FAT, exFAT, FUSE, SMB),
+        // then the OS (audit Linux M9).
         let precision = options
             .timestamp_precision
+            .or_else(|| crate::volume::detected_precision(&root))
             .unwrap_or_else(default_precision);
         let mut capabilities = StorageCapabilities::none().with_features([
             StorageFeature::List,

@@ -8,6 +8,7 @@ description de la GitHub Release, puis vide la liste dans le commit
 Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Linux : sur une clé USB exFAT/FAT, les fichiers déjà sauvegardés ne sont plus recopiés à chaque passage à cause de leurs dates.
 - Linux : les envois vers un serveur distant ne passent plus par /tmp (souvent en mémoire) mais par ~/.cache/SyncEngine, avec contrôle de l’espace libre.
 - FTP/FTPS : un serveur sans MLSD (vsftpd) est refusé avec une explication claire au lieu de « non pris en charge () ».
 - La page d’un profil distant signale, avant toute simulation, la variable de secret ou l’agent SSH absent ; le guide explique comment les fournir sous Linux.

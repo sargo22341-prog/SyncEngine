@@ -571,3 +571,17 @@ fn a_private_file_is_never_readable_by_others_even_while_staged() {
         .mode();
     assert_eq!(published & 0o7777, 0o755);
 }
+
+/// M9 — Étant donné une racine sur exFAT (dates à la seconde par FUSE),
+/// quand le connecteur est créé, alors il annonce une précision d'une
+/// seconde, pas la nanoseconde de Linux. Lancé par `scripts/test_exfat_fuse.py`.
+#[test]
+#[ignore = "montage exFAT FUSE requis : scripts/test_exfat_fuse.py"]
+fn an_exfat_root_announces_its_coarse_date_precision() {
+    let root = std::path::PathBuf::from(std::env::var("SYNCENGINE_EXFAT_ROOT").unwrap());
+    let connector = writable(&root);
+    assert_eq!(
+        connector.capabilities().timestamp_precision,
+        sync_core::TimestampPrecision::Second
+    );
+}

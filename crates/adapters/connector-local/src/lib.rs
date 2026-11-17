@@ -45,6 +45,7 @@ mod overlap;
 mod paging;
 mod paths;
 mod publish;
+mod volume;
 mod write;
 
 // Exercise the exact vendored conversion in workspace CI, without any network

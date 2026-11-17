@@ -31,10 +31,15 @@ def run(workspace):
             try:
                 env = os.environ.copy()
                 env["SYNCENGINE_EXFAT_ROOT"] = str(mount)
-                return subprocess.run(
-                    ["cargo", "test", "--locked", "-p", "connector-local", "--test", "write",
-                     "create_new_publishes_on_a_filesystem_without_hard_links", "--", "--ignored"],
-                    cwd=workspace, env=env, timeout=600).returncode
+                for name in ("create_new_publishes_on_a_filesystem_without_hard_links",
+                             "an_exfat_root_announces_its_coarse_date_precision"):
+                    result = subprocess.run(
+                        ["cargo", "test", "--locked", "-p", "connector-local", "--test", "write",
+                         name, "--", "--ignored"],
+                        cwd=workspace, env=env, timeout=600).returncode
+                    if result:
+                        return result
+                return 0
             finally:
                 fusermount = shutil.which("fusermount3") or "fusermount"
                 subprocess.run([fusermount, "-u", str(mount)], check=False)

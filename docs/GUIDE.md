@@ -82,6 +82,14 @@ miroir :
 
 Le bidirectionnel compare toujours par contenu.
 
+Les dates sont comparées à la précision du **volume** (Linux) : clé USB FAT
+(2 s), exFAT et montages FUSE (1 s), partage SMB/CIFS (2 s), NTFS (100 ns),
+sinon la nanoseconde. Exemple : des fichiers copiés avec leurs dates sur une
+clé exFAT (dates tronquées à la seconde) restent « identiques » au passage
+suivant. Seule la racine est examinée ; un autre volume monté plus bas garde
+la précision de la racine. Windows : précision de l'OS (100 ns) quel que soit
+le volume, une clé FAT32 y reste à vérifier.
+
 ## Le plan
 
 La simulation produit un plan, une ligne par chemin, avec son motif :
