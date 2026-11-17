@@ -135,6 +135,7 @@ run).
 | RUSTSEC-2026-0370, -0371, -0372 | `zvariant`, `zbus_names`, `zvariant_derive` (non maintenus : fusionnés dans `zbus` 6) | `zbus` 5 via `ksni` (icône de notification Linux, `tray-icon`) et `mundy` (thème système, `iced_winit`) | `ksni` et `mundy` publiés sur `zbus` 6 (portage en cours : iovxw/ksni#44, #45), puis `cargo update` |
 | RUSTSEC-2026-0253 | `lru` 0.16 (« unsound » : `LruCache::pop()` si le `Drop` d'une clé panique sous `catch_unwind`) | `cryoglyph` 0.1 (rendu du texte d'`iced_wgpu` 0.14) | iced publié avec `cryoglyph` sur `lru` ≥ 0.18.2 (déjà le cas sur la branche principale d'iced) |
 | RUSTSEC-2026-0192 | `ttf-parser` (non maintenu) | `fontdb` 0.23 / `cosmic-text` 0.15 (iced 0.14), `ab_glyph` (décorations Wayland de `winit`) | iced publié sur `cosmic-text`/`fontdb` 0.24 (`skrifa`) |
+| RUSTSEC-2026-0543 | `chrono` (non maintenu, aucun correctif publié) | direct : dates FTP (MLSD), WebDAV et OneDrive ; transitif : `suppaftp` 12 (copie vendorisée) | `chrono` repris ou remplacé (par `jiff` ou `time`) dans nos connecteurs **et** dans `suppaftp`, puis `cargo update` ; avertissement seulement, aucune vulnérabilité connue |
 | RUSTSEC-2024-0436 | `paste` (non maintenu) | `metal` 0.32 via `wgpu` 27 ; **macOS uniquement**, jamais compilé pour Windows ou Linux | iced publié sur `wgpu` ≥ 30 (`objc2-metal`) |
 
 La branche principale d'iced (0.15 en développement) règle `lru`, `ttf-parser`

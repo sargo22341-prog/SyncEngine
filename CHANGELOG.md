@@ -5,6 +5,10 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### libssh2-sys : correctif Windows de nouveau appliqué (audit Linux M10)
+- Un `cargo update` avait remplacé la copie corrigée `vendor/libssh2-sys` 0.3.3 (échanges de clés WinCNG) par 0.3.4 de crates.io, non validée sous Windows ; le correctif local était ignoré (`[[patch.unused]]`). `libssh2-sys` est épinglé `=0.3.3` (`ssh2` redescend de 0.9.7 à 0.9.6) et un test d'architecture échoue sur tout correctif inutilisé. Le passage à 0.3.4 reste à valider sous Windows.
+- CI : avis RustSec-2026-0543 (`chrono` non maintenu, sans correctif) toléré et documenté (`docs/DEVELOPPEMENT.md`).
+
 ### Précision des dates selon le volume (audit Linux M9)
 - Le connecteur local annonçait la nanoseconde sous Linux quel que soit le volume : des fichiers identiques copiés avec leurs dates sur exFAT/FAT étaient « à remplacer » à chaque passage. Sous Linux, la précision est désormais déduite du type de système de fichiers de la racine (`statfs` : FAT 2 s, exFAT et FUSE 1 s, SMB/CIFS 2 s, NTFS 100 ns). Windows inchangé (`GetVolumeInformationW` à faire et à vérifier sous Windows).
 

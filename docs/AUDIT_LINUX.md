@@ -361,7 +361,7 @@ visible, `CHANGELOG.md` pour un changement de comportement.
 10. [x] **M3** FTP sans MLSD : message, `FEAT`, documentation (repli `LIST` optionnel).
 11. [x] **M8** Spool distant configurable hors `/tmp`, contrôle d'espace.
 12. [x] **M9** (Linux ; Windows à faire) Précision des dates selon le volume (Linux et Windows).
-13. [ ] **M10** Statuer sur `libssh2-sys` (validation Windows puis retrait du vendoring, ou réalignement) + contrôle CI `[[patch.unused]]`.
+13. [x] **M10** (épinglage `=0.3.3` ; retrait du vendoring après validation Windows) Statuer sur `libssh2-sys` (validation Windows puis retrait du vendoring, ou réalignement) + contrôle CI `[[patch.unused]]`.
 14. [ ] **m1–m12** dans l'ordre du tableau.
 15. [ ] **l1–l10**.
 16. [ ] Documentation : dépendances d'exécution Linux réelles

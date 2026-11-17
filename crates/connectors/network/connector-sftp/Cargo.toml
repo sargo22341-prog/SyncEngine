@@ -9,12 +9,17 @@ publish.workspace = true
 
 [features]
 default = []
-sftp = ["dep:ssh2"]
+sftp = ["dep:ssh2", "dep:libssh2-sys"]
 
 [dependencies]
 sync-core.workspace = true
 connector-api.workspace = true
 ssh2 = { workspace = true, optional = true }
+# Épinglé sur la copie corrigée de vendor/libssh2-sys (WinCNG, libssh2#2583) :
+# 0.3.4 semble contenir le correctif amont mais n'est pas validé sous Windows
+# (voir vendor/libssh2-sys/SYNCENGINE-PATCH.md). Dépendance seulement
+# déclarée pour imposer la version ; aucun symbole n'est utilisé directement.
+libssh2-sys = { version = "=0.3.3", optional = true }
 connector-staging.workspace = true
 
 [lints]
