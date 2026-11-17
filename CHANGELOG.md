@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Dépôt d'envoi distant hors de /tmp (audit Linux M8)
+- Les envois vers un serveur distant déposaient tout le fichier dans `/tmp`, souvent un tmpfs en RAM sous Linux. Le dépôt est désormais sous `~/.cache/SyncEngine/spool` (`$XDG_CACHE_HOME`, dossier `0700`), réglable par `SYNCENGINE_SPOOL_DIR`, avec contrôle de l'espace libre avant chaque fichier de taille connue (Linux). Nouvelle trace inventoriée et purgée. Windows inchangé (`%TEMP%`).
+
 ### FTP sans MLSD (audit Linux M3)
 - Contre vsftpd, FTP/FTPS échouait avec « list : non pris en charge () ». La connexion vérifie maintenant `FEAT` (absence de `MLST` ⇒ refus) et un `MLSD` refusé (500/502) donne `NotSupported` avec un message expliquant l'exigence MLSD/MLST et les alternatives. Pas de repli `LIST` (choix de sûreté documenté).
 

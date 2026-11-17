@@ -359,7 +359,7 @@ visible, `CHANGELOG.md` pour un changement de comportement.
 8. [x] **M6** `.partial` orphelins : journal d'intention ou nettoyage par pid.
 9. [x] **M4** Secrets/agent SSH pour systemd et lanceur ; message avant simulation.
 10. [x] **M3** FTP sans MLSD : message, `FEAT`, documentation (repli `LIST` optionnel).
-11. [ ] **M8** Spool distant configurable hors `/tmp`, contrôle d'espace.
+11. [x] **M8** Spool distant configurable hors `/tmp`, contrôle d'espace.
 12. [ ] **M9** Précision des dates selon le volume (Linux et Windows).
 13. [ ] **M10** Statuer sur `libssh2-sys` (validation Windows puis retrait du vendoring, ou réalignement) + contrôle CI `[[patch.unused]]`.
 14. [ ] **m1–m12** dans l'ordre du tableau.

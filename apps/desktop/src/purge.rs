@@ -129,8 +129,13 @@ pub(crate) struct Places {
     pub(crate) data_home: Option<PathBuf>,
     /// Execution locks directory (`…/SyncEngine/job-locks`).
     pub(crate) lock_root: Option<PathBuf>,
-    /// System temporary directory, where a remote upload spools its file.
+    /// System temporary directory, where a remote upload spooled its file
+    /// before 0.1.15 (still the place on Windows).
     pub(crate) temp_dir: Option<PathBuf>,
+    /// `…/.cache/SyncEngine` (Linux upload spools, `spool/` inside).
+    pub(crate) cache_dir: Option<PathBuf>,
+    /// Folder imposed by `SYNCENGINE_SPOOL_DIR`, scanned for our spools only.
+    pub(crate) spool_override: Option<PathBuf>,
     /// Whether native integrations (tasks, registry, units) are listed.
     pub(crate) native: bool,
 }
@@ -142,6 +147,10 @@ impl Places {
             data_home: data_home(),
             lock_root: sync_orchestrator::user_lock_root().ok(),
             temp_dir: Some(std::env::temp_dir()).filter(|p| p.is_absolute()),
+            cache_dir: cache_home().map(|cache| cache.join("SyncEngine")),
+            spool_override: std::env::var_os("SYNCENGINE_SPOOL_DIR")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute()),
             native: true,
         }
     }
@@ -270,6 +279,19 @@ fn remove_state_entries(dir: &Path) -> Result<(), String> {
     }
 }
 
+/// User cache directory (`$XDG_CACHE_HOME` or `~/.cache`), Linux; `None`
+/// on Windows, where uploads spool in `%TEMP%`.
+fn cache_home() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .filter(|p| p.is_absolute())
+}
+
 /// User data directory holding the default state directory.
 fn data_home() -> Option<PathBuf> {
     if cfg!(windows) {
@@ -386,6 +408,17 @@ pub(crate) fn inventory(
     }
     if let Some(temp) = &places.temp_dir {
         spools(temp, &mut inventory);
+    }
+    if let Some(spool) = &places.spool_override {
+        spools(spool, &mut inventory);
+    }
+    if let Some(cache) = places.cache_dir.as_ref().filter(|c| exists(c)) {
+        folder(
+            "Dossier d’envoi distant (fichiers en cours de dépôt)",
+            cache,
+            Removal::Tree(cache.clone()),
+            &mut inventory,
+        );
     }
     inventory.states = states;
     Ok(inventory)
@@ -967,8 +1000,16 @@ mod tests {
             data_home: Some(temp.path().join("données")),
             lock_root: Some(temp.path().join("SyncEngine/job-locks")),
             temp_dir: Some(temp.path().join("tmp")),
+            cache_dir: Some(temp.path().join("cache/SyncEngine")),
+            spool_override: None,
             native: false,
         };
+        file(
+            &temp
+                .path()
+                .join("cache/SyncEngine/spool/.syncengine-x.partial"),
+            b"spool",
+        )?;
         file(
             &temp.path().join("SyncEngine/job-locks/execution.lock"),
             b"",
@@ -977,7 +1018,13 @@ mod tests {
         file(&temp.path().join("tmp/.syncengine-.partial"), b"not ours")?;
         file(&temp.path().join("tmp/autre.partial"), b"not ours")?;
         let inventory = inventory(&state, Vec::new(), &places).map_err(|e| e.message.clone())?;
-        assert_eq!(inventory.traces.len(), 3);
+        assert_eq!(inventory.traces.len(), 4);
+        assert!(
+            inventory
+                .traces
+                .iter()
+                .any(|t| t.removal == Removal::Tree(temp.path().join("cache/SyncEngine")))
+        );
         assert!(
             inventory.traces.iter().any(
                 |t| t.removal == Removal::File(temp.path().join("tmp/.syncengine-abc.partial"))

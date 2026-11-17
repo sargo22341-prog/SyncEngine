@@ -38,7 +38,9 @@ l’UAC seulement après un refus d’accès, comme l’enregistrement.
 | Unité en cours d’écriture | même dossier : `.syncengine-clock.service.syncengine-tmp`, `.syncengine-clock.timer.syncengine-tmp`, `.syncengine-session.service.syncengine-tmp` | l’interface, seulement si elle s’arrête entre l’écriture et le renommage | fichier |
 | Activation des unités | `timers.target.wants/syncengine-clock.timer`, `default.target.wants/syncengine-clock.service`, `default.target.wants/syncengine-session.service` | `systemctl --user enable` | liens (jamais suivis) |
 | Démarrage de l’interface | `$XDG_CONFIG_HOME/autostart/` : `syncengine.desktop`, `syncengine-desktop.desktop`, `org.syncengine.desktop.desktop` | l’utilisateur (SyncEngine n’en crée pas) | fichier, seulement s’il lance `syncengine-desktop` |
-| Fichier d’envoi temporaire | `$TMPDIR/.syncengine-….partial` (ou `/tmp`) | copie vers un serveur distant interrompue | fichier |
+| Dossier d’envoi distant | `$XDG_CACHE_HOME/SyncEngine/` ou `~/.cache/SyncEngine/` (fichiers `spool/.syncengine-….partial`, dossier `0700`) | toute copie vers un serveur distant (SFTP, FTP, FTPS, WebDAV, OneDrive) : le fichier y est déposé avant l’envoi, puis retiré | dossier `SyncEngine` entier |
+| Dossier d’envoi imposé | dossier de `SYNCENGINE_SPOOL_DIR` (s’il est défini, absolu) : seuls ses `.syncengine-….partial` | même usage | fichiers (le dossier, choisi par l’utilisateur, reste) |
+| Fichier d’envoi temporaire (versions ≤ 0.1.14) | `$TMPDIR/.syncengine-….partial` (ou `/tmp`) | copie vers un serveur distant interrompue | fichier |
 
 Une unité n’est retirée que si elle porte l’un de ces noms exacts et contient
 `Description=SyncEngine headless profiles` (services) ou

@@ -86,6 +86,17 @@ un secret n'y est jamais écrit. Limite : un fichier `environment.d` est lisible
 par tout processus du compte ; préférer un trousseau quand le bureau en offre
 un compatible.
 
+## Dépôt local avant envoi
+
+SFTP, FTP, FTPS, WebDAV et OneDrive écrivent d’abord chaque fichier dans un
+dépôt local, puis l’envoient : il faut autant d’espace libre que le plus gros
+fichier envoyé. Sous Linux, le dépôt est sous `~/.cache/SyncEngine/spool/`
+(ou `$XDG_CACHE_HOME`), sur disque : `/tmp` est souvent un tmpfs en mémoire.
+`SYNCENGINE_SPOOL_DIR=/chemin/absolu` impose un autre dossier (par exemple un
+disque plus grand). Avant chaque fichier de taille connue, l’espace libre est
+vérifié (taille + 64 Mio de marge) : sinon refus « espace insuffisant » qui
+nomme le dossier. Windows : `%TEMP%`, inchangé, sans contrôle préalable.
+
 ## Par connecteur
 
 - **SFTP** : adresse IP et port, nom d'hôte attendu, utilisateur, fichier
