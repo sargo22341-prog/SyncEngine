@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 
@@ -213,6 +214,13 @@ def main():
             # Application facade: remote source and remote destination with
             # sub-collections. Trust the ephemeral CA through SSL_CERT_FILE for
             # this test process only (OpenSSL); the system store is unchanged.
+            # Windows (SChannel) and macOS (Security.framework) ignore
+            # SSL_CERT_FILE and the production client accepts no private CA:
+            # the facade step would need the OS store changed, which this
+            # script never does. The connector steps above ran on every OS.
+            if sys.platform in ("win32", "darwin"):
+                print("façade WebDAV non exécutée : SSL_CERT_FILE ignoré par la pile TLS de cet OS")
+                return 0
             with Handler.mutex:
                 Handler.nodes.update({"/dav/src": None, "/dav/src/docs": None,
                                       "/dav/src/docs/b.md": b"bravo", "/dav/src/a.txt": b"alpha",

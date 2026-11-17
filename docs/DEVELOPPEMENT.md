@@ -96,6 +96,12 @@ python scripts/test_phase08_ftp.py
 python scripts/test_phase09_onedrive.py
 ```
 
+Les étapes « façade » de `test_phase08_webdav.py` (profils WebDAV en source et
+en destination) font confiance au certificat éphémère par `SSL_CERT_FILE`,
+lu seulement par OpenSSL : elles ne tournent pas sous Windows ni macOS (le
+magasin du système n'est jamais modifié). Les contrats du connecteur, eux,
+tournent partout.
+
 Publication sur un système de fichiers sans liens physiques (Linux, root,
 paquets `exfat-fuse` et `exfatprogs`) : image exFAT jetable sous `target/`,
 montée par FUSE, puis test ignoré de `connector-local` :
