@@ -523,3 +523,51 @@ fn create_new_publishes_on_a_filesystem_without_hard_links() {
     assert_eq!(names.len(), 10, "{names:?}");
     assert!(names.iter().all(|n| !is_staging_name(n)), "{names:?}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_private_file_is_never_readable_by_others_even_while_staged() {
+    // M2 — Étant donné un fichier source 0600, quand il est déposé puis
+    // publié, alors le dépôt temporaire et le fichier publié sont 0600.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().unwrap();
+    let connector = writable(dir.path());
+    assert!(
+        connector
+            .capabilities()
+            .supports(connector_api::StorageFeature::SetPermissions)
+    );
+    let cancel = CancellationToken::new();
+    let options =
+        WriteOptions::new().with_permissions(Some(sync_core::UnixPermissions::new(0o600)));
+    let mut writer = connector
+        .open_write(&p("prive"), &options, &cancel)
+        .unwrap();
+    writer.write(b"secret").unwrap();
+    let staging = dir.path().join(writer.staging_path().unwrap().as_str());
+    let staged = fs::metadata(&staging).unwrap().permissions().mode();
+    assert_eq!(staged & 0o077, 0, "dépôt lisible : {staged:o}");
+    let entry = writer.commit(CommitMode::CreateNew).unwrap();
+    let published = fs::metadata(dir.path().join("prive"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(published & 0o7777, 0o600);
+    assert_eq!(
+        entry.metadata().permissions(),
+        Some(sync_core::UnixPermissions::new(0o600))
+    );
+    // setuid/setgid ne sont jamais reproduits.
+    let options =
+        WriteOptions::new().with_permissions(Some(sync_core::UnixPermissions::new(0o6755)));
+    let mut writer = connector
+        .open_write(&p("outil"), &options, &cancel)
+        .unwrap();
+    writer.write(b"x").unwrap();
+    writer.commit(CommitMode::CreateNew).unwrap();
+    let published = fs::metadata(dir.path().join("outil"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(published & 0o7777, 0o755);
+}

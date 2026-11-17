@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Permissions POSIX conservées (audit Linux M2)
+- Sous Linux, une copie locale publiait chaque fichier en `0644` et chaque dossier en `0755` : un fichier privé `0600` devenait lisible par tous dans la sauvegarde. Le mode de la source est désormais reproduit vers une destination locale (fichiers, dossiers créés, versions de la corbeille), le dépôt temporaire reste en `0600`, setuid/setgid ne sont jamais reproduits, un remplacement n'élargit jamais les droits existants. Contrat : `UnixPermissions`, `FileMetadata::permissions`, `WriteOptions::permissions`, `StorageFeature::SetPermissions`, `StorageConnector::set_permissions` (défaut `NotSupported`). Non reproduit vers les connecteurs distants (SFTP `setstat` : à faire).
+
 ### WebDAV sur Apache (audit Linux C3)
 - Les sous-dossiers d'un serveur WebDAV Apache (`mod_dav`) n'étaient ni lus ni créés : `PROPFIND /racine/docs` reçoit `301 → /racine/docs/`, qui n'était pas suivie. Les collections sont désormais listées, créées (`MKCOL`) et nettoyées avec la barre finale, et une redirection `301`/`308` vers exactement la même URL suivie de `/` est suivie une seule fois (mutations comprises : le serveur ne les a pas traitées). Toute autre redirection reste refusée, sans renvoyer `Authorization`.
 

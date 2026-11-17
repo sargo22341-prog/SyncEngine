@@ -42,6 +42,9 @@ pub enum StorageFeature {
     QuotaReporting,
     /// Annulation d'une opération en cours.
     Cancellation,
+    /// Applique les permissions POSIX demandées (`WriteOptions::permissions`,
+    /// `StorageConnector::set_permissions`).
+    SetPermissions,
 }
 
 /// Règle de casse des noms.

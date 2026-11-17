@@ -17,6 +17,13 @@ pub struct WriteOptions {
     pub modified: Option<Timestamp>,
     /// Taille attendue, indicative (préallocation, contrôle de quota).
     pub size_hint: Option<u64>,
+    /// Permissions POSIX à donner au fichier validé (en général celles de la
+    /// source). Le connecteur doit déclarer `StorageFeature::SetPermissions`
+    /// pour accepter une valeur ; `sync-copy` l'écarte sinon. Le dépôt
+    /// temporaire n'est jamais plus ouvert que ces permissions, setuid et
+    /// setgid ne sont jamais reproduits, et un remplacement n'élargit jamais
+    /// les droits du fichier existant.
+    pub permissions: Option<sync_core::UnixPermissions>,
 }
 
 impl WriteOptions {
@@ -37,6 +44,13 @@ impl WriteOptions {
     #[must_use]
     pub fn with_size_hint(mut self, size: Option<u64>) -> Self {
         self.size_hint = size;
+        self
+    }
+
+    /// Permissions POSIX à appliquer au fichier validé.
+    #[must_use]
+    pub fn with_permissions(mut self, permissions: Option<sync_core::UnixPermissions>) -> Self {
+        self.permissions = permissions;
         self
     }
 }

@@ -80,6 +80,15 @@ Les E/S de vérification et d’archivage ont des compteurs informatifs séparé
 Le magasin et le connecteur revalident toujours les dossiers des versions et
 chaque écriture effective ; aucun cache ne permet une mutation.
 
+Permissions POSIX (audit Linux M2) : `FileMetadata::permissions`
+(`UnixPermissions`, champ additif ignoré par les versions antérieures) est
+observé par le connecteur local Unix ; l'exécuteur le passe dans
+`WriteOptions::permissions` et, pour un dossier créé, par
+`StorageConnector::set_permissions`, seulement si le récepteur déclare
+`StorageFeature::SetPermissions` (connecteur local Unix uniquement). Le dépôt
+est créé en `0600`, puis `fchmod` avant publication ; un remplacement prend
+l'intersection avec le mode existant ; setuid/setgid jamais reproduits.
+
 Publication sans écrasement (`CommitMode::CreateNew`) du connecteur local :
 sous Linux `renameat2(RENAME_NOREPLACE)`, repli sur lien physique si le noyau
 ou le système de fichiers ignore l'option, puis, sans liens physiques (exFAT,

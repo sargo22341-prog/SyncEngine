@@ -342,3 +342,116 @@ fn plan_age_is_checked_against_the_given_instant() {
     ));
     assert!(tree(destination_dir.path()).is_empty());
 }
+
+#[cfg(unix)]
+mod permissions {
+    //! M2 — permissions POSIX (sécurité : confidentialité des sauvegardes).
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(path: &Path) -> u32 {
+        fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    fn chmod(path: &Path, mode: u32) {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[test]
+    fn backup_keeps_private_files_private_and_scripts_executable() {
+        // Étant donné un fichier source 0600, un script 0755 et un dossier
+        // 0700, quand ils sont sauvegardés vers une destination locale,
+        // alors leurs modes sont reproduits (jamais lisibles par le groupe ou
+        // les autres pour les éléments privés).
+        let source_dir = TempDir::new().unwrap();
+        let destination_dir = TempDir::new().unwrap();
+        write(source_dir.path(), "prive.md", b"secret");
+        write(source_dir.path(), "script.sh", b"#!/bin/sh\n");
+        write(source_dir.path(), "coffre/cle.txt", b"cle");
+        write(source_dir.path(), "public/lisez.txt", b"ok");
+        chmod(&source_dir.path().join("prive.md"), 0o600);
+        chmod(&source_dir.path().join("script.sh"), 0o755);
+        chmod(&source_dir.path().join("coffre/cle.txt"), 0o640);
+        chmod(&source_dir.path().join("coffre"), 0o700);
+        chmod(&source_dir.path().join("public"), 0o755);
+        let source = read_only(source_dir.path());
+        let destination = writable(destination_dir.path());
+        let plan = plan_now(
+            &source,
+            &destination,
+            SyncMode::Backup,
+            &Filter::include_all(),
+        );
+        let report = run(&plan, &source, &destination, &mut MemoryJournal::new());
+        assert_eq!(report.status(), ExecutionStatus::Succeeded);
+        let out = destination_dir.path();
+        assert_eq!(mode(&out.join("prive.md")), 0o600);
+        assert_eq!(mode(&out.join("script.sh")), 0o755);
+        assert_eq!(mode(&out.join("coffre")), 0o700);
+        assert_eq!(mode(&out.join("coffre/cle.txt")), 0o640);
+        assert_eq!(mode(&out.join("public")), 0o755);
+    }
+
+    #[test]
+    fn replacing_never_widens_the_rights_of_the_existing_file() {
+        // Étant donné une destination 0600 et une source 0644 plus récente,
+        // quand la destination est remplacée, alors elle reste 0600.
+        let source_dir = TempDir::new().unwrap();
+        let destination_dir = TempDir::new().unwrap();
+        write(source_dir.path(), "f.txt", b"nouveau contenu");
+        write(destination_dir.path(), "f.txt", b"ancien");
+        set_mtime(&destination_dir.path().join("f.txt"), 1_600_000_000);
+        set_mtime(&source_dir.path().join("f.txt"), 1_700_000_000);
+        chmod(&source_dir.path().join("f.txt"), 0o644);
+        chmod(&destination_dir.path().join("f.txt"), 0o600);
+        let source = read_only(source_dir.path());
+        let destination = writable(destination_dir.path());
+        let plan = plan_now(
+            &source,
+            &destination,
+            SyncMode::Mirror,
+            &Filter::include_all(),
+        );
+        let report = run(&plan, &source, &destination, &mut MemoryJournal::new());
+        assert_eq!(report.status(), ExecutionStatus::Succeeded, "{report:?}");
+        let published = destination_dir.path().join("f.txt");
+        assert_eq!(fs::read(&published).unwrap(), b"nouveau contenu");
+        assert_eq!(mode(&published), 0o600);
+    }
+
+    #[test]
+    fn the_preserved_version_keeps_the_private_mode() {
+        // Étant donné une destination 0600 remplacée avec conservation de
+        // version, alors la copie archivée reste 0600 (jamais 0644).
+        let source_dir = TempDir::new().unwrap();
+        let destination_dir = TempDir::new().unwrap();
+        let versions_dir = TempDir::new().unwrap();
+        write(source_dir.path(), "f.txt", b"nouveau contenu");
+        write(destination_dir.path(), "f.txt", b"ancien");
+        set_mtime(&destination_dir.path().join("f.txt"), 1_600_000_000);
+        set_mtime(&source_dir.path().join("f.txt"), 1_700_000_000);
+        chmod(&destination_dir.path().join("f.txt"), 0o600);
+        let source = read_only(source_dir.path());
+        let destination = writable(destination_dir.path());
+        let versions = writable(versions_dir.path());
+        let store = sync_versioning::VersionStore::new(&versions, p("exec")).unwrap();
+        let plan = plan_now(
+            &source,
+            &destination,
+            SyncMode::Mirror,
+            &Filter::include_all(),
+        );
+        let report = execute_with_versions(
+            &plan,
+            &source,
+            &destination,
+            &store,
+            &mut MemoryJournal::new(),
+        )
+        .unwrap();
+        assert_eq!(report.status(), ExecutionStatus::Succeeded, "{report:?}");
+        let archived = versions_dir.path().join("exec/f.txt");
+        assert_eq!(fs::read(&archived).unwrap(), b"ancien");
+        assert_eq!(mode(&archived), 0o600);
+    }
+}

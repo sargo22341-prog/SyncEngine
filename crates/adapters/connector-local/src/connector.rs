@@ -199,6 +199,10 @@ impl LocalConnector {
                 StorageFeature::CreateDirectory,
                 StorageFeature::Delete,
             ]);
+            // Modes POSIX reproduits sous Unix seulement (Windows : ACL héritées).
+            if cfg!(unix) {
+                capabilities = capabilities.with_features([StorageFeature::SetPermissions]);
+            }
         }
         capabilities.case_sensitivity = options
             .case_sensitivity
@@ -517,6 +521,17 @@ impl StorageConnector for LocalConnector {
         let operation = StorageOperation::Delete;
         self.before_mutation(StorageFeature::Delete, operation, path, cancel)?;
         write::delete(self.anchor(operation)?, path, expected)
+    }
+
+    fn set_permissions(
+        &self,
+        path: &ResourcePath,
+        permissions: sync_core::UnixPermissions,
+        cancel: &CancellationToken,
+    ) -> Result<(), StorageError> {
+        let operation = StorageOperation::Write;
+        self.before_mutation(StorageFeature::SetPermissions, operation, path, cancel)?;
+        write::set_directory_permissions(self.anchor(operation)?, path, permissions)
     }
 }
 

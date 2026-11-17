@@ -32,7 +32,7 @@ mod path;
 mod time;
 
 pub use cancel::CancellationToken;
-pub use entry::{EntryKind, FileEntry, FileMetadata};
+pub use entry::{EntryKind, FileEntry, FileMetadata, UnixPermissions};
 pub use execution::ExecutionStatus;
 pub use hash::{ContentHash, ContentHashError, HashAlgorithm};
 pub use ids::{

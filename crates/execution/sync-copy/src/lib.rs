@@ -371,14 +371,16 @@ pub fn stage_copy_observed(
         .destination
         .open_write(
             request.destination_path,
-            &if request
-                .destination
-                .capabilities()
-                .supports(connector_api::StorageFeature::SetModifiedTime)
-            {
-                request.options
-            } else {
-                request.options.with_modified(None)
+            &{
+                let capabilities = request.destination.capabilities();
+                let mut options = request.options;
+                if !capabilities.supports(connector_api::StorageFeature::SetModifiedTime) {
+                    options = options.with_modified(None);
+                }
+                if !capabilities.supports(connector_api::StorageFeature::SetPermissions) {
+                    options = options.with_permissions(None);
+                }
+                options
             },
             cancel,
         )
