@@ -64,7 +64,12 @@ d'authentification.
   dans `known_hosts` : SyncEngine ne l'ajoute jamais. Dates conservées à la
   seconde.
 - **WebDAV** : URL HTTPS de la collection (sans identifiants ni paramètres).
-  HTTPS obligatoire, certificats vérifiés, aucune redirection suivie. Les
+  HTTPS obligatoire, certificats vérifiés. Les collections (dossiers) sont
+  adressées avec la barre finale. Seule redirection suivie, une fois : `301`
+  ou `308` vers **exactement** la même URL suivie de `/` (Apache
+  `DirectorySlash`) ; toute autre redirection est une erreur et le jeton n'est
+  jamais renvoyé ailleurs. Exemple : `PROPFIND /dav/docs` → `301
+  /dav/docs/` → requête réémise vers `/dav/docs/`. Les
   remplacements exigent un serveur qui fournit des ETag forts. Les dates sont
   gérées par le serveur : préférer la comparaison par contenu.
 - **FTPS** : adresse IP, nom TLS du serveur, utilisateur, racine. Certificat

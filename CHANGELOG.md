@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### WebDAV sur Apache (audit Linux C3)
+- Les sous-dossiers d'un serveur WebDAV Apache (`mod_dav`) n'étaient ni lus ni créés : `PROPFIND /racine/docs` reçoit `301 → /racine/docs/`, qui n'était pas suivie. Les collections sont désormais listées, créées (`MKCOL`) et nettoyées avec la barre finale, et une redirection `301`/`308` vers exactement la même URL suivie de `/` est suivie une seule fois (mutations comprises : le serveur ne les a pas traitées). Toute autre redirection reste refusée, sans renvoyer `Authorization`.
+
 ### Clés USB exFAT/FAT sous Linux (audit Linux C2)
 - La publication sans écrasement du connecteur local passait par un lien physique (`linkat`) : sur exFAT, FAT et les montages sans liens physiques, chaque fichier échouait en « accès refusé ». Sous Linux elle utilise désormais `renameat2(RENAME_NOREPLACE)`, avec replis documentés (lien physique, puis réservation exclusive du nom et renommage). Une cible existante reste toujours refusée. Windows et les autres systèmes : inchangés (à vérifier sous Windows : aucun changement de code effectif, `cfg!(target_os = "linux")`).
 

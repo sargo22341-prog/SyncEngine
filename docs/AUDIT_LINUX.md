@@ -350,7 +350,7 @@ visible, `CHANGELOG.md` pour un changement de comportement.
    scanner/compare d'abord) + tests de façade `remote_destination` par protocole.
 2. [x] **C2** Publication locale sans lien physique (`renameat2 RENAME_NOREPLACE`
    + replis) + test exFAT/FAT FUSE.
-3. [ ] **C3** WebDAV : barre finale des collections, redirection « même URL + / »
+3. [x] **C3** WebDAV : barre finale des collections, redirection « même URL + / »
    seulement + test serveur redirigeant.
 4. [ ] **M2** Politique de permissions POSIX (tests `0600`, `0755`, dossiers `0700`).
 5. [ ] **M7** Imbrication par identité de dossier (bind mount ; vérifier `subst` sous Windows).
