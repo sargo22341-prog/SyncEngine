@@ -1123,3 +1123,64 @@ fn rate_limit_spreads_the_transfer_in_time_and_keeps_the_content_intact() {
     assert_eq!(report.status(), sync_core::ExecutionStatus::Succeeded);
     assert_eq!(destination.content("big"), Some(payload));
 }
+
+/// Destination « distante » : listing sans cohérence garantie (SFTP, FTP,
+/// WebDAV…), accessible en écriture.
+fn unreliable_destination() -> MemoryConnector {
+    use connector_api::{ListingConsistency, StorageConnector};
+    let destination = MemoryConnector::new("destination").writable();
+    let mut caps = destination.capabilities().clone();
+    caps.listing_consistency = ListingConsistency::Unknown;
+    destination.with_capabilities(caps)
+}
+
+#[test]
+fn backup_to_a_destination_without_consistency_guarantee_publishes_every_file() {
+    // C1 — Étant donné une destination distante vide et une source de
+    // 3 éléments, quand on simule une sauvegarde, alors les copies sont
+    // prévues, aucune suppression, et l'exécution publie les fichiers vérifiés.
+    let source = source();
+    let destination = unreliable_destination();
+    let plan = backup_plan(&source, &destination);
+    assert!(!plan.destination().is_complete());
+    assert_eq!(plan.summary().copy, 4, "{plan:?}");
+    assert_eq!(plan.summary().delete, 0);
+    let report = execute(
+        &plan,
+        &source,
+        &destination,
+        confirmed(),
+        &mut MemoryJournal::new(),
+    )
+    .unwrap();
+    // Inventaire destination non garanti : réussite « avec réserves ».
+    assert_eq!(report.status(), ExecutionStatus::SucceededWithWarnings);
+    assert_eq!(report.totals().done, 4);
+    assert_eq!(report.totals().failed + report.totals().refused, 0);
+    assert_eq!(destination.content("a.txt").unwrap(), b"alpha");
+    assert_eq!(destination.content("docs/b.txt").unwrap(), b"bravo bravo");
+    assert!(destination.entry_at("vide").is_some());
+    no_partial(&destination);
+}
+
+#[test]
+fn unverified_absence_never_overwrites_a_file_the_listing_missed() {
+    // Étant donné un fichier présent à la destination distante mais absent
+    // du listing (cohérence éventuelle), quand la copie s'exécute, alors la
+    // revérification refuse la publication et le fichier tiers est intact.
+    let source = source();
+    let destination = unreliable_destination();
+    let plan = backup_plan(&source, &destination);
+    destination.put_file("a.txt", b"deja la", ts(500));
+    let report = execute(
+        &plan,
+        &source,
+        &destination,
+        confirmed(),
+        &mut MemoryJournal::new(),
+    )
+    .unwrap();
+    assert_eq!(refusal(&report, "a.txt"), Refusal::DestinationAppeared);
+    assert_eq!(destination.content("a.txt").unwrap(), b"deja la");
+    assert!(is_done(&report, "docs/b.txt"));
+}

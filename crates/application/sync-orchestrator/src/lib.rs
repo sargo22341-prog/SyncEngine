@@ -3,6 +3,8 @@
 //! and a shared per-user execution lock across facade state directories.
 //! Engines own every comparison, policy decision and file mutation.
 
+mod credentials;
+pub use credentials::{MissingCredential, missing_credentials, missing_credentials_with};
 mod endpoints;
 mod live;
 mod resident;
@@ -621,7 +623,13 @@ impl Application {
                 .skip(index + 1)
                 .chain([&self.state, &self.lock_root])
             {
-                if root.starts_with(other) || other.starts_with(root) {
+                // Identité des dossiers (vue bind) quand les deux existent ;
+                // sinon (verrous pas encore créés) comparaison des chemins.
+                let overlap = match connector_local::root_overlap(root, other) {
+                    Ok(overlap) => overlap.is_some(),
+                    Err(_) => root.starts_with(other) || other.starts_with(root),
+                };
+                if overlap {
                     return Err(error(
                         "invalid_input",
                         "source, destination, état et verrous doivent être disjoints",

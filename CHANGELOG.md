@@ -5,6 +5,44 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### libssh2-sys : correctif Windows de nouveau appliqué (audit Linux M10)
+- Un `cargo update` avait remplacé la copie corrigée `vendor/libssh2-sys` 0.3.3 (échanges de clés WinCNG) par 0.3.4 de crates.io, non validée sous Windows ; le correctif local était ignoré (`[[patch.unused]]`). `libssh2-sys` est épinglé `=0.3.3` (`ssh2` redescend de 0.9.7 à 0.9.6) et un test d'architecture échoue sur tout correctif inutilisé. Le passage à 0.3.4 reste à valider sous Windows.
+- CI : avis RustSec-2026-0543 (`chrono` non maintenu, sans correctif) toléré et documenté (`docs/DEVELOPPEMENT.md`).
+
+### Précision des dates selon le volume (audit Linux M9)
+- Le connecteur local annonçait la nanoseconde sous Linux quel que soit le volume : des fichiers identiques copiés avec leurs dates sur exFAT/FAT étaient « à remplacer » à chaque passage. Sous Linux, la précision est désormais déduite du type de système de fichiers de la racine (`statfs` : FAT 2 s, exFAT et FUSE 1 s, SMB/CIFS 2 s, NTFS 100 ns). Windows inchangé (`GetVolumeInformationW` à faire et à vérifier sous Windows).
+
+### Dépôt d'envoi distant hors de /tmp (audit Linux M8)
+- Les envois vers un serveur distant déposaient tout le fichier dans `/tmp`, souvent un tmpfs en RAM sous Linux. Le dépôt est désormais sous `~/.cache/SyncEngine/spool` (`$XDG_CACHE_HOME`, dossier `0700`), réglable par `SYNCENGINE_SPOOL_DIR`, avec contrôle de l'espace libre avant chaque fichier de taille connue (Linux). Nouvelle trace inventoriée et purgée. Windows inchangé (`%TEMP%`).
+
+### FTP sans MLSD (audit Linux M3)
+- Contre vsftpd, FTP/FTPS échouait avec « list : non pris en charge () ». La connexion vérifie maintenant `FEAT` (absence de `MLST` ⇒ refus) et un `MLSD` refusé (500/502) donne `NotSupported` avec un message expliquant l'exigence MLSD/MLST et les alternatives. Pas de repli `LIST` (choix de sûreté documenté).
+
+### Secrets et agent SSH sous Linux (audit Linux M4)
+- Un secret absent donnait « identifiant runtime indisponible » sans dire quoi faire. Le message nomme désormais la variable attendue (`SYNCENGINE_SECRET_<réf>`, ou `SSH_AUTH_SOCK` pour SFTP sous Unix, vérifié avant toute connexion) ; la façade expose `missing_credentials` (présence seulement, jamais la valeur) et la page du profil l'annonce avant toute simulation. Voies Linux documentées (`environment.d` en `0600`, `systemctl --user import-environment SSH_AUTH_SOCK`, cron) ; aucune unité ne reçoit de secret.
+
+### Fichiers temporaires orphelins après arrêt brutal (audit Linux M6)
+- Après un `SIGKILL` pendant des copies parallèles, des `.syncengine-<pid>-….partial` créés mais pas encore consignés restaient pour toujours (masqués par le scanner). Le journal consigne désormais le processus qui exécute (`JournalRecord::ExecutionStarted::process`, `RecoveryReport::process`, champ additif ; un journal produit par cette version n'est pas relu par une version antérieure) et « Reprendre » retire aussi les temporaires de ce processus dans les dossiers locaux où le plan écrivait. Non fait : signalement des `.partial` présents en simulation.
+
+### Agent planifié Linux (audit Linux M1, M5)
+- Sous Linux, une planification enregistrée dans l'interface ne s'exécutait jamais (aucune unité installée) alors que l'interface affichait « Agent actif ». L'interface installe désormais les unités systemd utilisateur à l'enregistrement d'une planification (`daemon-reload`, `enable --now` du minuteur, `enable` de l'unité de session), les retire après la dernière planification active, et affiche l'état observé (« Agent actif », « inactif », « non installé », « systemd indisponible »). Un fichier d'unité de même nom qui n'est pas de SyncEngine n'est jamais remplacé. Nouveau module `apps/desktop/src/systemd.rs` ; nouvelle trace temporaire `.<unité>.syncengine-tmp` inventoriée et purgée.
+- « Supprimer toutes les données » retirait les fichiers d'unité **avant** `systemctl --user disable --now` : `disable` échouait et un minuteur chargé pouvait relancer l'agent. Ordre corrigé : `disable --now`, fichiers et liens, puis `daemon-reload` (test avec un faux `systemctl` dans le `PATH`).
+
+### Destination imbriquée par vue bind (audit Linux M7)
+- La détection « destination dans la source » ne comparait que des chemins canonisés : une vue `mount --bind` de la source (ou d'un sous-dossier) était acceptée comme destination, et un miroir aurait pu supprimer une partie de la source. CLI (`preview`, `execute`) et façade comparent désormais aussi l'identité des dossiers et de leurs ancêtres (`st_dev`/`st_ino`, `connector_local::root_overlap`). Une racine existante mais non examinable est refusée. Windows : comparaison des chemins seulement (à vérifier sous Windows : `subst`, lecteur mappé).
+
+### Permissions POSIX conservées (audit Linux M2)
+- Sous Linux, une copie locale publiait chaque fichier en `0644` et chaque dossier en `0755` : un fichier privé `0600` devenait lisible par tous dans la sauvegarde. Le mode de la source est désormais reproduit vers une destination locale (fichiers, dossiers créés, versions de la corbeille), le dépôt temporaire reste en `0600`, setuid/setgid ne sont jamais reproduits, un remplacement n'élargit jamais les droits existants. Contrat : `UnixPermissions`, `FileMetadata::permissions`, `WriteOptions::permissions`, `StorageFeature::SetPermissions`, `StorageConnector::set_permissions` (défaut `NotSupported`). Non reproduit vers les connecteurs distants (SFTP `setstat` : à faire).
+
+### WebDAV sur Apache (audit Linux C3)
+- Les sous-dossiers d'un serveur WebDAV Apache (`mod_dav`) n'étaient ni lus ni créés : `PROPFIND /racine/docs` reçoit `301 → /racine/docs/`, qui n'était pas suivie. Les collections sont désormais listées, créées (`MKCOL`) et nettoyées avec la barre finale, et une redirection `301`/`308` vers exactement la même URL suivie de `/` est suivie une seule fois (mutations comprises : le serveur ne les a pas traitées). Toute autre redirection reste refusée, sans renvoyer `Authorization`.
+
+### Clés USB exFAT/FAT sous Linux (audit Linux C2)
+- La publication sans écrasement du connecteur local passait par un lien physique (`linkat`) : sur exFAT, FAT et les montages sans liens physiques, chaque fichier échouait en « accès refusé ». Sous Linux elle utilise désormais `renameat2(RENAME_NOREPLACE)`, avec replis documentés (lien physique, puis réservation exclusive du nom et renommage). Une cible existante reste toujours refusée. Windows et les autres systèmes : inchangés (à vérifier sous Windows : aucun changement de code effectif, `cfg!(target_os = "linux")`).
+
+### Sauvegarde vers une destination distante (audit Linux C1)
+- Une sauvegarde ou un miroir vers SFTP, FTP, FTPS ou WebDAV ne copiait rien : chaque absence d'un listing sans garantie de cohérence devenait « présence inconnue » puis un saut. Un dossier distant listé jusqu'au bout sans erreur donne maintenant une absence non vérifiée (`Presence::AbsentUnverified`, `Uncertainty::AbsenceUnverified`) qui autorise la **seule copie** d'un élément de la source ; l'exécuteur revérifie la cible et publie sans écrasement. Suppressions, remplacements et bidirectionnel inchangés : aucune suppression n'est déduite d'un listing distant. Contrat arbitré (option A). Format du plan inchangé.
+
 ### Fenêtre de suivi des planifications
 - Avec « Afficher la fenêtre de suivi », la fenêtre était restaurée et recevait le focus à chaque profil d'une série planifiée : elle prenait la saisie de l'application en cours et annulait une réduction. Elle n'est désormais montrée qu'au premier profil de la série (`follow::WindowFollow`) ; la série se termine quand la file de l'agent est vide ou après 60 s sans exécution active.
 

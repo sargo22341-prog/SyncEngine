@@ -4,6 +4,7 @@ use crate::{
     confined,
     connector::cancelled,
     errors::{io_error, local_error},
+    publish,
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
@@ -99,6 +100,57 @@ pub(crate) fn create_directory(
         .map_err(|e| io_error(e, op, path))?;
     Ok(confined::entry(path.clone(), &meta, precision))
 }
+/// Bits appliqués : jamais setuid ni setgid (une sauvegarde ne crée pas de
+/// programme privilégié) ; le reste est reproduit.
+#[cfg(unix)]
+const APPLIED_BITS: u32 = 0o1777;
+
+/// Permissions d'un répertoire créé par l'exécution : celles de la source,
+/// `rwx` du propriétaire toujours conservés (pour y écrire le contenu).
+pub(crate) fn set_directory_permissions(
+    root: &Dir,
+    path: &ResourcePath,
+    permissions: sync_core::UnixPermissions,
+) -> Result<(), StorageError> {
+    let op = StorageOperation::Write;
+    let parent = confined::parent(root, path, op)?;
+    let name = name(path)?;
+    let meta = parent
+        .symlink_metadata(name)
+        .map_err(|e| io_error(e, op, path))?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err(local_error(
+            StorageErrorKind::Conflict,
+            op,
+            path,
+            "not a directory",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use cap_std::fs::PermissionsExt;
+        let mode = (permissions.bits() & APPLIED_BITS) | 0o700;
+        // Through a handle opened without following links (never a path).
+        use cap_fs_ext::DirExt;
+        let dir = parent
+            .open_dir_nofollow(name)
+            .map_err(|e| io_error(e, op, path))?;
+        dir.set_permissions(".", cap_std::fs::Permissions::from_mode(mode))
+            .map_err(|e| io_error(e, op, path))?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = permissions;
+        Err(local_error(
+            StorageErrorKind::NotSupported,
+            op,
+            path,
+            "POSIX permissions are not supported on this platform",
+        ))
+    }
+}
+
 pub(crate) fn delete(
     root: &Dir,
     path: &ResourcePath,
@@ -195,6 +247,13 @@ impl LocalWriter {
         let mut open = OpenOptions::new();
         // Readable too: verification rereads through this same handle.
         open.read(true).write(true).create_new(true);
+        // Requested permissions: the deposit is private until publication,
+        // never more open than the final file (audit Linux M2).
+        #[cfg(unix)]
+        if options.permissions.is_some() {
+            use cap_std::fs::OpenOptionsExt;
+            open.mode(0o600);
+        }
         let file = parent
             .open_with(&staging_name, &open)
             .map_err(|e| io_error(e, op, path))?
@@ -271,16 +330,21 @@ impl LocalWriter {
             file.set_modified(time)
                 .map_err(|e| io_error(e, op, &self.target))?;
         }
+        self.apply_permissions(&file, mode)?;
         file.sync_all().map_err(|e| io_error(e, op, &self.target))?;
         drop(file);
         match mode {
             CommitMode::CreateNew => {
-                // No check-then-rename fallback: unsupported filesystems fail closed.
-                self.parent
-                    .hard_link(&self.staging_name, &self.parent, &self.target_name)
-                    .map_err(|e| io_error(e, op, &self.target))?;
-                retry_transient_lock(&self.cancel, || self.parent.remove_file(&self.staging_name))
+                // Never overwrites; method order and fallbacks: see publish.rs.
+                let published =
+                    publish::create_new(&self.parent, &self.staging_name, &self.target_name)
+                        .map_err(|e| io_error(e, op, &self.target))?;
+                if published == publish::Published::Linked {
+                    retry_transient_lock(&self.cancel, || {
+                        self.parent.remove_file(&self.staging_name)
+                    })
                     .map_err(|e| io_error(e, op, &self.staging))?;
+                }
             }
             CommitMode::ReplaceExisting => {
                 let meta = self
@@ -338,6 +402,31 @@ impl LocalWriter {
                 }
             })?;
         Ok(confined::entry(self.target.clone(), &meta, self.precision))
+    }
+    /// Applies the requested permissions to the deposit, before publication.
+    /// A replacement never widens the rights of the file it replaces.
+    #[cfg(unix)]
+    fn apply_permissions(&self, file: &File, mode: CommitMode) -> Result<(), StorageError> {
+        use std::os::unix::fs::PermissionsExt;
+        let op = StorageOperation::Write;
+        let Some(requested) = self.options.permissions else {
+            return Ok(());
+        };
+        let mut bits = requested.bits() & APPLIED_BITS;
+        if mode == CommitMode::ReplaceExisting {
+            use cap_std::fs::PermissionsExt as _;
+            let existing = self
+                .parent
+                .symlink_metadata(&self.target_name)
+                .map_err(|e| io_error(e, op, &self.target))?;
+            bits &= existing.permissions().mode();
+        }
+        file.set_permissions(std::fs::Permissions::from_mode(bits))
+            .map_err(|e| io_error(e, op, &self.target))
+    }
+    #[cfg(not(unix))]
+    fn apply_permissions(&self, _: &File, _: CommitMode) -> Result<(), StorageError> {
+        Ok(())
     }
     fn cleanup(&mut self) -> Result<(), StorageError> {
         // Closes the flush handle first: the staging file is then removable.

@@ -275,17 +275,33 @@ impl Application {
         let mut resumed = Resumed::default();
         // Staging paths come from the journals, read before they go.
         let mut stagings: Vec<(PlanSide, ResourcePath)> = Vec::new();
+        // Killed processes and the plans they were executing (audit M6).
+        let mut sweeps: Vec<(u32, sync_plan::ExecutionPlan)> = Vec::new();
         for attempt in runs::running(&self.state, Some(id))? {
             let path = journal_path(&self.state, &attempt.execution)?;
             let mut recovery = Recovery::new();
             match sync_journal::visit_journal(&path, |line| recovery.push(line.record())) {
-                Ok(truncated) => stagings.extend(
-                    recovery
-                        .finish(truncated)
-                        .in_flight
-                        .into_iter()
-                        .filter_map(|op| op.staging.map(|s| (op.target, s))),
-                ),
+                Ok(truncated) => {
+                    let report = recovery.finish(truncated);
+                    if let Some(process) = report.process {
+                        match runs::plan_text(&self.state, &attempt.execution)?
+                            .map(|text| serde_json::from_str(&text))
+                        {
+                            Some(Ok(plan)) => sweeps.push((process, plan)),
+                            Some(Err(e)) => resumed.warnings.push(format!(
+                                "plan de {} illisible : fichiers temporaires non consignés non recherchés ({e})",
+                                attempt.execution
+                            )),
+                            None => {}
+                        }
+                    }
+                    stagings.extend(
+                        report
+                            .in_flight
+                            .into_iter()
+                            .filter_map(|op| op.staging.map(|s| (op.target, s))),
+                    );
+                }
                 Err(e) => resumed.warnings.push(format!(
                     "journal {} illisible : fichiers temporaires non recherchés ({e})",
                     attempt.execution
@@ -296,10 +312,109 @@ impl Application {
         if !stagings.is_empty() {
             self.remove_stagings(&profile, &stagings, &mut resumed);
         }
+        for (process, plan) in &sweeps {
+            self.sweep_stagings(&profile, *process, plan, &mut resumed);
+        }
         resumed
             .warnings
             .extend(discard_journals(&self.state, &executions));
         Ok(resumed)
+    }
+
+    /// Removes the local temporaries `.syncengine-<process>-….partial` that a
+    /// killed process may have created without recording them (its journal
+    /// lags behind parallel copies): only in the folders its plan writes
+    /// files to, only regular files, never through a link (the connector
+    /// refuses them), and only for local endpoints. The job lock is held:
+    /// no execution of this account can own such a file now.
+    fn sweep_stagings(
+        &self,
+        profile: &sync_profiles::Profile,
+        process: u32,
+        plan: &sync_plan::ExecutionPlan,
+        resumed: &mut Resumed,
+    ) {
+        let prefix = format!(".syncengine-{process}-");
+        let mut folders: Vec<(PlanSide, ResourcePath)> = plan
+            .operations()
+            .iter()
+            .filter(|op| {
+                matches!(op.action(), Action::Copy | Action::Replace)
+                    && op.kind() == EntryKind::File
+            })
+            .map(|op| (op.target(), op.path().parent().unwrap_or_default()))
+            .collect();
+        folders.sort_by(|a, b| a.1.cmp(&b.1));
+        folders.dedup();
+        if folders.is_empty() {
+            return;
+        }
+        let cancel = CancellationToken::new();
+        let roots = match self.roots(profile) {
+            Ok(roots) => roots,
+            Err(e) => {
+                resumed.warnings.push(format!(
+                    "fichiers temporaires non consignés non recherchés : {}",
+                    e.message
+                ));
+                return;
+            }
+        };
+        for side in [PlanSide::Source, PlanSide::Destination] {
+            let (root, remote) = match side {
+                PlanSide::Source => (&roots.0, profile.remote_source.as_ref()),
+                PlanSide::Destination => (&roots.1, profile.remote_destination.as_ref()),
+            };
+            // Remote stages use other names and are reported by the journal.
+            if remote.is_some() || !folders.iter().any(|(s, _)| *s == side) {
+                continue;
+            }
+            let connector = match endpoints::build(Path::new(root), None, true, &cancel) {
+                Ok(connector) => connector,
+                Err(e) => {
+                    resumed.warnings.push(format!(
+                        "fichiers temporaires non consignés non recherchés : {}",
+                        e.message
+                    ));
+                    continue;
+                }
+            };
+            for (_, folder) in folders.iter().filter(|(s, _)| *s == side) {
+                let mut token = None;
+                loop {
+                    let page = match connector.list(folder, token.as_ref(), &cancel) {
+                        Ok(page) => page,
+                        // A folder never created holds nothing.
+                        Err(e) if e.kind() == connector_api::StorageErrorKind::NotFound => break,
+                        Err(e) => {
+                            resumed
+                                .leftovers
+                                .push(format!("{} : recherche impossible ({e})", folder.as_str()));
+                            break;
+                        }
+                    };
+                    for entry in page.entries() {
+                        let name = entry.path().segments().last().unwrap_or_default();
+                        if entry.kind() != EntryKind::File
+                            || !name.starts_with(&prefix)
+                            || !connector_local::is_staging_name(name)
+                        {
+                            continue;
+                        }
+                        let label = entry.path().as_str().to_owned();
+                        match connector.delete(entry.path(), EntryKind::File, &cancel) {
+                            Ok(()) => resumed.removed.push(label),
+                            Err(e) if e.kind() == connector_api::StorageErrorKind::NotFound => {}
+                            Err(e) => resumed.leftovers.push(format!("{label} : {e}")),
+                        }
+                    }
+                    match page.next_page() {
+                        Some(next) => token = Some(next.clone()),
+                        None => break,
+                    }
+                }
+            }
+        }
     }
 
     fn remove_stagings(

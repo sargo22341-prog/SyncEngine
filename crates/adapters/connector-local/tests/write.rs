@@ -479,3 +479,109 @@ fn large_write_survives_intermediate_flushes() {
     );
     assert_eq!(names(dir.path()), ["large.bin"]);
 }
+
+/// C2 — Étant donné une destination exFAT vide (montage FUSE, sans liens
+/// physiques), quand on sauvegarde 10 fichiers, alors les 10 sont publiés
+/// sans écrasement et aucun `.partial` ne reste.
+///
+/// Lancé par `scripts/test_exfat_fuse.py` (root : image boucle montée par
+/// `exfat-fuse`) avec `SYNCENGINE_EXFAT_ROOT` pointant dans le montage.
+#[test]
+#[ignore = "montage exFAT FUSE requis : scripts/test_exfat_fuse.py"]
+fn create_new_publishes_on_a_filesystem_without_hard_links() {
+    let root = std::path::PathBuf::from(std::env::var("SYNCENGINE_EXFAT_ROOT").unwrap());
+    let dir = tempfile::Builder::new()
+        .prefix("c2-")
+        .tempdir_in(&root)
+        .unwrap();
+    let connector = writable(dir.path());
+    for index in 0..10 {
+        let name = format!("f{index}.txt");
+        let entry = write_file(
+            &connector,
+            &name,
+            name.as_bytes(),
+            CommitMode::CreateNew,
+            WriteOptions::new(),
+        )
+        .unwrap();
+        assert_eq!(entry.metadata().size(), Some(name.len() as u64));
+        assert_eq!(fs::read(dir.path().join(&name)).unwrap(), name.as_bytes());
+    }
+    // Une cible existante n'est jamais écrasée, même sans liens physiques.
+    let error = write_file(
+        &connector,
+        "f0.txt",
+        b"autre",
+        CommitMode::CreateNew,
+        WriteOptions::new(),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::Conflict);
+    assert_eq!(fs::read(dir.path().join("f0.txt")).unwrap(), b"f0.txt");
+    let names = names(dir.path());
+    assert_eq!(names.len(), 10, "{names:?}");
+    assert!(names.iter().all(|n| !is_staging_name(n)), "{names:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_private_file_is_never_readable_by_others_even_while_staged() {
+    // M2 — Étant donné un fichier source 0600, quand il est déposé puis
+    // publié, alors le dépôt temporaire et le fichier publié sont 0600.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().unwrap();
+    let connector = writable(dir.path());
+    assert!(
+        connector
+            .capabilities()
+            .supports(connector_api::StorageFeature::SetPermissions)
+    );
+    let cancel = CancellationToken::new();
+    let options =
+        WriteOptions::new().with_permissions(Some(sync_core::UnixPermissions::new(0o600)));
+    let mut writer = connector
+        .open_write(&p("prive"), &options, &cancel)
+        .unwrap();
+    writer.write(b"secret").unwrap();
+    let staging = dir.path().join(writer.staging_path().unwrap().as_str());
+    let staged = fs::metadata(&staging).unwrap().permissions().mode();
+    assert_eq!(staged & 0o077, 0, "dépôt lisible : {staged:o}");
+    let entry = writer.commit(CommitMode::CreateNew).unwrap();
+    let published = fs::metadata(dir.path().join("prive"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(published & 0o7777, 0o600);
+    assert_eq!(
+        entry.metadata().permissions(),
+        Some(sync_core::UnixPermissions::new(0o600))
+    );
+    // setuid/setgid ne sont jamais reproduits.
+    let options =
+        WriteOptions::new().with_permissions(Some(sync_core::UnixPermissions::new(0o6755)));
+    let mut writer = connector
+        .open_write(&p("outil"), &options, &cancel)
+        .unwrap();
+    writer.write(b"x").unwrap();
+    writer.commit(CommitMode::CreateNew).unwrap();
+    let published = fs::metadata(dir.path().join("outil"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(published & 0o7777, 0o755);
+}
+
+/// M9 — Étant donné une racine sur exFAT (dates à la seconde par FUSE),
+/// quand le connecteur est créé, alors il annonce une précision d'une
+/// seconde, pas la nanoseconde de Linux. Lancé par `scripts/test_exfat_fuse.py`.
+#[test]
+#[ignore = "montage exFAT FUSE requis : scripts/test_exfat_fuse.py"]
+fn an_exfat_root_announces_its_coarse_date_precision() {
+    let root = std::path::PathBuf::from(std::env::var("SYNCENGINE_EXFAT_ROOT").unwrap());
+    let connector = writable(&root);
+    assert_eq!(
+        connector.capabilities().timestamp_precision,
+        sync_core::TimestampPrecision::Second
+    );
+}

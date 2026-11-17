@@ -78,6 +78,15 @@ pub(crate) fn ftp_error(error: FtpError, op: Op, path: &ResourcePath) -> Storage
     };
     err(kind, op, path)
 }
+/// Explained refusal of a server without MLSD/MLST (RFC 3659), such as
+/// vsftpd: SyncEngine never falls back to `LIST`, whose free-form dates and
+/// names cannot prove what a folder contains.
+pub(crate) const NO_MLSD: &str = "le serveur FTP ne prend pas en charge MLSD/MLST (RFC 3659), exigés par SyncEngine ; vsftpd par exemple ne les propose pas : utiliser SFTP ou un serveur qui les annonce (proftpd, Pure-FTPd)";
+
+fn no_mlsd(op: Op, path: &ResourcePath) -> StorageError {
+    err(Kind::NotSupported, op, path).with_message(NO_MLSD)
+}
+
 pub(crate) fn command(path: &ResourcePath, op: Op) -> Result<&str, StorageError> {
     if path.as_str().contains(['\r', '\n', '\0']) {
         return Err(err(Kind::Permanent, op, path));
@@ -246,6 +255,13 @@ impl Endpoint {
         ftp.set_mode(Mode::ExtendedPassive);
         ftp.login(&self.credentials.user, &self.credentials.password)
             .map_err(|_| err(Kind::Unauthenticated, op, path))?;
+        // A FEAT reply without MLST proves the listings cannot work; a server
+        // that refuses FEAT itself is judged by its MLSD reply instead.
+        if let Ok(features) = ftp.feat()
+            && !features.keys().any(|key| key.eq_ignore_ascii_case("MLST"))
+        {
+            return Err(no_mlsd(op, path));
+        }
         ftp.cwd(&self.options.root)
             .map_err(|e| ftp_error(e, op, path))?;
         ftp.transfer_type(FileType::Binary)
@@ -330,7 +346,12 @@ impl Endpoint {
                 format!("MLSD {}", command(path, Op::List)?),
                 &[suppaftp::Status::AlreadyOpen, suppaftp::Status::AboutToSend],
             )
-            .map_err(|e| ftp_error(e, Op::List, path))?;
+            .map_err(|e| match &e {
+                FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 500 | 502) => {
+                    no_mlsd(Op::List, path)
+                }
+                _ => ftp_error(e, Op::List, path),
+            })?;
         let mut bytes = Vec::new();
         let mut buf = [0; 16384];
         loop {

@@ -36,6 +36,41 @@ pub struct FileMetadata {
     /// Ajout phase 02 : absent des formes sérialisées antérieures.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hash: Option<ContentHash>,
+    /// Ajout audit Linux M2 : absent des formes sérialisées antérieures et
+    /// des stockages sans modes POSIX.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permissions: Option<UnixPermissions>,
+}
+
+/// Bits de permission POSIX d'une entrée (`0o7777` : propriétaire, groupe,
+/// autres, setuid, setgid, sticky), sans le type de fichier.
+///
+/// Une observation, comme les autres métadonnées : les connecteurs qui ne
+/// connaissent pas les modes POSIX la laissent absente.
+///
+/// ```
+/// use sync_core::UnixPermissions;
+/// assert_eq!(UnixPermissions::new(0o100_644).bits(), 0o644);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UnixPermissions(u32);
+
+impl UnixPermissions {
+    /// Masque des bits conservés.
+    pub const MASK: u32 = 0o7777;
+
+    /// Garde seulement les bits de permission (`mode & 0o7777`).
+    #[must_use]
+    pub fn new(mode: u32) -> Self {
+        Self(mode & Self::MASK)
+    }
+
+    /// Bits de permission (`0o0000` à `0o7777`).
+    #[must_use]
+    pub fn bits(self) -> u32 {
+        self.0
+    }
 }
 
 impl FileMetadata {
@@ -66,6 +101,19 @@ impl FileMetadata {
     pub fn with_hash(mut self, hash: ContentHash) -> Self {
         self.hash = Some(hash);
         self
+    }
+
+    /// Ajoute les permissions POSIX observées.
+    #[must_use]
+    pub fn with_permissions(mut self, permissions: UnixPermissions) -> Self {
+        self.permissions = Some(permissions);
+        self
+    }
+
+    /// Permissions POSIX, `None` si inconnues ou sans objet.
+    #[must_use]
+    pub fn permissions(&self) -> Option<UnixPermissions> {
+        self.permissions
     }
 
     /// Retire l'empreinte (par exemple si le fichier a changé pendant sa lecture).

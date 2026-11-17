@@ -80,6 +80,23 @@ Les E/S de vérification et d’archivage ont des compteurs informatifs séparé
 Le magasin et le connecteur revalident toujours les dossiers des versions et
 chaque écriture effective ; aucun cache ne permet une mutation.
 
+Permissions POSIX (audit Linux M2) : `FileMetadata::permissions`
+(`UnixPermissions`, champ additif ignoré par les versions antérieures) est
+observé par le connecteur local Unix ; l'exécuteur le passe dans
+`WriteOptions::permissions` et, pour un dossier créé, par
+`StorageConnector::set_permissions`, seulement si le récepteur déclare
+`StorageFeature::SetPermissions` (connecteur local Unix uniquement). Le dépôt
+est créé en `0600`, puis `fchmod` avant publication ; un remplacement prend
+l'intersection avec le mode existant ; setuid/setgid jamais reproduits.
+
+Publication sans écrasement (`CommitMode::CreateNew`) du connecteur local :
+sous Linux `renameat2(RENAME_NOREPLACE)`, repli sur lien physique si le noyau
+ou le système de fichiers ignore l'option, puis, sans liens physiques (exFAT,
+FAT, certains FUSE/CIFS), réservation exclusive du nom puis renommage. Une
+cible existante n'est jamais écrasée ; la limite du dernier repli (un
+programme tiers écrivant dans la réservation vide) est décrite dans
+`connector-local/src/publish.rs`. Hors Linux : lien physique seul, inchangé.
+
 Le connecteur local vide le fichier temporaire en arrière-plan (fil dédié,
 seconde poignée) : sous Windows les données seules sans vider le cache de
 l'appareil, tous les 16 Mio, sinon `sync_data` tous les 128 Mio. La copie
@@ -242,7 +259,11 @@ issue, les refus et les 100 dernières opérations. `acknowledge_interrupted`
 acquitte puis supprime les journaux (échecs rendus comme avertissements) ;
 `resume_interrupted` acquitte, retire par le connecteur du profil les seuls
 dépôts consignés portant le nom local `.syncengine-….partial` (sans suivre de
-lien), puis supprime les journaux. Le journal n'est jamais rejoué : l'interface
+lien), puis, si le journal consigne le processus (`ExecutionStarted::process`,
+champ additif), les fichiers `.syncengine-<processus>-….partial` des dossiers
+locaux où le plan stocké écrivait des fichiers (dépôts créés mais pas encore
+consignés par des copies parallèles), puis supprime les journaux. Le verrou
+d'exécution est tenu : aucun dépôt de ce compte n'est alors vivant. Le journal n'est jamais rejoué : l'interface
 lance ensuite une nouvelle simulation complète.
 
 Les fichiers en cours ne lisent pas le journal : avec
@@ -292,7 +313,15 @@ Les listings natifs SMB suivent désormais le contrat du système de fichiers :
 une énumération achevée sans erreur permet une absence pour le plan, sans
 promesse de snapshot atomique. Une erreur d’énumération, page perdue, omission ou annulation
 reste incomplète et bloque les suppressions. Les connecteurs dont la cohérence
-reste inconnue ou éventuelle gardent la politique conservatrice. L’exécuteur
+reste inconnue ou éventuelle gardent la politique conservatrice pour les
+suppressions et le bidirectionnel. Un de leurs dossiers listé jusqu’au bout sans
+erreur ni omission donne `Presence::AbsentUnverified`, comparée en
+`Uncertainty::AbsenceUnverified` : `sync-decisions` en tire seulement une copie
+source → destination (`MissingAtDestination`, format de plan inchangé), que
+l’exécuteur revérifie par `stat` et publie en `CreateNew`. Une absence non
+vérifiée côté source n’est jamais un `RightOnly`. Contrairement à FreeFileSync,
+qui tient tout listing achevé pour sûr (copies et suppressions), SyncEngine ne
+déduit aucune suppression d’un listing distant. L’exécuteur
 revérifie chaque absence, y compris après l’archivage d’une version avant
 suppression. Les collisions de noms demeurent des conflits explicites, jamais
 des disparitions. Voir [les preuves et la comparaison FreeFileSync](ABSENCE_SMB_ET_CONFLITS.md).

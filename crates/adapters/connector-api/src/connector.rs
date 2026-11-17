@@ -184,6 +184,28 @@ pub trait StorageConnector: Send + Sync {
             .with_connector(self.connector_id().clone())
             .with_path(path.clone()))
     }
+
+    /// Applique les permissions POSIX `permissions` au **répertoire** `path`
+    /// (créé par cette exécution). Le connecteur garde toujours les droits
+    /// `rwx` du propriétaire, pour pouvoir y écrire le contenu, et ne
+    /// reproduit jamais setuid ni setgid.
+    ///
+    /// # Errors
+    /// [`NotSupported`](crate::StorageErrorKind::NotSupported) si la capacité
+    /// [`StorageFeature::SetPermissions`] n'est pas déclarée (implémentation
+    /// par défaut) ; [`Conflict`](crate::StorageErrorKind::Conflict) si
+    /// `path` n'est pas un répertoire ; autres catégories selon la cause.
+    fn set_permissions(
+        &self,
+        path: &ResourcePath,
+        permissions: sync_core::UnixPermissions,
+        cancel: &CancellationToken,
+    ) -> Result<(), StorageError> {
+        let _ = (permissions, cancel);
+        Err(StorageError::not_supported(StorageOperation::Write)
+            .with_connector(self.connector_id().clone())
+            .with_path(path.clone()))
+    }
 }
 
 /// Vérifie qu'un connecteur déclare `feature` avant d'exécuter `operation`.

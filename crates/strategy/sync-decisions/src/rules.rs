@@ -39,9 +39,11 @@ fn plan_side(side: Side) -> PlanSide {
 /// Traduit une incertitude de comparaison (gauche = source).
 pub(crate) fn uncertain_cause(uncertainty: &Uncertainty) -> UncertainCause {
     match uncertainty {
-        Uncertainty::PresenceUnknown { side, .. } => UncertainCause::PresenceUnknown {
-            side: plan_side(*side),
-        },
+        Uncertainty::PresenceUnknown { side, .. } | Uncertainty::AbsenceUnverified { side } => {
+            UncertainCause::PresenceUnknown {
+                side: plan_side(*side),
+            }
+        }
         Uncertainty::ExcludedOnSide { side } => UncertainCause::Excluded {
             side: plan_side(*side),
         },
@@ -74,7 +76,11 @@ fn is_file_or_dir(kind: EntryKind) -> bool {
 /// - natures différentes : conflit ;
 /// - fichiers différents : selon [`OverwritePolicy`] et la date la plus
 ///   récente ([`decide_overwrite`]) ;
-/// - incertain : saut, **jamais** d'écriture ni de suppression ;
+/// - présent à la source, absence **non vérifiée** à la destination
+///   (listing distant sans garantie de cohérence) : copie, que l'exécuteur
+///   revérifie juste avant d'écrire et publie sans écrasement
+///   (`CreateNew`) ; jamais de remplacement ni de suppression ;
+/// - autre incertitude : saut, **jamais** d'écriture ni de suppression ;
 /// - présent seulement à la destination : renvoyé au mode.
 pub(crate) fn decide(row: &PathComparison, policy: &PlanPolicy) -> RowDecision {
     let decision = match row.outcome() {
@@ -94,7 +100,17 @@ pub(crate) fn decide(row: &PathComparison, policy: &PlanPolicy) -> RowDecision {
         ),
         ComparisonOutcome::Different(differences) => decide_different(row, differences, policy),
         ComparisonOutcome::Uncertain(uncertainties) => {
-            skip_uncertain(uncertainties.iter().map(uncertain_cause).collect())
+            match (
+                uncertainties.as_slice(),
+                row.left().map(sync_core::FileEntry::kind),
+            ) {
+                ([Uncertainty::AbsenceUnverified { side: Side::Right }], Some(kind))
+                    if is_file_or_dir(kind) && row.right().is_none() =>
+                {
+                    Decision::new(Action::Copy, Reason::MissingAtDestination)
+                }
+                _ => skip_uncertain(uncertainties.iter().map(uncertain_cause).collect()),
+            }
         }
         _ => skip_uncertain(vec![UncertainCause::Other]),
     };

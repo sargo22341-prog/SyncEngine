@@ -213,9 +213,12 @@ impl<'a> VersionStore<'a> {
         if let Some(parent) = location.parent() {
             self.ensure_directory(&parent, cancel)?;
         }
+        // Same POSIX permissions as the archived file: a private file never
+        // becomes readable by others in the trash (audit Linux M2).
         let options = WriteOptions::new()
             .with_modified(observed.modified())
-            .with_size_hint(observed.size());
+            .with_size_hint(observed.size())
+            .with_permissions(observed.permissions());
         let request = CopyRequest::new(from, path, self.connector, &location).with_options(options);
         let staged = stage_copy(&request, observer, cancel).map_err(VersioningError::Copy)?;
         if let Err(mismatch) = check_transfer(observed, staged.bytes(), staged.hash()) {

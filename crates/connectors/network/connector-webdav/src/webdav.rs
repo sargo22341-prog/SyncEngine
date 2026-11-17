@@ -8,7 +8,7 @@ use connector_api::{
 use reqwest::{
     Method, Url,
     blocking::{Client, Response},
-    header::{AUTHORIZATION, CONTENT_LENGTH, HeaderValue, RETRY_AFTER},
+    header::{AUTHORIZATION, CONTENT_LENGTH, HeaderValue, LOCATION, RETRY_AFTER},
 };
 use sync_core::{CancellationToken, ConnectorId, EntryKind, FileEntry, ResourcePath};
 
@@ -24,8 +24,9 @@ pub struct WebDavOptions {
     pub root: String,
 }
 
-/// Connecteur WebDAV, lecture seule par défaut. Pas de redirection, cookie, proxy implicite,
-/// ni TLS non vérifié. Une instance ne conserve qu'un listing paginé actif.
+/// Connecteur WebDAV, lecture seule par défaut. Aucune redirection suivie, sauf
+/// `301`/`308` vers la même URL suivie de `/` (collection Apache), une seule
+/// fois ; ni cookie, proxy implicite, ni TLS non vérifié. Une instance ne conserve qu'un listing paginé actif.
 pub struct WebDavConnector {
     pub(super) root: Url,
     pub(super) client: Client,
@@ -138,12 +139,40 @@ impl WebDavConnector {
         Ok(url)
     }
 
+    /// URL d'une collection : toujours avec la barre finale (RFC 4918 §5.2),
+    /// comme l'exigent Apache `mod_dir` et la plupart des serveurs.
+    pub(super) fn collection_url(&self, path: &ResourcePath) -> Result<Url, StorageError> {
+        let mut url = self.url(path)?;
+        if !url.path().ends_with('/') {
+            let with_slash = format!("{}/", url.path());
+            url.set_path(&with_slash);
+        }
+        Ok(url)
+    }
+
     fn request(
         &self,
         path: &ResourcePath,
         depth: Option<&str>,
         cancel: &CancellationToken,
     ) -> Result<Response, StorageError> {
+        // Seul le listing (Depth 1) vise sûrement une collection.
+        let url = if depth == Some("1") {
+            self.collection_url(path)?
+        } else {
+            self.url(path)?
+        };
+        self.request_at(url, path, depth, cancel)
+    }
+
+    fn request_at(
+        &self,
+        mut url: Url,
+        path: &ResourcePath,
+        depth: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<Response, StorageError> {
+        let mut redirected = false;
         let op = if depth.is_some() { Op::List } else { Op::Read };
         let method = if depth.is_some() {
             Method::from_bytes(b"PROPFIND").map_err(|_| error(Kind::Permanent, op, path))?
@@ -154,7 +183,7 @@ impl WebDavConnector {
             paging::check(cancel, op, path)?;
             let mut request = self
                 .client
-                .request(method.clone(), self.url(path)?)
+                .request(method.clone(), url.clone())
                 .header(AUTHORIZATION, self.auth.clone())
                 .header("Accept-Encoding", "identity");
             if let Some(depth) = depth {
@@ -183,6 +212,14 @@ impl WebDavConnector {
             let expected = if depth.is_some() { 207 } else { 200 };
             if response.status().as_u16() == expected {
                 return Ok(response);
+            }
+            if !redirected && let Some(target) = slash_redirect(&url, &response) {
+                // Une seule fois, vers la même URL suivie de « / » : le serveur
+                // n'a rien traité, la requête (lecture) est simplement réadressée.
+                redirected = true;
+                url = target;
+                drop(response);
+                continue;
             }
             let kind = status_kind(
                 response.status().as_u16(),
@@ -235,6 +272,25 @@ impl WebDavConnector {
             std::str::from_utf8(&bytes).map_err(|_| error(Kind::Permanent, Op::List, path))?;
         parse(&self.root, path, depth, text)
     }
+}
+
+/// Cible d'une redirection acceptée : **uniquement** `301`/`308` vers
+/// exactement la même URL suivie de `/` (même origine, sans query ni
+/// fragment), en absolu ou en chemin absolu. Toute autre redirection est
+/// refusée : les identifiants ne sont jamais réémis vers une autre URL.
+pub(super) fn slash_redirect(requested: &Url, response: &Response) -> Option<Url> {
+    if !matches!(response.status().as_u16(), 301 | 308)
+        || requested.path().ends_with('/')
+        || requested.query().is_some()
+    {
+        return None;
+    }
+    let location = response.headers().get(LOCATION)?.to_str().ok()?;
+    let mut expected = requested.clone();
+    expected.set_fragment(None);
+    let with_slash = format!("{}/", requested.path());
+    expected.set_path(&with_slash);
+    (location == expected.as_str() || location == expected.path()).then_some(expected)
 }
 
 pub(super) fn status_kind(status: u16, retry: Option<&HeaderValue>) -> Kind {

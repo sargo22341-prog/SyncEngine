@@ -28,6 +28,8 @@ mod review;
 mod schedules;
 mod shell;
 mod speed;
+#[cfg(not(windows))]
+mod systemd;
 mod theme;
 mod titlebar;
 mod trash;
@@ -89,4 +91,19 @@ fn platform_window() -> iced::window::settings::PlatformSpecific {
 #[cfg(not(windows))]
 fn platform_window() -> iced::window::settings::PlatformSpecific {
     iced::window::settings::PlatformSpecific::default()
+}
+
+/// Test-only coordination inside this multi-threaded test binary.
+#[cfg(test)]
+pub(crate) mod test_support {
+    /// Held by tests that spawn child processes and by tests asserting that
+    /// a file lock is free: a child forked while another thread briefly holds
+    /// an `flock` keeps a copy of that lock until it executes its program.
+    pub(crate) static PROCESS_SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    pub(crate) fn spawn_guard() -> std::sync::MutexGuard<'static, ()> {
+        PROCESS_SPAWN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }

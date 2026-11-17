@@ -279,17 +279,19 @@ fn isolated_https_contract() -> TestResult {
     assert!(second.next_page().is_none());
     assert!(c.list(&root, Some(token), &cancel).is_err());
     // Given a complete Graph children traversal with unknown consistency,
-    // When the real scanner consumes it, Then absence remains Unknown.
+    // When the real scanner consumes it, Then absence is never established:
+    // at most unverified, which can never justify a deletion (audit C1).
     let inventory = sync_scanner::scan(
         &c,
         &sync_filter::Filter::include_all(),
         &sync_scanner::ScanOptions::new(),
         &cancel,
     )?;
-    assert!(matches!(
+    assert_eq!(
         inventory.presence(&ResourcePath::parse("absent")?),
-        sync_scanner::Presence::Unknown(_)
-    ));
+        sync_scanner::Presence::AbsentUnverified
+    );
+    assert!(!inventory.is_complete());
     assert!(matches!(
         sync_scanner::scan(
             &make("missing")?,

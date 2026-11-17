@@ -136,6 +136,17 @@ pub enum Presence<'a> {
     /// L'absence est **établie** : le répertoire qui la contiendrait a été
     /// listé complètement (ou un ancêtre est un fichier ordinaire).
     Absent,
+    /// Le chemin n'a pas été vu alors que le répertoire qui le contiendrait
+    /// a été listé **jusqu'au bout, sans erreur ni entrée omise**, mais par
+    /// un stockage qui ne garantit pas la cohérence de ses listings
+    /// ([`IncompleteReason::UnreliableConsistency`] : SFTP, FTP, WebDAV…).
+    ///
+    /// Ce n'est **pas** une absence établie : elle ne justifie jamais une
+    /// suppression ni une décision bidirectionnelle. Elle permet seulement
+    /// de prévoir la création d'un élément, que l'exécuteur revérifie
+    /// (`stat`) juste avant d'écrire et publie sans jamais écraser une cible
+    /// apparue entre-temps.
+    AbsentUnverified,
     /// Le chemin, ou un ancêtre, est hors du périmètre du filtre.
     Excluded,
     /// Rien ne peut être conclu.
@@ -302,6 +313,8 @@ impl Inventory {
     ///
     /// Une absence n'est rapportée comme [`Presence::Absent`] que si le
     /// répertoire qui contiendrait `path` a été listé **complètement** ;
+    /// listé seulement par un stockage à cohérence non garantie, sans
+    /// autre anomalie, la réponse est [`Presence::AbsentUnverified`] ;
     /// sinon la réponse est [`Presence::Unknown`]. La racine est toujours
     /// présente si le scan a abouti, elle est donc rapportée comme inconnue
     /// ici (elle n'est pas une entrée).
@@ -327,6 +340,9 @@ impl Inventory {
                 Some(EntryKind::Directory) => {
                     return match self.directories.get(&dir) {
                         Some(DirectoryState::Complete) => Presence::Absent,
+                        Some(DirectoryState::Incomplete(
+                            IncompleteReason::UnreliableConsistency,
+                        )) => Presence::AbsentUnverified,
                         Some(DirectoryState::Incomplete(reason)) => {
                             Presence::Unknown(UnknownReason::IncompleteDirectory(*reason))
                         }

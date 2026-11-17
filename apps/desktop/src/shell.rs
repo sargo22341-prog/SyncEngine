@@ -384,8 +384,17 @@ impl App {
             col = col.push(nav_item(nav, label, count));
         }
         let light = p.is_light();
-        let agent_on = !self.ws.agent_stopped;
+        // Linux: the observed systemd state, never assumed (audit M1).
+        let linux_problem = self
+            .ws
+            .linux_agent
+            .and_then(crate::native::linux_agent_problem)
+            .filter(|_| !self.ws.agent_stopped);
+        let agent_on = !self.ws.agent_stopped && linux_problem.is_none();
         let detail = match (agent_on, self.next_job()) {
+            (false, _) if linux_problem.is_some() => {
+                linux_problem.map_or_else(String::new, |(_, detail)| detail.to_owned())
+            }
             (false, _) => "Les planifications ne se lancent pas".to_owned(),
             (true, Some((at, _))) => format!("Prochain job à {} UTC", Self::clock_label(at)),
             (true, None) => match self.ws.schedules.len() {
@@ -401,10 +410,10 @@ impl App {
                         ui::dot(if agent_on { p.backup } else { p.faint }, 8.0),
                         ui::strong(
                             p.text,
-                            if agent_on {
-                                "Agent actif"
-                            } else {
-                                "Agent arrêté"
+                            match (agent_on, linux_problem) {
+                                (true, _) => "Agent actif",
+                                (false, Some((label, _))) => label,
+                                (false, None) => "Agent arrêté",
                             },
                             13.0
                         )

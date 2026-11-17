@@ -129,8 +129,13 @@ pub(crate) struct Places {
     pub(crate) data_home: Option<PathBuf>,
     /// Execution locks directory (`…/SyncEngine/job-locks`).
     pub(crate) lock_root: Option<PathBuf>,
-    /// System temporary directory, where a remote upload spools its file.
+    /// System temporary directory, where a remote upload spooled its file
+    /// before 0.1.15 (still the place on Windows).
     pub(crate) temp_dir: Option<PathBuf>,
+    /// `…/.cache/SyncEngine` (Linux upload spools, `spool/` inside).
+    pub(crate) cache_dir: Option<PathBuf>,
+    /// Folder imposed by `SYNCENGINE_SPOOL_DIR`, scanned for our spools only.
+    pub(crate) spool_override: Option<PathBuf>,
     /// Whether native integrations (tasks, registry, units) are listed.
     pub(crate) native: bool,
 }
@@ -142,6 +147,10 @@ impl Places {
             data_home: data_home(),
             lock_root: sync_orchestrator::user_lock_root().ok(),
             temp_dir: Some(std::env::temp_dir()).filter(|p| p.is_absolute()),
+            cache_dir: cache_home().map(|cache| cache.join("SyncEngine")),
+            spool_override: std::env::var_os("SYNCENGINE_SPOOL_DIR")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute()),
             native: true,
         }
     }
@@ -270,6 +279,19 @@ fn remove_state_entries(dir: &Path) -> Result<(), String> {
     }
 }
 
+/// User cache directory (`$XDG_CACHE_HOME` or `~/.cache`), Linux; `None`
+/// on Windows, where uploads spool in `%TEMP%`.
+fn cache_home() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .filter(|p| p.is_absolute())
+}
+
 /// User data directory holding the default state directory.
 fn data_home() -> Option<PathBuf> {
     if cfg!(windows) {
@@ -387,6 +409,17 @@ pub(crate) fn inventory(
     if let Some(temp) = &places.temp_dir {
         spools(temp, &mut inventory);
     }
+    if let Some(spool) = &places.spool_override {
+        spools(spool, &mut inventory);
+    }
+    if let Some(cache) = places.cache_dir.as_ref().filter(|c| exists(c)) {
+        folder(
+            "Dossier d’envoi distant (fichiers en cours de dépôt)",
+            cache,
+            Removal::Tree(cache.clone()),
+            &mut inventory,
+        );
+    }
     inventory.states = states;
     Ok(inventory)
 }
@@ -445,24 +478,11 @@ fn native_traces(inventory: &mut Inventory, referenced: &mut Vec<PathBuf>) -> Re
     Ok(())
 }
 
-/// systemd user units written by `syncengine-agent export … linux`, with
-/// the text that proves they are ours.
+/// systemd user units of the agent (written by the interface or by
+/// `syncengine-agent export … linux`) and their activation links.
 #[cfg(not(windows))]
-const UNITS: [(&str, &str); 3] = [
-    ("syncengine-clock.service", "syncengine-agent"),
-    ("syncengine-session.service", "syncengine-agent"),
-    (
-        "syncengine-clock.timer",
-        "Description=SyncEngine schedule dispatcher",
-    ),
-];
-/// Links created by `systemctl --user enable` for those units.
-#[cfg(not(windows))]
-const UNIT_LINKS: [&str; 3] = [
-    "timers.target.wants/syncengine-clock.timer",
-    "default.target.wants/syncengine-clock.service",
-    "default.target.wants/syncengine-session.service",
-];
+use crate::systemd::{UNIT_LINKS, UNITS};
+
 /// Desktop autostart entries that may launch the interface.
 #[cfg(not(windows))]
 const AUTOSTART: [&str; 3] = [
@@ -526,6 +546,18 @@ fn native_traces(inventory: &mut Inventory, referenced: &mut Vec<PathBuf>) -> Re
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(io(format!("{} : {e}", path.display()))),
+        }
+    }
+    for (name, _) in UNITS {
+        let path = units.join(crate::systemd::temporary_name(name));
+        if path.symlink_metadata().is_ok_and(|m| m.is_file()) {
+            inventory.traces.push(Trace {
+                kind: TraceKind::Unit,
+                label: "Unité systemd en cours d’écriture (temporaire)".into(),
+                location: path.display().to_string(),
+                bytes: None,
+                removal: Removal::File(path),
+            });
         }
     }
     for link in UNIT_LINKS {
@@ -634,6 +666,24 @@ fn protected_by<'a>(path: &Path, protected: &'a [PathBuf]) -> Option<&'a PathBuf
 /// Nothing is removed when an agent does not stop or a command or an
 /// execution holds its lock; later failures are reported trace by trace.
 pub(crate) fn purge(inventory: &Inventory, wait: std::time::Duration) -> Result<Report, Failure> {
+    #[cfg(not(windows))]
+    let units = crate::systemd::Systemctl::system();
+    #[cfg(windows)]
+    let units = ();
+    purge_with(inventory, wait, &units)
+}
+
+/// Native unit manager used by the purge (`systemctl --user`; none on Windows).
+#[cfg(not(windows))]
+type Units = crate::systemd::Systemctl;
+#[cfg(windows)]
+type Units = ();
+
+fn purge_with(
+    inventory: &Inventory,
+    wait: std::time::Duration,
+    units: &Units,
+) -> Result<Report, Failure> {
     stop_agents(&inventory.states, wait)?;
     // No command and no execution may run while traces disappear.
     let mut held = Vec::new();
@@ -669,6 +719,9 @@ pub(crate) fn purge(inventory: &Inventory, wait: std::time::Duration) -> Result<
     {
         record(&mut report, trace, removed_tasks.clone());
     }
+    // Units are disabled while their files still exist (audit Linux M5):
+    // otherwise `disable` fails and a loaded timer keeps starting the agent.
+    disable_units(inventory, &mut report, units);
     for trace in inventory
         .traces
         .iter()
@@ -681,7 +734,7 @@ pub(crate) fn purge(inventory: &Inventory, wait: std::time::Duration) -> Result<
         };
         record(&mut report, trace, result);
     }
-    reload_units(inventory, &mut report);
+    reload_units(inventory, &mut report, units);
     // Locks are released before their folders go.
     drop(held);
     drop(execution);
@@ -728,39 +781,40 @@ fn remove_run_value() -> Result<(), String> {
     Ok(())
 }
 
-/// Disables the removed units in the running user manager (best effort:
-/// systemd may be absent; the files are gone either way).
+/// `systemctl --user disable --now` of our units, before their files are
+/// removed (best effort: systemd may be absent; failures are reported).
 #[cfg(not(windows))]
-fn reload_units(inventory: &Inventory, report: &mut Report) {
+fn disable_units(inventory: &Inventory, report: &mut Report, units: &Units) {
     if !inventory.traces.iter().any(|t| t.kind == TraceKind::Unit) {
         return;
     }
-    let units = UNITS.map(|(name, _)| name);
-    for args in [
-        &["--user", "disable", "--now"][..],
-        &["--user", "daemon-reload"][..],
-    ] {
-        let mut command = std::process::Command::new("systemctl");
-        command.args(args);
-        if args.len() == 3 {
-            command.args(units);
-        }
-        if let Err(e) = command.output().map_err(|e| e.to_string()).and_then(|out| {
-            if out.status.success() {
-                Ok(())
-            } else {
-                Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
-            }
-        }) {
-            report
-                .failed
-                .push((format!("systemctl {}", args.join(" ")), e));
-        }
+    let mut args = vec!["--user", "disable", "--now"];
+    args.extend(UNITS.map(|(name, _)| name));
+    if let Err(e) = units.run(&args) {
+        report
+            .failed
+            .push((format!("systemctl {}", args.join(" ")), e));
     }
 }
 
 #[cfg(windows)]
-fn reload_units(_inventory: &Inventory, _report: &mut Report) {}
+fn disable_units(_inventory: &Inventory, _report: &mut Report, _units: &Units) {}
+
+/// `daemon-reload` once the unit files are gone.
+#[cfg(not(windows))]
+fn reload_units(inventory: &Inventory, report: &mut Report, units: &Units) {
+    if !inventory.traces.iter().any(|t| t.kind == TraceKind::Unit) {
+        return;
+    }
+    if let Err(e) = units.run(&["--user", "daemon-reload"]) {
+        report
+            .failed
+            .push(("systemctl --user daemon-reload".into(), e));
+    }
+}
+
+#[cfg(windows)]
+fn reload_units(_inventory: &Inventory, _report: &mut Report, _units: &Units) {}
 
 #[cfg(test)]
 mod tests {
@@ -796,6 +850,7 @@ mod tests {
 
     #[test]
     fn our_tree_goes_whole_but_a_junction_inside_is_never_followed() -> Result<(), Failure> {
+        let _spawn = crate::test_support::spawn_guard();
         // Given our state folder holding a link to an outside folder,
         let temp = tempfile::tempdir()?;
         let outside = temp.path().join("dossier-utilisateur");
@@ -877,6 +932,7 @@ mod tests {
 
     #[test]
     fn a_folder_holding_a_synchronized_root_is_refused() -> Result<(), Failure> {
+        let _spawn = crate::test_support::spawn_guard();
         // Given a profile whose destination lies inside a folder to delete,
         let temp = tempfile::tempdir()?;
         let state = temp.path().join(STATE_NAME);
@@ -944,8 +1000,16 @@ mod tests {
             data_home: Some(temp.path().join("données")),
             lock_root: Some(temp.path().join("SyncEngine/job-locks")),
             temp_dir: Some(temp.path().join("tmp")),
+            cache_dir: Some(temp.path().join("cache/SyncEngine")),
+            spool_override: None,
             native: false,
         };
+        file(
+            &temp
+                .path()
+                .join("cache/SyncEngine/spool/.syncengine-x.partial"),
+            b"spool",
+        )?;
         file(
             &temp.path().join("SyncEngine/job-locks/execution.lock"),
             b"",
@@ -954,7 +1018,13 @@ mod tests {
         file(&temp.path().join("tmp/.syncengine-.partial"), b"not ours")?;
         file(&temp.path().join("tmp/autre.partial"), b"not ours")?;
         let inventory = inventory(&state, Vec::new(), &places).map_err(|e| e.message.clone())?;
-        assert_eq!(inventory.traces.len(), 3);
+        assert_eq!(inventory.traces.len(), 4);
+        assert!(
+            inventory
+                .traces
+                .iter()
+                .any(|t| t.removal == Removal::Tree(temp.path().join("cache/SyncEngine")))
+        );
         assert!(
             inventory.traces.iter().any(
                 |t| t.removal == Removal::File(temp.path().join("tmp/.syncengine-abc.partial"))
@@ -973,6 +1043,50 @@ mod tests {
             .ok_or("custom state not listed")?;
         assert_eq!(trace.bytes, Some(15));
         assert!(inventory.trash_bytes >= 5);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn purge_disables_units_before_removing_their_files() -> Result<(), Failure> {
+        let _spawn = crate::test_support::spawn_guard();
+        // M5 — Étant donné les unités de l'agent installées et un timer
+        // chargé, quand on supprime toutes les données, alors
+        // `disable --now` est appelé pendant que les fichiers existent,
+        // puis les fichiers sont retirés, puis `daemon-reload`.
+        let temp = tempfile::tempdir()?;
+        let units = temp.path().join("systemd/user");
+        let log = temp.path().join("calls.log");
+        let systemctl = crate::systemd::tests::fake_systemctl(
+            &temp.path().join("bin"),
+            &log,
+            &units,
+            "active",
+        )?;
+        std::fs::create_dir_all(&units)?;
+        let mut inventory = Inventory::default();
+        for (name, marker) in UNITS {
+            let path = units.join(name);
+            std::fs::write(&path, format!("[Unit]\n{marker}\n"))?;
+            inventory.traces.push(Trace {
+                kind: TraceKind::Unit,
+                label: "Unité".into(),
+                location: path.display().to_string(),
+                bytes: None,
+                removal: Removal::File(path),
+            });
+        }
+        let report = purge_with(&inventory, std::time::Duration::from_secs(1), &systemctl)
+            .map_err(|e| e.message.clone())?;
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert_eq!(
+            crate::systemd::tests::calls(&log),
+            [
+                "--user disable --now syncengine-clock.service syncengine-session.service syncengine-clock.timer [present]",
+                "--user daemon-reload [absent]",
+            ]
+        );
+        assert!(std::fs::read_dir(&units)?.next().is_none());
         Ok(())
     }
 

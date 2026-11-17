@@ -64,7 +64,9 @@ brusquement alors que l’analyse réseau continue normalement.
 « Dossiers à cohérence incertaine » désigne une limite déclarée du connecteur,
 comptée par dossier, pas une lecture échouée. SMB et les autres fournisseurs non
 caractérisés gardent cette incertitude ; une absence ne permet donc pas de
-suppression miroir. « Erreurs de lecture » compte séparément les problèmes réels
+suppression miroir. Elle n’empêche plus les **copies** vers une destination
+distante (SFTP, FTP, FTPS, WebDAV) : chaque fichier est revérifié juste avant
+d’être publié et n’écrase jamais une cible apparue. « Erreurs de lecture » compte séparément les problèmes réels
 (listing, noms non représentables, métadonnées ou empreintes indisponibles).
 Exemple : 500 dossiers à cohérence incertaine et 0 erreur signifie qu’aucune
 anomalie de lecture n’a été rapportée, sans garantir un instantané cohérent du NAS.
@@ -79,6 +81,14 @@ miroir :
   plus lent, détecte une modification qui ne change ni la taille ni la date.
 
 Le bidirectionnel compare toujours par contenu.
+
+Les dates sont comparées à la précision du **volume** (Linux) : clé USB FAT
+(2 s), exFAT et montages FUSE (1 s), partage SMB/CIFS (2 s), NTFS (100 ns),
+sinon la nanoseconde. Exemple : des fichiers copiés avec leurs dates sur une
+clé exFAT (dates tronquées à la seconde) restent « identiques » au passage
+suivant. Seule la racine est examinée ; un autre volume monté plus bas garde
+la précision de la racine. Windows : précision de l'OS (100 ns) quel que soit
+le volume, une clé FAT32 y reste à vérifier.
 
 ## Le plan
 
@@ -143,7 +153,12 @@ exécuté après une interruption (politique des échéances manquées).
 
 - Un lecteur absent, un dossier illisible ou un scan partiel n'est **jamais**
   pris pour un dossier vide et n'entraîne aucune suppression.
-- Une destination placée à l'intérieur de la source (ou l'inverse) est refusée.
+- Une destination placée à l'intérieur de la source (ou l'inverse) est refusée,
+  y compris par un autre chemin vers le même dossier : sous Linux, une vue
+  `mount --bind` de la source (ou d'un de ses sous-dossiers) est reconnue par
+  l'identité du dossier. Sous Windows, `subst`, lecteur mappé ou
+  `\\localhost\c$\…` ne sont détectés que par le chemin résolu (identité de
+  volume à vérifier sous Windows).
 - Chaque précondition est revérifiée juste avant chaque écriture.
 - Chaque fichier est écrit dans un fichier temporaire, vérifié (empreinte ou
   taille), puis publié ; l'original n'est jamais effacé d'abord. Sous Windows,
@@ -156,6 +171,17 @@ exécuté après une interruption (politique des échéances manquées).
   bilan est enregistré dans l'historique : après une coupure, il reste, l'état
   partiel est connu et la prochaine simulation repart d'un nouveau scan.
 - Les liens symboliques ne sont jamais suivis.
+- **Permissions (Linux)** : vers une destination locale, le mode POSIX de la
+  source est reproduit (fichier `0600` → `0600`, script `0755` → `0755`,
+  dossier `0700` → `0700`), y compris dans la corbeille. Le fichier temporaire
+  reste privé (`0600`) jusqu'à la publication. setuid et setgid ne sont jamais
+  reproduits ; un dossier créé garde toujours `rwx` pour son propriétaire ; un
+  remplacement n'élargit jamais les droits du fichier existant (`0600`
+  remplacé par une source `0644` reste `0600`). Un simple changement de mode à
+  la source ne déclenche pas de copie. Propriétaire, groupe et ACL ne sont pas
+  copiés. Vers SFTP, FTP, FTPS, WebDAV ou OneDrive, les modes ne sont pas
+  reproduits (droits par défaut du serveur). Windows : ACL héritées du dossier
+  de destination, inchangé.
 - Une seule exécution à la fois par compte utilisateur (interface, CLI et agent
   partagent un verrou).
 
@@ -215,7 +241,10 @@ fenêtre s'ouvre au démarrage suivant :
   dernières opérations terminées.
 - **Reprendre** : acquitte l'interruption, retire les fichiers temporaires de
   la copie interrompue (seulement ceux nommés `.syncengine-….partial` et
-  consignés dans le journal ; les autres sont listés pour vérification), puis
+  consignés dans le journal ; les autres sont listés pour vérification) ainsi
+  que, dans les dossiers locaux où le plan écrivait des fichiers, les
+  temporaires `.syncengine-<n° du processus arrêté>-….partial` que l'arrêt
+  brutal a laissés sans les consigner (copies parallèles), puis
   lance une **nouvelle simulation complète**. Le journal n'est jamais rejoué :
   les fichiers déjà copiés apparaissent identiques et sont sautés. Il reste à
   confirmer l'exécution comme d'habitude.

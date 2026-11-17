@@ -1326,3 +1326,41 @@ fn keep_both_works_without_the_trash_and_converges_over_two_synchronizations()
     );
     Ok(())
 }
+
+/// M7 (sécurité) — Étant donné une destination qui est une vue bind d'un
+/// sous-dossier de la source, quand on simule un miroir, alors aucun plan
+/// n'est produit. Montage préparé par `scripts/test_bind_mount.py` (root).
+#[test]
+#[ignore = "vue bind requise : scripts/test_bind_mount.py"]
+fn a_bind_view_nested_in_the_source_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let source = std::path::PathBuf::from(std::env::var("SYNCENGINE_BIND_SOURCE")?);
+    let view = std::path::PathBuf::from(std::env::var("SYNCENGINE_BIND_VIEW")?);
+    let temp = tempfile::tempdir()?;
+    let state = temp.path().join("state");
+    std::fs::create_dir(&state)?;
+    let app =
+        sync_orchestrator::Application::open_with_lock_root(&state, temp.path().join("locks"))?;
+    for (index, destination) in [view.join("inner"), view.clone()].into_iter().enumerate() {
+        let profile = sync_profiles::Profile {
+            id: sync_core::ProfileId::new(format!("bind-{index}"))?,
+            name: "Vue bind".into(),
+            group: String::new(),
+            mode: sync_plan::SyncMode::Mirror,
+            source: source.clone(),
+            destination,
+            remote_source: None,
+            remote_destination: None,
+            filter: sync_filter::FilterRules::new(),
+            allow_delete: true,
+            compare: sync_profiles::CompareMethod::Content,
+            trash: sync_profiles::TrashPolicy::legacy(),
+        };
+        let refused = app
+            .profile_save(profile.clone())
+            .err()
+            .or_else(|| app.preview(profile.id.clone()).err());
+        let error = refused.ok_or("nested bind view accepted")?;
+        assert_eq!(error.code, "invalid_input", "{error:?}");
+    }
+    Ok(())
+}

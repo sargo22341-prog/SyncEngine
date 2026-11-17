@@ -286,6 +286,9 @@ fn one_sided(present: Side, other: Presence<'_>) -> ComparisonOutcome {
             Side::Left => ComparisonOutcome::LeftOnly,
             Side::Right => ComparisonOutcome::RightOnly,
         },
+        Presence::AbsentUnverified => {
+            ComparisonOutcome::Uncertain(vec![Uncertainty::AbsenceUnverified { side: other_side }])
+        }
         Presence::Excluded => {
             ComparisonOutcome::Uncertain(vec![Uncertainty::ExcludedOnSide { side: other_side }])
         }

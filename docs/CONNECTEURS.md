@@ -31,6 +31,17 @@ une session par connecteur, abandonnée après erreur ; un listing transitoire p
 être recommencé une fois avec une nouvelle session. Aucune mutation n’est rejouée.
 Le compteur « dossiers à cohérence incertaine » est distinct des erreurs de
 lecture : il ne permet jamais de conclure qu’un fichier absent doit être supprimé.
+Un dossier de ce type listé jusqu’au bout sans erreur ni entrée omise donne une
+absence **non vérifiée** (`Presence::AbsentUnverified`) : elle autorise seulement
+la **copie** d’un élément de la source vers une destination distante. L’exécuteur
+revérifie la cible (`stat`) juste avant d’écrire puis publie sans écrasement
+(SFTP : `rename` v3 qui refuse une cible existante ; WebDAV : `Overwrite: F` ;
+FTP/FTPS : `stat` sous le verrou de destination et `exclusive_writers`). Une cible
+apparue entre-temps est un refus « destination apparue », jamais un écrasement.
+Elle ne justifie ni suppression miroir, ni décision bidirectionnelle.
+Exemple : sauvegarde d’un dossier local vers un serveur SFTP vide → la simulation
+prévoit toutes les copies et zéro suppression ; l’exécution se termine « réussie
+avec réserves » car l’inventaire distant reste non garanti.
 Exemple : pour une sauvegarde NAS vers PC, choisir le partage SMB comme source
 et le dossier du PC comme destination, lancer une simulation et examiner séparément
 les erreurs et les incertitudes avant toute confirmation.
@@ -44,7 +55,47 @@ l'exécution dans la variable d'environnement `SYNCENGINE_SECRET_<référence>`
 (`SYNCENGINE_SECRET_NAS`) du processus qui exécute : interface, CLI ou agent.
 Une tâche planifiée doit donc recevoir cette variable dans son propre
 environnement. Si elle manque, l'exécution échoue avec une erreur
-d'authentification.
+d'authentification qui **nomme** la variable attendue ; la page du profil
+l'annonce déjà avant toute simulation (« Identifiant absent de ce processus »).
+SFTP s'authentifie par l'agent SSH : sous Linux, `SSH_AUTH_SOCK` doit être
+présent dans le processus.
+
+### Secrets sous Linux (interface du menu, agent systemd)
+
+Une interface lancée depuis le menu (fichier `.desktop`) et l'agent lancé par
+le minuteur systemd **n'héritent pas** des variables d'un terminal. Voies
+documentées, sans jamais écrire le secret dans une unité :
+
+1. Fichier `~/.config/environment.d/60-syncengine.conf`, droits `0600`
+   (`chmod 600`), une ligne par référence :
+   `SYNCENGINE_SECRET_NAS=…`. Il est lu par le gestionnaire systemd
+   utilisateur à son démarrage (prochaine ouverture de session) et transmis
+   à ses unités, donc à l'agent ; les sessions de bureau démarrées par
+   systemd (GNOME, Plasma) le transmettent en général aussi aux applications
+   du menu. À vérifier sur le bureau utilisé : ouvrir la page du profil,
+   l'avertissement disparaît quand la variable est reçue.
+2. Agent SSH : après son démarrage dans la session,
+   `systemctl --user import-environment SSH_AUTH_SOCK` le rend visible aux
+   unités systemd (agent planifié). Un trousseau de bureau qui fournit
+   l'agent SSH le fait souvent déjà.
+3. Sans systemd : lancer `syncengine-agent tick ETAT clock` depuis cron avec
+   les variables dans la ligne de commande d'un script privé (`0700`).
+
+SyncEngine ne génère ni `Environment=` ni `EnvironmentFile=` dans ses unités :
+un secret n'y est jamais écrit. Limite : un fichier `environment.d` est lisible
+par tout processus du compte ; préférer un trousseau quand le bureau en offre
+un compatible.
+
+## Dépôt local avant envoi
+
+SFTP, FTP, FTPS, WebDAV et OneDrive écrivent d’abord chaque fichier dans un
+dépôt local, puis l’envoient : il faut autant d’espace libre que le plus gros
+fichier envoyé. Sous Linux, le dépôt est sous `~/.cache/SyncEngine/spool/`
+(ou `$XDG_CACHE_HOME`), sur disque : `/tmp` est souvent un tmpfs en mémoire.
+`SYNCENGINE_SPOOL_DIR=/chemin/absolu` impose un autre dossier (par exemple un
+disque plus grand). Avant chaque fichier de taille connue, l’espace libre est
+vérifié (taille + 64 Mio de marge) : sinon refus « espace insuffisant » qui
+nomme le dossier. Windows : `%TEMP%`, inchangé, sans contrôle préalable.
 
 ## Par connecteur
 
@@ -53,13 +104,25 @@ d'authentification.
   dans `known_hosts` : SyncEngine ne l'ajoute jamais. Dates conservées à la
   seconde.
 - **WebDAV** : URL HTTPS de la collection (sans identifiants ni paramètres).
-  HTTPS obligatoire, certificats vérifiés, aucune redirection suivie. Les
+  HTTPS obligatoire, certificats vérifiés. Les collections (dossiers) sont
+  adressées avec la barre finale. Seule redirection suivie, une fois : `301`
+  ou `308` vers **exactement** la même URL suivie de `/` (Apache
+  `DirectorySlash`) ; toute autre redirection est une erreur et le jeton n'est
+  jamais renvoyé ailleurs. Exemple : `PROPFIND /dav/docs` → `301
+  /dav/docs/` → requête réémise vers `/dav/docs/`. Les
   remplacements exigent un serveur qui fournit des ETag forts. Les dates sont
   gérées par le serveur : préférer la comparaison par contenu.
 - **FTPS** : adresse IP, nom TLS du serveur, utilisateur, racine. Certificat
   vérifié ; une autorité privée peut être fournie en fichier PEM sans toucher
   au magasin système. Jamais de repli en FTP clair.
 - **FTP** : identifiants et fichiers circulent en clair ; préférer FTPS ou SFTP.
+- **FTP et FTPS : MLSD/MLST obligatoires** (RFC 3659). SyncEngine lit les
+  dossiers uniquement par `MLSD` (dates et types normalisés) et vérifie `FEAT`
+  à la connexion ; il ne se replie jamais sur `LIST`, dont le format libre ne
+  permet pas de prouver le contenu d'un dossier. vsftpd (serveur par défaut de
+  Debian, Ubuntu, RHEL et de nombreux NAS) ne propose pas MLSD : la connexion
+  est refusée avec « le serveur FTP ne prend pas en charge MLSD/MLST… ».
+  Utiliser alors SFTP, ou un serveur qui les annonce (proftpd, Pure-FTPd).
 - **SMB** : chemin UNC (`\\serveur\partage`) sous Windows ; sous Linux, un
   montage CIFS existant, en lecture seule. SyncEngine ne monte rien et ne
   demande aucun privilège.

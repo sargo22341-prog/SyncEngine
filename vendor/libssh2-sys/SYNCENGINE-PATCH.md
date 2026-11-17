@@ -30,4 +30,16 @@ avis RustSec de `libssh2-sys` et `ssh2` à la main tant que ce correctif existe.
 À retirer dès qu'une version publiée de `libssh2-sys` embarque libssh2 avec
 libssh2#2583, après répétition du test SFTP sous Windows.
 
+État au 2026-11-17 (audit Linux M10) : `libssh2-sys 0.3.4` (libssh2
+`1.11.2_DEV`) contient une normalisation amont équivalente
+(`wcng_bn_normalize` sur le secret et les clés publiques DH/ECDH dans
+`libssh2/src/wincng.c`), mais **rien ne l'a validé sous Windows**. Un
+`cargo update` l'avait substituée en silence à cette copie (`[[patch.unused]]`).
+La version est donc épinglée `=0.3.3` dans `connector-sftp` (ce qui garde
+`ssh2` en 0.9.6) et le test `tests/architecture/tests/patches.rs` fait échouer
+la CI sur tout `[[patch.unused]]`. Pour passer à 0.3.4 : retirer l'épinglage,
+répéter `scripts/test_phase08_sftp.py` ≥ 50 fois **sous Windows**, puis retirer
+ce dossier, l'entrée `[patch.crates-io]`, l'exclusion du workspace et les
+notices correspondantes.
+
 SHA-256 archive crates.io originale : `0f5eb74291e8691cab524a01274a1b1e7742b1a94f29d8b101d8aadc8372c1cd`.

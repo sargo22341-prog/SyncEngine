@@ -150,7 +150,29 @@ pub(crate) fn reconcile_agent(app: &sync_orchestrator::Application) -> Result<()
             crate::windows_tasks::reconcile(app.state_directory(), false)
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let needed = app
+            .schedules()
+            .map_err(Failure::from)?
+            .iter()
+            .any(|s| s.schedule.enabled);
+        let Some(dir) = crate::systemd::units_dir() else {
+            return Ok(());
+        };
+        if needed {
+            return Ok(());
+        }
+        let failed = crate::systemd::uninstall(&crate::systemd::Systemctl::system(), &dir);
+        match failed.first() {
+            None => Ok(()),
+            Some((step, cause)) => Err(Failure::new(
+                "unavailable",
+                format!("retrait des unités systemd : {step} : {cause}"),
+            )),
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = app;
         Ok(())
@@ -163,12 +185,61 @@ pub(crate) fn prepare_agent(state: &Path) -> Result<(), Failure> {
     {
         crate::windows_tasks::reconcile(state, true)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let dir = crate::systemd::units_dir().ok_or_else(|| {
+            Failure::new(
+                "unavailable",
+                "dossier de configuration introuvable (HOME) : unités systemd non installées",
+            )
+        })?;
+        let agent = crate::systemd::agent_executable()?;
+        crate::systemd::install(&crate::systemd::Systemctl::system(), &dir, &agent, state)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = state;
         Ok(())
     }
 }
+
+/// Real state of the Linux agent (`None` elsewhere: Windows has its own
+/// supervision display).
+pub(crate) fn linux_agent_state() -> Option<LinuxAgent> {
+    #[cfg(target_os = "linux")]
+    {
+        let dir = crate::systemd::units_dir()?;
+        Some(crate::systemd::state(
+            &crate::systemd::Systemctl::system(),
+            &dir,
+        ))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) use crate::systemd::AgentState as LinuxAgent;
+
+/// Label and detail when the Linux agent cannot run schedules (`None` when
+/// its timer is active).
+pub(crate) fn linux_agent_problem(state: LinuxAgent) -> Option<(&'static str, &'static str)> {
+    #[cfg(target_os = "linux")]
+    {
+        (state != LinuxAgent::Active).then(|| (state.label(), state.detail()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        match state {}
+    }
+}
+
+/// Placeholder type off Linux: never constructed.
+#[cfg(not(target_os = "linux"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinuxAgent {}
 
 fn app_error(e: Failure) -> sync_orchestrator::AppError {
     sync_orchestrator::AppError {

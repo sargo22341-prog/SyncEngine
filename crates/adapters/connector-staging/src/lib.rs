@@ -48,7 +48,84 @@ fn err(kind: Kind, path: &ResourcePath) -> StorageError {
     StorageError::new(kind, Op::Write).with_path(path.clone())
 }
 
-/// Ouvre un spool disque et réserve un répertoire distant unique de même parent.
+/// Variable qui impose le dossier de dépôt (chemin absolu).
+pub const SPOOL_DIR_VARIABLE: &str = "SYNCENGINE_SPOOL_DIR";
+
+/// Dossier des dépôts d'envoi, selon les variables d'environnement lues par
+/// `var` (séparé pour les tests) :
+/// 1. `SYNCENGINE_SPOOL_DIR` s'il est absolu ;
+/// 2. hors Windows : `$XDG_CACHE_HOME/SyncEngine/spool`, sinon
+///    `~/.cache/SyncEngine/spool` — sur disque, alors que `/tmp` est souvent
+///    un tmpfs en RAM (Debian 13, Fedora, Arch) ;
+/// 3. sinon le dossier temporaire du système (Windows : `%TEMP%`, sur disque).
+#[must_use]
+pub fn spool_dir_with(var: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> std::path::PathBuf {
+    use std::path::PathBuf;
+    let absolute = |name: &str| var(name).map(PathBuf::from).filter(|p| p.is_absolute());
+    if let Some(dir) = absolute(SPOOL_DIR_VARIABLE) {
+        return dir;
+    }
+    if !cfg!(windows)
+        && let Some(cache) =
+            absolute("XDG_CACHE_HOME").or_else(|| absolute("HOME").map(|home| home.join(".cache")))
+    {
+        return cache.join("SyncEngine").join("spool");
+    }
+    std::env::temp_dir()
+}
+
+/// [`spool_dir_with`] pour l'environnement de ce processus.
+#[must_use]
+pub fn spool_dir() -> std::path::PathBuf {
+    spool_dir_with(&|name| std::env::var_os(name))
+}
+
+/// Marge gardée libre en plus du fichier (journaux, système).
+const SPACE_MARGIN: u64 = 64 * 1024 * 1024;
+
+/// Refuse un dépôt de `needed` octets si l'espace libre connu de `dir` ne le
+/// permet pas (Linux : `statvfs` ; ailleurs : non vérifié, l'écriture
+/// signalera `InsufficientSpace`).
+fn check_space(
+    dir: &std::path::Path,
+    needed: u64,
+    target: &ResourcePath,
+) -> Result<(), StorageError> {
+    #[cfg(target_os = "linux")]
+    if let Ok(stats) = rustix::fs::statvfs(dir) {
+        let free = stats.f_bavail.saturating_mul(stats.f_frsize);
+        if free < needed.saturating_add(SPACE_MARGIN) {
+            return Err(err(Kind::InsufficientSpace, target).with_message(format!(
+                "dossier de dépôt {} : {} Mio libres pour {} Mio à envoyer (réglable par {SPOOL_DIR_VARIABLE})",
+                dir.display(),
+                free / (1024 * 1024),
+                needed.div_ceil(1024 * 1024)
+            )));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (dir, needed, target, SPACE_MARGIN);
+    Ok(())
+}
+
+/// Crée le dossier de dépôt (privé `0700` sous Unix).
+fn ensure_spool_dir(dir: &std::path::Path, target: &ResourcePath) -> Result<(), StorageError> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir).map_err(|e| {
+        err(Kind::InsufficientSpace, target)
+            .with_message(format!("dossier de dépôt {} : {e}", dir.display()))
+    })
+}
+
+/// Ouvre un spool disque (dans [`spool_dir`], après contrôle de l'espace libre
+/// quand la taille est annoncée) et réserve un répertoire distant unique de
+/// même parent.
 /// Le fichier final reste intact jusqu'à `commit`. Mémoire constante, espace disque
 /// local égal à la taille transférée ; aucun secret dans le spool.
 /// # Errors
@@ -63,11 +140,16 @@ pub fn open(
         return Err(err(Kind::Cancelled, target));
     }
     let parent = target.parent().ok_or_else(|| err(Kind::Conflict, target))?;
+    let dir = spool_dir();
+    ensure_spool_dir(&dir, target)?;
+    if let Some(size) = options.size_hint {
+        check_space(&dir, size, target)?;
+    }
     let spool = tempfile::Builder::new()
         .prefix(".syncengine-")
         .suffix(".partial")
         .rand_bytes(16)
-        .tempfile()
+        .tempfile_in(&dir)
         .map_err(|_| err(Kind::InsufficientSpace, target))?;
     let name = spool
         .path()
@@ -256,6 +338,60 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn the_spool_lives_on_disk_under_the_user_cache_unless_configured() {
+        use std::ffi::OsString;
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| OsString::from(v))
+            }
+        };
+        // Absolute on the running platform (`/srv` is not absolute on Windows).
+        const FORCED: &str = if cfg!(windows) {
+            r"C:\spool"
+        } else {
+            "/srv/spool"
+        };
+        const FORCED_ENV: &[(&str, &str)] =
+            &[("SYNCENGINE_SPOOL_DIR", FORCED), ("HOME", "/home/u")];
+        assert_eq!(
+            spool_dir_with(&env(FORCED_ENV)),
+            std::path::PathBuf::from(FORCED)
+        );
+        if !cfg!(windows) {
+            assert_eq!(
+                spool_dir_with(&env(&[("XDG_CACHE_HOME", "/c"), ("HOME", "/home/u")])),
+                std::path::PathBuf::from("/c/SyncEngine/spool")
+            );
+            assert_eq!(
+                spool_dir_with(&env(&[
+                    ("HOME", "/home/u"),
+                    ("SYNCENGINE_SPOOL_DIR", "relatif")
+                ])),
+                std::path::PathBuf::from("/home/u/.cache/SyncEngine/spool")
+            );
+        }
+        assert_eq!(spool_dir_with(&env(&[])), std::env::temp_dir());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_spool_larger_than_the_free_space_is_refused_before_writing() {
+        let dir = std::env::temp_dir();
+        let target = ResourcePath::parse("big.bin").unwrap_or_default();
+        let error = check_space(&dir, u64::MAX / 2, &target)
+            .err()
+            .map(|e| (e.kind(), e.to_string()));
+        assert!(
+            matches!(&error, Some((Kind::InsufficientSpace, text)) if text.contains("SYNCENGINE_SPOOL_DIR")),
+            "{error:?}"
+        );
+        assert!(check_space(&dir, 1, &target).is_ok());
+    }
+
     #[test]
     fn finish_uploads_once_without_publishing_and_closes_writes()
     -> Result<(), Box<dyn std::error::Error>> {

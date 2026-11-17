@@ -376,6 +376,10 @@ fn uncertainty_text(uncertainty: &Uncertainty) -> String {
             };
             format!("présence inconnue à {} ({why})", side_text(*side))
         }
+        Uncertainty::AbsenceUnverified { side } => format!(
+            "absent à {} (listing sans garantie de cohérence ; revérifié avant toute écriture)",
+            side_text(*side)
+        ),
         Uncertainty::ExcludedOnSide { side } => {
             format!("exclu par le filtre à {}", side_text(*side))
         }

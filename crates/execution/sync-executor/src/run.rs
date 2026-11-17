@@ -260,6 +260,7 @@ impl<'a> Run<'a> {
                 source: plan.source().location().to_owned(),
                 destination: plan.destination().location().to_owned(),
                 versions: req.versions.map(|store| store.folder().clone()),
+                process: Some(std::process::id()),
             })
             .map_err(ExecutionError::Journal)?;
         let mut context = ErrorContext::new().with_execution(req.execution_id.clone());
@@ -674,7 +675,8 @@ impl<'a> Run<'a> {
     ) -> Result<StagedCopy, Interrupt> {
         let options = WriteOptions::new()
             .with_modified(source.metadata().modified())
-            .with_size_hint(source.metadata().size());
+            .with_size_hint(source.metadata().size())
+            .with_permissions(source.metadata().permissions());
         let live_mirror = self.req.options.refresh_mirror_source
             && self.req.plan.mode() == sync_plan::SyncMode::Mirror;
         let mut request = CopyRequest::new(
@@ -920,7 +922,10 @@ impl<'a> Run<'a> {
                     .destination
                     .create_directory(op.path(), self.req.cancel)
                 {
-                    Ok(_) => Ok((0, None)),
+                    Ok(_) => {
+                        self.apply_directory_permissions(op)?;
+                        Ok((0, None))
+                    }
                     Err(error) if error.kind() == StorageErrorKind::Conflict => {
                         Err(Interrupt::Refused(Refusal::DestinationAppeared))
                     }
@@ -941,6 +946,29 @@ impl<'a> Run<'a> {
             }
             other => Err(self.fail(op, &Fault::UnsupportedKind(other), None)),
         }
+    }
+
+    /// Reproduit les permissions POSIX de la source sur un répertoire créé,
+    /// avant d'y copier quoi que ce soit (sécurité : un dossier privé ne doit
+    /// pas recevoir son contenu en restant lisible par tous). Un échec fait
+    /// échouer la création : son contenu n'est alors pas copié.
+    fn apply_directory_permissions(&self, op: &Operation) -> Result<(), Interrupt> {
+        let destination = self.req.destination;
+        let Some(permissions) = op
+            .source()
+            .and_then(|source| source.metadata().permissions())
+        else {
+            return Ok(());
+        };
+        if !destination
+            .capabilities()
+            .supports(connector_api::StorageFeature::SetPermissions)
+        {
+            return Ok(());
+        }
+        destination
+            .set_permissions(op.path(), permissions, self.req.cancel)
+            .map_err(|error| self.storage(op, &error, PlanSide::Destination))
     }
 
     fn replace(&mut self, op: &Operation) -> Result<Done, Interrupt> {

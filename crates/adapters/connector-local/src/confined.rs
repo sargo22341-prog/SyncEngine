@@ -193,5 +193,13 @@ pub(crate) fn entry(
     {
         data = data.with_modified(time, precision);
     }
+    #[cfg(unix)]
+    if matches!(
+        kind,
+        sync_core::EntryKind::File | sync_core::EntryKind::Directory
+    ) {
+        use cap_std::fs::PermissionsExt;
+        data = data.with_permissions(sync_core::UnixPermissions::new(meta.permissions().mode()));
+    }
     sync_core::FileEntry::new(path, kind, data)
 }

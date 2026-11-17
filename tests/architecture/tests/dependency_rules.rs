@@ -122,6 +122,8 @@ const ALLOWED_INTERNAL: &[(&str, &[&str])] = &[
             // Native COM validation tests only.
             "platform-api",
             "platform-windows",
+            // systemd user units of the Linux agent (rendering only).
+            "platform-linux",
         ],
     ),
     (

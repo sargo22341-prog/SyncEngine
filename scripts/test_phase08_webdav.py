@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 
@@ -31,6 +32,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     nodes = {"/dav": None, "/dav/file": b"abc"}
     mutex = threading.RLock()
+    # Apache mod_dir (DirectorySlash): a collection addressed without its
+    # trailing slash answers 301 to the same URL + "/", without processing.
+    redirect_collections = False
+
+    def slash(self):
+        from urllib.parse import urlsplit
+        raw = urlsplit(self.path).path
+        path = self.key()
+        if (Handler.redirect_collections and not raw.endswith("/")
+                and self.nodes.get(path, b"") is None):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(301)
+            self.send_header("Location", f"https://127.0.0.1:{self.server.server_port}{raw}/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            Handler.redirects += 1
+            return True
+        return False
+
+    redirects = 0
 
     def log_message(self, *_):
         pass
@@ -55,6 +76,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return unquote(urlsplit(self.path).path).rstrip("/")
 
     def do_PROPFIND(self):
+        if self.slash():
+            return
         from xml.sax.saxutils import escape
         with self.mutex:
             self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -76,6 +99,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(207, ('<d:multistatus xmlns:d="DAV:">' + ''.join(parts) + '</d:multistatus>').encode())
 
     def do_GET(self):
+        if self.slash():
+            return
         with self.mutex:
             path = self.key()
             if path not in self.nodes or self.nodes[path] is None:
@@ -83,6 +108,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, self.nodes[path], path)
 
     def do_HEAD(self):
+        if self.slash():
+            return
         with self.mutex:
             path = self.key()
             if path not in self.nodes:
@@ -109,6 +136,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(201)
 
     def do_MOVE(self):
+        if self.slash():
+            return
         from urllib.parse import unquote, urlsplit
         with self.mutex:
             path = self.key()
@@ -124,6 +153,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(201)
 
     def do_DELETE(self):
+        if self.slash():
+            return
         with self.mutex:
             path = self.key()
             if path not in self.nodes:
@@ -166,9 +197,38 @@ def main():
             env = os.environ.copy()
             env.update(SYNCENGINE_WEBDAV_URL=f"https://127.0.0.1:{server.server_port}/dav/",
                        SYNCENGINE_WEBDAV_CERT=str(cert_path))
-            return subprocess.run(["cargo", "test", "--locked", "-p", "connector-webdav", "--features", "webdav",
-                                   "isolated_https_contract", "--", "--ignored"],
-                                  cwd=workspace, env=env, timeout=120).returncode
+            result = subprocess.run(["cargo", "test", "--locked", "-p", "connector-webdav", "--features", "webdav",
+                                     "isolated_https_contract", "--", "--ignored"],
+                                    cwd=workspace, env=env, timeout=120).returncode
+            if result:
+                return result
+            # C3: Apache-like collections (301 to the same URL + "/").
+            Handler.redirect_collections = True
+            result = subprocess.run(["cargo", "test", "--locked", "-p", "connector-webdav", "--features", "webdav",
+                                     "isolated_https_collections", "--", "--ignored"],
+                                    cwd=workspace, env=env, timeout=120).returncode
+            if result:
+                return result
+            if Handler.redirects == 0:
+                raise AssertionError("collection redirect mode was not exercised")
+            # Application facade: remote source and remote destination with
+            # sub-collections. Trust the ephemeral CA through SSL_CERT_FILE for
+            # this test process only (OpenSSL); the system store is unchanged.
+            # Windows (SChannel) and macOS (Security.framework) ignore
+            # SSL_CERT_FILE and the production client accepts no private CA:
+            # the facade step would need the OS store changed, which this
+            # script never does. The connector steps above ran on every OS.
+            if sys.platform in ("win32", "darwin"):
+                print("façade WebDAV non exécutée : SSL_CERT_FILE ignoré par la pile TLS de cet OS")
+                return 0
+            with Handler.mutex:
+                Handler.nodes.update({"/dav/src": None, "/dav/src/docs": None,
+                                      "/dav/src/docs/b.md": b"bravo", "/dav/src/a.txt": b"alpha",
+                                      "/dav/dst": None})
+            env.update(SSL_CERT_FILE=str(cert_path), SYNCENGINE_SECRET_DAV_FIXTURE="fixture-only")
+            return subprocess.run(["cargo", "test", "--locked", "-p", "sync-orchestrator", "--features", "webdav",
+                                   "--test", "wire_profiles", "isolated_webdav", "--", "--ignored"],
+                                  cwd=workspace, env=env, timeout=300).returncode
         finally:
             server.shutdown()
             server.server_close()

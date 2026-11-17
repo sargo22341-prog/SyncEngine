@@ -650,3 +650,56 @@ fn lazy_content_hashing_reaches_the_full_hashing_verdicts() {
         ComparisonOutcome::Equivalent(EquivalenceBasis::SizeAndModified)
     );
 }
+
+fn unreliable(connector: MemoryConnector) -> MemoryConnector {
+    use connector_api::{ListingConsistency, StorageConnector};
+    let mut caps = connector.capabilities().clone();
+    caps.listing_consistency = ListingConsistency::Unknown;
+    connector.with_capabilities(caps)
+}
+
+#[test]
+fn absence_from_an_unreliable_listing_is_reported_as_unverified() {
+    // Destination distante (cohérence inconnue) : l'absence reste un fait
+    // incertain, distinct d'une lecture échouée.
+    let source =
+        MemoryConnector::new("s")
+            .file("a.txt", b"a", ts(1))
+            .file("docs/b.txt", b"b", ts(1));
+    let destination = unreliable(MemoryConnector::new("d").file("seul.txt", b"x", ts(1)));
+    let report = compare(
+        &inventory(&source),
+        &inventory(&destination),
+        &CompareOptions::new(),
+    )
+    .unwrap();
+    for at in ["a.txt", "docs", "docs/b.txt"] {
+        assert_eq!(
+            outcome_of(&report, at),
+            ComparisonOutcome::Uncertain(vec![Uncertainty::AbsenceUnverified {
+                side: Side::Right
+            }]),
+            "{at}"
+        );
+    }
+    // Source sûre, destination seule : l'absence à la source est établie.
+    assert_eq!(
+        outcome_of(&report, "seul.txt"),
+        ComparisonOutcome::RightOnly
+    );
+
+    // Source distante : une absence non vérifiée à la source n'est jamais
+    // un `RightOnly` (aucune suppression miroir ne peut en être déduite).
+    let source = unreliable(MemoryConnector::new("s").file("a.txt", b"a", ts(1)));
+    let destination = MemoryConnector::new("d").file("precieux.txt", b"p", ts(1));
+    let report = compare(
+        &inventory(&source),
+        &inventory(&destination),
+        &CompareOptions::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        outcome_of(&report, "precieux.txt"),
+        ComparisonOutcome::Uncertain(vec![Uncertainty::AbsenceUnverified { side: Side::Left }])
+    );
+}

@@ -181,8 +181,11 @@ impl LocalConnector {
         if !root.is_absolute() {
             return Err(LocalConfigError::RootNotAbsolute);
         }
+        // Explicit option first, then the volume (FAT, exFAT, FUSE, SMB),
+        // then the OS (audit Linux M9).
         let precision = options
             .timestamp_precision
+            .or_else(|| crate::volume::detected_precision(&root))
             .unwrap_or_else(default_precision);
         let mut capabilities = StorageCapabilities::none().with_features([
             StorageFeature::List,
@@ -199,6 +202,10 @@ impl LocalConnector {
                 StorageFeature::CreateDirectory,
                 StorageFeature::Delete,
             ]);
+            // Modes POSIX reproduits sous Unix seulement (Windows : ACL héritées).
+            if cfg!(unix) {
+                capabilities = capabilities.with_features([StorageFeature::SetPermissions]);
+            }
         }
         capabilities.case_sensitivity = options
             .case_sensitivity
@@ -517,6 +524,17 @@ impl StorageConnector for LocalConnector {
         let operation = StorageOperation::Delete;
         self.before_mutation(StorageFeature::Delete, operation, path, cancel)?;
         write::delete(self.anchor(operation)?, path, expected)
+    }
+
+    fn set_permissions(
+        &self,
+        path: &ResourcePath,
+        permissions: sync_core::UnixPermissions,
+        cancel: &CancellationToken,
+    ) -> Result<(), StorageError> {
+        let operation = StorageOperation::Write;
+        self.before_mutation(StorageFeature::SetPermissions, operation, path, cancel)?;
+        write::set_directory_permissions(self.anchor(operation)?, path, permissions)
     }
 }
 

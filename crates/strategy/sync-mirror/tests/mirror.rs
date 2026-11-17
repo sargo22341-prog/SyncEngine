@@ -316,3 +316,49 @@ fn snapshot_reloads_as_the_same_plan() {
     let reloaded = ExecutionPlan::from_json(&plan.to_json().unwrap()).unwrap();
     assert_eq!(reloaded, plan);
 }
+
+fn unreliable(connector: MemoryConnector) -> MemoryConnector {
+    use connector_api::{ListingConsistency, StorageConnector};
+    let mut caps = connector.capabilities().clone();
+    caps.listing_consistency = ListingConsistency::Unknown;
+    connector.with_capabilities(caps)
+}
+
+#[test]
+fn remote_destination_receives_copies_but_never_deletions() {
+    // C1 : destination distante (listing sans cohérence garantie).
+    let plan = build(
+        &report(&source(), &unreliable(destination())),
+        &with_deletions(),
+    )
+    .unwrap();
+    assert_eq!(
+        decision(&plan, "nouveau"),
+        (Action::Copy, Reason::MissingAtDestination)
+    );
+    assert_eq!(
+        decision(&plan, "nouveau/a.txt"),
+        (Action::Copy, Reason::MissingAtDestination)
+    );
+    // Présent des deux côtés : remplacement normal.
+    assert_eq!(decision(&plan, "docs/rapport.md").0, Action::Replace);
+    // Présent seulement à la destination, source sûre : la suppression reste
+    // refusée en bloc par l'inventaire destination incomplet.
+    assert_eq!(decision(&plan, "vieux/x.txt").0, Action::Skip);
+    assert_eq!(plan.summary().delete, 0);
+}
+
+#[test]
+fn remote_source_absence_never_deletes_at_destination() {
+    let plan = build(
+        &report(&unreliable(source()), &destination()),
+        &with_deletions(),
+    )
+    .unwrap();
+    let (action, reason) = decision(&plan, "vieux/x.txt");
+    assert_eq!(action, Action::Skip);
+    assert!(matches!(reason, Reason::Uncertain { .. }), "{reason:?}");
+    assert_eq!(plan.summary().delete, 0);
+    // Les copies vers une destination sûre restent possibles.
+    assert_eq!(decision(&plan, "nouveau/a.txt").0, Action::Copy);
+}
