@@ -41,6 +41,7 @@ mod confined;
 mod connector;
 mod errors;
 mod flush;
+mod overlap;
 mod paging;
 mod paths;
 mod publish;
@@ -53,6 +54,7 @@ mod write;
 mod unc_path_regression;
 
 pub use connector::{LocalConfigError, LocalConnector, LocalOptions};
+pub use overlap::{RootOverlap, root_overlap};
 
 /// Vrai si `name` est un nom de fichier temporaire d'écriture de ce
 /// connecteur (`.syncengine-….partial`) : un tel fichier, laissé par une

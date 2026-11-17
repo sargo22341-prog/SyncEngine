@@ -106,6 +106,9 @@ sudo -E python3 scripts/test_exfat_fuse.py
 
 Non lancé en CI (droits root et FUSE requis).
 
+Détection d'une destination qui est une vue `mount --bind` de la source
+(Linux, root) : `sudo -E python3 scripts/test_bind_mount.py`.
+
 Autres scripts testés en CI : `test_release.py`, `test_versioning.py`,
 `test_state_maintenance.py`, `test_state_lock.py --binary target/debug/syncengine`
 et, sous Linux, `test_signals.py`. Aucun test ne doit dépendre d'un compte

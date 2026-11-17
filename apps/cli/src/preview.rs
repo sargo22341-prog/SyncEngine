@@ -136,24 +136,22 @@ fn strategy_and_policy(
 
 /// Refuse une destination située dans la source (ou l'inverse, ou le même
 /// dossier) : un miroir s'y recopierait lui-même ou effacerait sa propre
-/// source. Les chemins sont résolus (liens et jonctions compris) ; un
-/// dossier introuvable est laissé au scan, qui le signale comme
-/// indisponible.
+/// source. Les chemins sont résolus (liens et jonctions compris) et, sous
+/// Unix, les identités de dossiers comparées (vue `mount --bind`) :
+/// [`connector_local::root_overlap`]. Un dossier introuvable est laissé au
+/// scan, qui le signale comme indisponible.
 pub(crate) fn ensure_not_nested(source: &Path, destination: &Path) -> Result<(), DiscoveryError> {
-    let (Ok(source), Ok(destination)) = (
-        std::fs::canonicalize(source),
-        std::fs::canonicalize(destination),
-    ) else {
+    use connector_local::RootOverlap;
+    if !(source.exists() && destination.exists()) {
         return Ok(());
-    };
-    let message = if source == destination {
-        "la source et la destination désignent le même dossier"
-    } else if destination.starts_with(&source) {
-        "la destination est située dans la source"
-    } else if source.starts_with(&destination) {
-        "la source est située dans la destination"
-    } else {
-        return Ok(());
+    }
+    let message = match connector_local::root_overlap(source, destination) {
+        Ok(None) => return Ok(()),
+        Ok(Some(RootOverlap::Same)) => "la source et la destination désignent le même dossier",
+        Ok(Some(RootOverlap::SecondInsideFirst)) => "la destination est située dans la source",
+        Ok(Some(RootOverlap::FirstInsideSecond)) => "la source est située dans la destination",
+        // Existants mais non examinables : refus prudent plutôt qu'un plan.
+        Err(_) => "impossible de vérifier que la source et la destination sont disjointes",
     };
     Err(DiscoveryError::Nested(message.to_owned()))
 }
@@ -486,5 +484,33 @@ mod tests {
         ));
         assert!(ensure_not_nested(&inner, &sibling).is_ok());
         assert!(ensure_not_nested(&root.join("absent-a"), &root.join("absent-b")).is_ok());
+    }
+
+    /// M7 (sécurité) — Étant donné une destination qui est une vue bind d'un
+    /// sous-dossier de la source, quand on simule un miroir, alors aucun plan
+    /// n'est produit (erreur « imbriqué »). Montage préparé par
+    /// `scripts/test_bind_mount.py` (root).
+    #[test]
+    #[ignore = "vue bind requise : scripts/test_bind_mount.py"]
+    fn a_bind_view_of_the_source_is_refused() {
+        let source = std::path::PathBuf::from(std::env::var("SYNCENGINE_BIND_SOURCE").unwrap());
+        let view = std::path::PathBuf::from(std::env::var("SYNCENGINE_BIND_VIEW").unwrap());
+        for (from, to) in [
+            (source.clone(), view.join("inner")),
+            (source.clone(), view.clone()),
+            (view.join("inner"), source.clone()),
+        ] {
+            assert!(
+                matches!(
+                    ensure_not_nested(&from, &to),
+                    Err(DiscoveryError::Nested(_))
+                ),
+                "{} → {}",
+                from.display(),
+                to.display()
+            );
+        }
+        let destination = tempfile::TempDir::new().unwrap();
+        assert!(ensure_not_nested(&source, destination.path()).is_ok());
     }
 }

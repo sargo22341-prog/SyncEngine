@@ -145,7 +145,12 @@ exécuté après une interruption (politique des échéances manquées).
 
 - Un lecteur absent, un dossier illisible ou un scan partiel n'est **jamais**
   pris pour un dossier vide et n'entraîne aucune suppression.
-- Une destination placée à l'intérieur de la source (ou l'inverse) est refusée.
+- Une destination placée à l'intérieur de la source (ou l'inverse) est refusée,
+  y compris par un autre chemin vers le même dossier : sous Linux, une vue
+  `mount --bind` de la source (ou d'un de ses sous-dossiers) est reconnue par
+  l'identité du dossier. Sous Windows, `subst`, lecteur mappé ou
+  `\\localhost\c$\…` ne sont détectés que par le chemin résolu (identité de
+  volume à vérifier sous Windows).
 - Chaque précondition est revérifiée juste avant chaque écriture.
 - Chaque fichier est écrit dans un fichier temporaire, vérifié (empreinte ou
   taille), puis publié ; l'original n'est jamais effacé d'abord. Sous Windows,

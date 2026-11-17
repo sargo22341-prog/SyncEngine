@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Destination imbriquée par vue bind (audit Linux M7)
+- La détection « destination dans la source » ne comparait que des chemins canonisés : une vue `mount --bind` de la source (ou d'un sous-dossier) était acceptée comme destination, et un miroir aurait pu supprimer une partie de la source. CLI (`preview`, `execute`) et façade comparent désormais aussi l'identité des dossiers et de leurs ancêtres (`st_dev`/`st_ino`, `connector_local::root_overlap`). Une racine existante mais non examinable est refusée. Windows : comparaison des chemins seulement (à vérifier sous Windows : `subst`, lecteur mappé).
+
 ### Permissions POSIX conservées (audit Linux M2)
 - Sous Linux, une copie locale publiait chaque fichier en `0644` et chaque dossier en `0755` : un fichier privé `0600` devenait lisible par tous dans la sauvegarde. Le mode de la source est désormais reproduit vers une destination locale (fichiers, dossiers créés, versions de la corbeille), le dépôt temporaire reste en `0600`, setuid/setgid ne sont jamais reproduits, un remplacement n'élargit jamais les droits existants. Contrat : `UnixPermissions`, `FileMetadata::permissions`, `WriteOptions::permissions`, `StorageFeature::SetPermissions`, `StorageConnector::set_permissions` (défaut `NotSupported`). Non reproduit vers les connecteurs distants (SFTP `setstat` : à faire).
 

@@ -8,6 +8,7 @@ description de la GitHub Release, puis vide la liste dans le commit
 Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Linux : une destination qui est une vue « mount --bind » de la source est refusée comme une destination imbriquée.
 - Linux : les permissions des fichiers et dossiers sont conservées dans la sauvegarde ; un fichier privé n’y devient plus lisible par tous.
 - WebDAV (Apache) : les sous-dossiers sont de nouveau lus et créés.
 - Linux : la sauvegarde vers une clé USB ou un disque exFAT/FAT fonctionne (chaque fichier échouait en « accès refusé »).

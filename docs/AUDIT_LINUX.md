@@ -353,7 +353,7 @@ visible, `CHANGELOG.md` pour un changement de comportement.
 3. [x] **C3** WebDAV : barre finale des collections, redirection « même URL + / »
    seulement + test serveur redirigeant.
 4. [x] **M2** Politique de permissions POSIX (tests `0600`, `0755`, dossiers `0700`).
-5. [ ] **M7** Imbrication par identité de dossier (bind mount ; vérifier `subst` sous Windows).
+5. [x] **M7** Imbrication par identité de dossier (bind mount ; vérifier `subst` sous Windows).
 6. [ ] **M1** État réel de l'agent Linux et installation des unités depuis l'interface.
 7. [ ] **M5** Ordre `disable --now` → fichiers → `daemon-reload` + test à faux `systemctl`.
 8. [ ] **M6** `.partial` orphelins : journal d'intention ou nettoyage par pid.
