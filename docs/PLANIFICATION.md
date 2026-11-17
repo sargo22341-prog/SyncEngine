@@ -29,7 +29,17 @@ Le cycle de vie et les limites Windows sont détaillés dans
    confirmer la nouvelle planification. Les tâches exécutent toujours l'agent
    avec les droits ordinaires du compte initial, même si un autre compte
    administrateur autorise l'UAC.
-3. **Linux** : installer les unités systemd à la main (ci-dessous).
+3. **Linux** : enregistrer l'horaire écrit (ou actualise) les trois unités
+   systemd utilisateur sous `~/.config/systemd/user/`, puis lance
+   `systemctl --user daemon-reload`, `enable --now syncengine-clock.timer` et
+   `enable syncengine-session.service`. L'agent doit se trouver à côté de
+   `syncengine-desktop`. La barre latérale et la page Planification affichent
+   l'état **observé** (fichiers présents et `systemctl --user is-active`) :
+   « Agent actif », « Agent inactif », « Agent non installé » ou « systemd
+   indisponible » ; jamais « actif » par défaut. Sans systemd utilisateur,
+   l'enregistrement échoue avec ce message et le repli est cron (ci-dessous).
+   Après le retrait de la dernière planification active, les unités sont
+   désactivées (`disable --now`), supprimées, puis `daemon-reload`.
 
 Les noms Windows incluent le SID du compte et une empreinte du chemin absolu
 du dossier d'état : deux dossiers d'état ne remplacent pas leurs tâches.
@@ -151,7 +161,8 @@ l'interface. Pour une utilisation normale, enregistrer depuis l'interface.
 Cette variante manuelle peut nécessiter un terminal élevé ; elle n'intègre
 pas la demande UAC automatique de l'interface.
 
-**Linux** (systemd utilisateur) :
+**Linux** (systemd utilisateur, variante manuelle de l'installation faite par
+l'interface) :
 
 ```sh
 syncengine-agent export "$etat" ./unites linux

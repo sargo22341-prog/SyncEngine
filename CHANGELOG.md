@@ -5,6 +5,10 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Agent planifié Linux (audit Linux M1, M5)
+- Sous Linux, une planification enregistrée dans l'interface ne s'exécutait jamais (aucune unité installée) alors que l'interface affichait « Agent actif ». L'interface installe désormais les unités systemd utilisateur à l'enregistrement d'une planification (`daemon-reload`, `enable --now` du minuteur, `enable` de l'unité de session), les retire après la dernière planification active, et affiche l'état observé (« Agent actif », « inactif », « non installé », « systemd indisponible »). Un fichier d'unité de même nom qui n'est pas de SyncEngine n'est jamais remplacé. Nouveau module `apps/desktop/src/systemd.rs` ; nouvelle trace temporaire `.<unité>.syncengine-tmp` inventoriée et purgée.
+- « Supprimer toutes les données » retirait les fichiers d'unité **avant** `systemctl --user disable --now` : `disable` échouait et un minuteur chargé pouvait relancer l'agent. Ordre corrigé : `disable --now`, fichiers et liens, puis `daemon-reload` (test avec un faux `systemctl` dans le `PATH`).
+
 ### Destination imbriquée par vue bind (audit Linux M7)
 - La détection « destination dans la source » ne comparait que des chemins canonisés : une vue `mount --bind` de la source (ou d'un sous-dossier) était acceptée comme destination, et un miroir aurait pu supprimer une partie de la source. CLI (`preview`, `execute`) et façade comparent désormais aussi l'identité des dossiers et de leurs ancêtres (`st_dev`/`st_ino`, `connector_local::root_overlap`). Une racine existante mais non examinable est refusée. Windows : comparaison des chemins seulement (à vérifier sous Windows : `subst`, lecteur mappé).
 

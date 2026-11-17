@@ -574,6 +574,14 @@ impl App {
                 ));
             }
         }
+        if let Some((label, detail)) = self
+            .ws
+            .linux_agent
+            .and_then(crate::native::linux_agent_problem)
+            && !self.ws.agent_stopped
+        {
+            page = page.push(ui::callout(p, p.warning, Glyph::Info, label, detail));
+        }
         if self.ws.agent_stopped {
             page = page.push(
                 container(
@@ -628,7 +636,7 @@ impl App {
                         p.info,
                         Glyph::Monitor,
                         "Agent système",
-                        "Windows : les tâches sont enregistrées automatiquement ; une demande UAC n’apparaît que si Windows exige des droits supplémentaires. La fermeture de session n’est pas garantie pour une tâche longue, et deux jobs incompatibles ne tournent jamais en même temps. Linux : unités systemd utilisateur selon le guide.",
+                        "Windows : les tâches sont enregistrées automatiquement ; une demande UAC n’apparaît que si Windows exige des droits supplémentaires. La fermeture de session n’est pas garantie pour une tâche longue, et deux jobs incompatibles ne tournent jamais en même temps. Linux : enregistrer une planification installe et active les unités systemd utilisateur (minuteur chaque minute) ; leur état réel est affiché. Sans systemd, voir le guide (cron).",
                     ),
                 ]
                 .spacing(12)

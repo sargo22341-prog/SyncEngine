@@ -8,6 +8,8 @@ description de la GitHub Release, puis vide la liste dans le commit
 Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Linux : enregistrer une planification installe et active l’agent systemd ; son état réel est affiché.
+- Linux : « Supprimer toutes les données » arrête l’agent systemd avant d’en retirer les fichiers.
 - Linux : une destination qui est une vue « mount --bind » de la source est refusée comme une destination imbriquée.
 - Linux : les permissions des fichiers et dossiers sont conservées dans la sauvegarde ; un fichier privé n’y devient plus lisible par tous.
 - WebDAV (Apache) : les sous-dossiers sont de nouveau lus et créés.

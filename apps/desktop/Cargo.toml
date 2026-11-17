@@ -44,6 +44,11 @@ tempfile.workspace = true
 # Windows executable icon (resource compiled by rc.exe / llvm-rc).
 embed-resource = "3.0.12"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# systemd user units rendered by the Linux adapter, installed by the interface.
+platform-api.workspace = true
+platform-linux.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 platform-api.workspace = true
 platform-windows.workspace = true

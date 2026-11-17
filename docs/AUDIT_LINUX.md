@@ -354,8 +354,8 @@ visible, `CHANGELOG.md` pour un changement de comportement.
    seulement + test serveur redirigeant.
 4. [x] **M2** Politique de permissions POSIX (tests `0600`, `0755`, dossiers `0700`).
 5. [x] **M7** Imbrication par identité de dossier (bind mount ; vérifier `subst` sous Windows).
-6. [ ] **M1** État réel de l'agent Linux et installation des unités depuis l'interface.
-7. [ ] **M5** Ordre `disable --now` → fichiers → `daemon-reload` + test à faux `systemctl`.
+6. [x] **M1** État réel de l'agent Linux et installation des unités depuis l'interface.
+7. [x] **M5** Ordre `disable --now` → fichiers → `daemon-reload` + test à faux `systemctl`.
 8. [ ] **M6** `.partial` orphelins : journal d'intention ou nettoyage par pid.
 9. [ ] **M4** Secrets/agent SSH pour systemd et lanceur ; message avant simulation.
 10. [ ] **M3** FTP sans MLSD : message, `FEAT`, documentation (repli `LIST` optionnel).

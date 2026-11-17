@@ -34,14 +34,16 @@ l’UAC seulement après un refus d’accès, comme l’enregistrement.
 | --- | --- | --- | --- |
 | Dossier d’état | `$XDG_DATA_HOME/org.syncengine.desktop/` ou `~/.local/share/org.syncengine.desktop/` | interface, CLI, agent | dossier entier |
 | Verrous d’exécution | `$XDG_STATE_HOME/SyncEngine/job-locks/` ou `~/.local/state/SyncEngine/job-locks/` | toute exécution | dossier `SyncEngine` entier |
-| Unités systemd utilisateur | `$XDG_CONFIG_HOME/systemd/user/` (ou `~/.config/systemd/user/`) : `syncengine-clock.service`, `syncengine-clock.timer`, `syncengine-session.service` | installation manuelle depuis `syncengine-agent export … linux` | `systemctl --user disable --now`, fichiers, `daemon-reload` |
+| Unités systemd utilisateur | `$XDG_CONFIG_HOME/systemd/user/` (ou `~/.config/systemd/user/`) : `syncengine-clock.service`, `syncengine-clock.timer`, `syncengine-session.service` | l’interface, à l’enregistrement d’une planification (et retrait quand plus aucune n’est active), ou installation manuelle depuis `syncengine-agent export … linux` | `systemctl --user disable --now` **d’abord**, puis fichiers, puis `daemon-reload` |
+| Unité en cours d’écriture | même dossier : `.syncengine-clock.service.syncengine-tmp`, `.syncengine-clock.timer.syncengine-tmp`, `.syncengine-session.service.syncengine-tmp` | l’interface, seulement si elle s’arrête entre l’écriture et le renommage | fichier |
 | Activation des unités | `timers.target.wants/syncengine-clock.timer`, `default.target.wants/syncengine-clock.service`, `default.target.wants/syncengine-session.service` | `systemctl --user enable` | liens (jamais suivis) |
 | Démarrage de l’interface | `$XDG_CONFIG_HOME/autostart/` : `syncengine.desktop`, `syncengine-desktop.desktop`, `org.syncengine.desktop.desktop` | l’utilisateur (SyncEngine n’en crée pas) | fichier, seulement s’il lance `syncengine-desktop` |
 | Fichier d’envoi temporaire | `$TMPDIR/.syncengine-….partial` (ou `/tmp`) | copie vers un serveur distant interrompue | fichier |
 
 Une unité n’est retirée que si elle porte l’un de ces noms exacts et contient
-`syncengine-agent` (services) ou `Description=SyncEngine schedule dispatcher`
-(minuteur). Sans systemd, l’échec de `systemctl` est signalé dans le bilan ;
+`Description=SyncEngine headless profiles` (services) ou
+`Description=SyncEngine schedule dispatcher` (minuteur). L’interface ne
+remplace jamais un fichier de même nom qui n’a pas ces marques. Sans systemd, l’échec de `systemctl` est signalé dans le bilan ;
 les fichiers sont retirés quand même.
 
 ## Mise à jour depuis Réglages

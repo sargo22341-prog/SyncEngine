@@ -216,6 +216,8 @@ pub(crate) struct Workspace {
     pub(crate) agent_stopped: bool,
     pub(crate) resident: sync_orchestrator::ResidentStatus,
     pub(crate) supervision_error: Option<Failure>,
+    /// Linux: observed systemd agent state (`None` elsewhere).
+    pub(crate) linux_agent: Option<crate::native::LinuxAgent>,
 }
 
 fn load(app: &Application, previous: Vec<ScheduleView>) -> Result<Workspace, Failure> {
@@ -247,6 +249,7 @@ fn load(app: &Application, previous: Vec<ScheduleView>) -> Result<Workspace, Fai
         resident: sync_orchestrator::resident_status(app.state_directory())
             .map_err(Failure::from)?,
         supervision_error: None,
+        linux_agent: crate::native::linux_agent_state(),
     })
 }
 
@@ -646,6 +649,8 @@ mod startup_tests {
     #[test]
     fn startup_observes_a_busy_agent_without_initializing_or_unlocking_stores()
     -> Result<(), Box<dyn std::error::Error>> {
+        // No child process may inherit the transient lock taken by `open`.
+        let _spawn = crate::test_support::spawn_guard();
         let temp = tempfile::tempdir()?;
         let state = temp.path().join("state");
         std::fs::create_dir(&state)?;
