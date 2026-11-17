@@ -13,6 +13,7 @@ mod backend;
 mod charts;
 mod draft;
 mod exclusion;
+mod follow;
 mod group_run;
 mod icons;
 mod interrupted;

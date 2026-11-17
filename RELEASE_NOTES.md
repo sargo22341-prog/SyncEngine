@@ -8,4 +8,5 @@ description de la GitHub Release, puis vide la liste dans le commit
 Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Planification : la fenêtre de suivi ne revient plus au premier plan à chaque profil d’une série ; une fois réduite, elle reste en arrière-plan et ne vole plus la saisie.
 

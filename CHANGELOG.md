@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Fenêtre de suivi des planifications
+- Avec « Afficher la fenêtre de suivi », la fenêtre était restaurée et recevait le focus à chaque profil d'une série planifiée : elle prenait la saisie de l'application en cours et annulait une réduction. Elle n'est désormais montrée qu'au premier profil de la série (`follow::WindowFollow`) ; la série se termine quand la file de l'agent est vide ou après 60 s sans exécution active.
+
 ### Fenêtre de mise à jour, notes de version
 - La fenêtre « Nouvelle mise à jour disponible » montre un badge `ancienne → ✦ nouvelle NOUVEAU` ; la phrase de réassurance est retirée, ce qui libère la place du bouton « Mettre à jour maintenant » (il était écrasé).
 - `RELEASE_NOTES.md` : les notes avaient été insérées dans l'en-tête (marqueur cité en ligne) au lieu de sous la ligne de marqueur, d'où une release 0.1.11 sans notes. En-tête réécrit sans marqueur, test `test_repository_notes_file_has_one_marker_line`, règle précisée dans `AGENTS.md`.

@@ -156,8 +156,14 @@ impl App {
             .clone()
             .filter(|l| l.is_live(model::now_secs(), AGENT_STALE_SECS))
         else {
+            let queue_running = self
+                .agent_queue
+                .as_ref()
+                .is_some_and(|queue| queue.current.is_some());
+            self.window_follow.quiet(queue_running, self.now);
             return self.agent_ended(live.map(|l| l.snapshot));
         };
+        self.window_follow.active();
         let s = live.snapshot;
         let Some(profile) = s.profile.clone() else {
             return Task::none();
@@ -199,10 +205,12 @@ impl App {
                 }
             }
             _ => {
-                if self
+                // Once per series: later profiles must not take the focus
+                // back nor undo a minimization (see `follow`).
+                let wants_window = self
                     .schedule_of(&profile)
-                    .is_some_and(|s| s.schedule.show_window)
-                {
+                    .is_some_and(|s| s.schedule.show_window);
+                if self.window_follow.start(wants_window) {
                     self.go(Nav::Activity);
                     task = self.show_window();
                 }

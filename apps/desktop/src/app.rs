@@ -508,6 +508,8 @@ pub(crate) struct App {
     pub(crate) group_run: Option<crate::group_run::GroupRun>,
     /// Scheduled run of the agent, followed live (see [`Job::agent`]).
     pub(crate) agent_job: Option<Job>,
+    /// Brings the window forward once per series of scheduled runs.
+    pub(crate) window_follow: crate::follow::WindowFollow,
     /// A read of the agent snapshot is in flight (no overlapping reads).
     pub(crate) agent_polling: bool,
     /// Presence lock of this window: the agent does not open a second one.
@@ -614,6 +616,7 @@ impl App {
             job: None,
             group_run: None,
             agent_job: None,
+            window_follow: crate::follow::WindowFollow::default(),
             agent_polling: false,
             presence: None,
             last_poll: now,

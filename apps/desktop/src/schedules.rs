@@ -43,7 +43,7 @@ Les garde-fous restent actifs : aucune suppression si la source est vide ou illi
 Sans cette case, une synchronisation qui devrait supprimer des fichiers ne fait rien du tout et s’affiche en échec dans la page Planification : vous décidez vous-même.";
 const WINDOW_INFO: &str = "À chaque synchronisation planifiée, SyncEngine ouvre sa fenêtre sur la page Activité : vous voyez en direct le pourcentage, le débit et les éventuelles erreurs, et vous pouvez l’annuler.
 
-Si la fenêtre est déjà ouverte ou réduite dans la zone de notification, elle revient simplement au premier plan.
+Si la fenêtre est déjà ouverte ou réduite dans la zone de notification, elle revient au premier plan une seule fois, au premier profil de la série : si vous la réduisez ensuite, les profils suivants ne la rouvrent pas et ne prennent pas la main sur votre saisie.
 
 Sans cette case, la synchronisation se fait en arrière-plan, sans fenêtre ; son résultat apparaît ensuite dans l’historique. Nécessite une session Windows ouverte.";
 

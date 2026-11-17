@@ -85,7 +85,12 @@ Option **« Afficher la fenêtre de suivi pendant la synchronisation »**
 (`--show-window`, Windows seulement) : à chaque exécution, l'agent ouvre
 `syncengine-desktop` (placé à côté de lui) sur la page Activité ; si une
 fenêtre est déjà ouverte, même réduite dans la zone de notification, elle
-revient au premier plan. Ce n'est pas un consentement : elle ne change ni
+revient au premier plan. Elle ne le fait qu'une fois par série : quand l'agent
+enchaîne plusieurs profils, seul le premier ramène la fenêtre ; les suivants
+ne la restaurent pas et ne lui donnent pas le focus, pour ne pas voler la
+saisie en cours ni annuler une réduction (`apps/desktop/src/follow.rs`). La
+série se termine quand la file de l'agent est vide, ou après 60 s sans
+exécution active (agent arrêté brutalement). Ce n'est pas un consentement : elle ne change ni
 l'autorisation ni ce qui est exécuté. Sous Linux, une unité systemd n'a pas de
 session graphique garantie : l'option n'est pas proposée, mais une fenêtre
 ouverte suit quand même l'exécution.
