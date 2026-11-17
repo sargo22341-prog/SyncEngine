@@ -55,7 +55,36 @@ l'exécution dans la variable d'environnement `SYNCENGINE_SECRET_<référence>`
 (`SYNCENGINE_SECRET_NAS`) du processus qui exécute : interface, CLI ou agent.
 Une tâche planifiée doit donc recevoir cette variable dans son propre
 environnement. Si elle manque, l'exécution échoue avec une erreur
-d'authentification.
+d'authentification qui **nomme** la variable attendue ; la page du profil
+l'annonce déjà avant toute simulation (« Identifiant absent de ce processus »).
+SFTP s'authentifie par l'agent SSH : sous Linux, `SSH_AUTH_SOCK` doit être
+présent dans le processus.
+
+### Secrets sous Linux (interface du menu, agent systemd)
+
+Une interface lancée depuis le menu (fichier `.desktop`) et l'agent lancé par
+le minuteur systemd **n'héritent pas** des variables d'un terminal. Voies
+documentées, sans jamais écrire le secret dans une unité :
+
+1. Fichier `~/.config/environment.d/60-syncengine.conf`, droits `0600`
+   (`chmod 600`), une ligne par référence :
+   `SYNCENGINE_SECRET_NAS=…`. Il est lu par le gestionnaire systemd
+   utilisateur à son démarrage (prochaine ouverture de session) et transmis
+   à ses unités, donc à l'agent ; les sessions de bureau démarrées par
+   systemd (GNOME, Plasma) le transmettent en général aussi aux applications
+   du menu. À vérifier sur le bureau utilisé : ouvrir la page du profil,
+   l'avertissement disparaît quand la variable est reçue.
+2. Agent SSH : après son démarrage dans la session,
+   `systemctl --user import-environment SSH_AUTH_SOCK` le rend visible aux
+   unités systemd (agent planifié). Un trousseau de bureau qui fournit
+   l'agent SSH le fait souvent déjà.
+3. Sans systemd : lancer `syncengine-agent tick ETAT clock` depuis cron avec
+   les variables dans la ligne de commande d'un script privé (`0700`).
+
+SyncEngine ne génère ni `Environment=` ni `EnvironmentFile=` dans ses unités :
+un secret n'y est jamais écrit. Limite : un fichier `environment.d` est lisible
+par tout processus du compte ; préférer un trousseau quand le bureau en offre
+un compatible.
 
 ## Par connecteur
 

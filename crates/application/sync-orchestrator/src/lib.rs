@@ -3,6 +3,8 @@
 //! and a shared per-user execution lock across facade state directories.
 //! Engines own every comparison, policy decision and file mutation.
 
+mod credentials;
+pub use credentials::{MissingCredential, missing_credentials, missing_credentials_with};
 mod endpoints;
 mod live;
 mod resident;

@@ -361,6 +361,24 @@ impl App {
         if interrupted && !self.running_on(id) {
             page = page.push(diagnosis).push(diagnosis_action);
         }
+        // Before any preview: name the variables this process lacks (M4).
+        let missing = sync_orchestrator::missing_credentials(profile);
+        if !missing.is_empty() {
+            let names = missing
+                .iter()
+                .map(|m| format!("{} ({})", m.variable, m.purpose))
+                .collect::<Vec<_>>()
+                .join(", ");
+            page = page.push(ui::callout(
+                p,
+                p.warning,
+                Glyph::Alert,
+                "Identifiant absent de ce processus",
+                format!(
+                    "Variable attendue : {names}. Une interface lancée depuis le menu, ou un agent planifié, n’hérite pas des variables d’un terminal : voir le guide, section « Secrets »."
+                ),
+            ));
+        }
         let page = page
             .push(endpoints)
             .push(self.sim_panel(p, profile))
@@ -877,7 +895,7 @@ impl App {
                 p.warning,
                 Glyph::Alert,
                 "Listes non garanties",
-                "Le partage ne garantit pas la cohérence de ses listes : les absences restent incertaines et ne permettent aucune suppression miroir.",
+                "Le serveur ne garantit pas la cohérence de ses listes : les absences restent incertaines et ne permettent aucune suppression miroir. Les copies restent possibles : chaque fichier est revérifié avant d’être écrit.",
             ));
         }
         let mut body = column![

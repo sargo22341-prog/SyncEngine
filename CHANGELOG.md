@@ -5,6 +5,9 @@ release vont dans [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## [Non publié]
 
+### Secrets et agent SSH sous Linux (audit Linux M4)
+- Un secret absent donnait « identifiant runtime indisponible » sans dire quoi faire. Le message nomme désormais la variable attendue (`SYNCENGINE_SECRET_<réf>`, ou `SSH_AUTH_SOCK` pour SFTP sous Unix, vérifié avant toute connexion) ; la façade expose `missing_credentials` (présence seulement, jamais la valeur) et la page du profil l'annonce avant toute simulation. Voies Linux documentées (`environment.d` en `0600`, `systemctl --user import-environment SSH_AUTH_SOCK`, cron) ; aucune unité ne reçoit de secret.
+
 ### Fichiers temporaires orphelins après arrêt brutal (audit Linux M6)
 - Après un `SIGKILL` pendant des copies parallèles, des `.syncengine-<pid>-….partial` créés mais pas encore consignés restaient pour toujours (masqués par le scanner). Le journal consigne désormais le processus qui exécute (`JournalRecord::ExecutionStarted::process`, `RecoveryReport::process`, champ additif ; un journal produit par cette version n'est pas relu par une version antérieure) et « Reprendre » retire aussi les temporaires de ce processus dans les dossiers locaux où le plan écrivait. Non fait : signalement des `.partial` présents en simulation.
 

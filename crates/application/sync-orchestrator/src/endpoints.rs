@@ -49,13 +49,14 @@ pub(super) fn supported(remote: &RemoteEndpoint) -> Result<(), AppError> {
     feature = "onedrive"
 ))]
 fn secret(reference: &str) -> Result<String, AppError> {
-    std::env::var(format!("SYNCENGINE_SECRET_{reference}"))
+    let variable = format!("SYNCENGINE_SECRET_{reference}");
+    std::env::var(&variable)
         .ok()
         .filter(|v| !v.is_empty() && v.len() <= 64 * 1024)
         .ok_or_else(|| {
             error(
                 "unauthenticated",
-                "identifiant runtime indisponible ; renouveler l’authentification externe",
+                crate::credentials::missing_message(&variable),
             )
         })
 }
@@ -124,6 +125,15 @@ pub(super) fn build(
         return Err(error("cancelled", "connexion annulée"));
     }
     match remote {
+        #[cfg(feature = "sftp")]
+        RemoteEndpoint::Sftp { .. }
+            if cfg!(unix) && std::env::var_os("SSH_AUTH_SOCK").is_none_or(|v| v.is_empty()) =>
+        {
+            Err(error(
+                "unauthenticated",
+                crate::credentials::missing_message("SSH_AUTH_SOCK"),
+            ))
+        }
         #[cfg(feature = "sftp")]
         RemoteEndpoint::Sftp {
             address,
