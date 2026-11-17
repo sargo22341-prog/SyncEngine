@@ -13,6 +13,10 @@ cap-fs-ext = "4.0.3"
 connector-api.workspace = true
 sync-core.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# renameat2(RENAME_NOREPLACE) sans `unsafe` ; déjà présent via cap-std.
+rustix = { version = "1.1.6", default-features = false, features = ["std", "fs"] }
+
 [target.'cfg(windows)'.dependencies]
 # Safe opt-in bulk listing API from our existing reviewed Windows dependency patch.
 cap-primitives = "4.0.3"

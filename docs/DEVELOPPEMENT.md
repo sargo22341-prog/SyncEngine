@@ -96,6 +96,16 @@ python scripts/test_phase08_ftp.py
 python scripts/test_phase09_onedrive.py
 ```
 
+Publication sur un système de fichiers sans liens physiques (Linux, root,
+paquets `exfat-fuse` et `exfatprogs`) : image exFAT jetable sous `target/`,
+montée par FUSE, puis test ignoré de `connector-local` :
+
+```sh
+sudo -E python3 scripts/test_exfat_fuse.py
+```
+
+Non lancé en CI (droits root et FUSE requis).
+
 Autres scripts testés en CI : `test_release.py`, `test_versioning.py`,
 `test_state_maintenance.py`, `test_state_lock.py --binary target/debug/syncengine`
 et, sous Linux, `test_signals.py`. Aucun test ne doit dépendre d'un compte

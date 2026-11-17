@@ -4,6 +4,7 @@ use crate::{
     confined,
     connector::cancelled,
     errors::{io_error, local_error},
+    publish,
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
@@ -275,12 +276,16 @@ impl LocalWriter {
         drop(file);
         match mode {
             CommitMode::CreateNew => {
-                // No check-then-rename fallback: unsupported filesystems fail closed.
-                self.parent
-                    .hard_link(&self.staging_name, &self.parent, &self.target_name)
-                    .map_err(|e| io_error(e, op, &self.target))?;
-                retry_transient_lock(&self.cancel, || self.parent.remove_file(&self.staging_name))
+                // Never overwrites; method order and fallbacks: see publish.rs.
+                let published =
+                    publish::create_new(&self.parent, &self.staging_name, &self.target_name)
+                        .map_err(|e| io_error(e, op, &self.target))?;
+                if published == publish::Published::Linked {
+                    retry_transient_lock(&self.cancel, || {
+                        self.parent.remove_file(&self.staging_name)
+                    })
                     .map_err(|e| io_error(e, op, &self.staging))?;
+                }
             }
             CommitMode::ReplaceExisting => {
                 let meta = self

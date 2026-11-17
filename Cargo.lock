@@ -695,6 +695,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "connector-api",
+ "rustix 1.1.6",
  "sync-core",
  "tempfile",
 ]

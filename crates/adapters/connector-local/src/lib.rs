@@ -16,8 +16,9 @@
 //! - un nom non UTF-8 est signalé par une anomalie de listing, jamais
 //!   converti avec perte ni ignoré en silence ;
 //! - écriture : fichier temporaire dans le dossier cible
-//!   ([`is_staging_name`]), `fsync`, puis publication sans écrasement (lien
-//!   physique) ou remplacement par renommage ; la date de modification
+//!   ([`is_staging_name`]), `fsync`, puis publication sans écrasement
+//!   (Linux : `renameat2(RENAME_NOREPLACE)`, sinon lien physique ; replis
+//!   documentés dans `publish.rs`) ou remplacement par renommage ; la date de modification
 //!   demandée est appliquée avant publication ;
 //! - suppression : fichier ou répertoire **vide** de la nature attendue,
 //!   jamais un lien, jamais récursive.
@@ -42,6 +43,7 @@ mod errors;
 mod flush;
 mod paging;
 mod paths;
+mod publish;
 mod write;
 
 // Exercise the exact vendored conversion in workspace CI, without any network

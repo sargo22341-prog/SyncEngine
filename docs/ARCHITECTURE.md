@@ -80,6 +80,14 @@ Les E/S de vérification et d’archivage ont des compteurs informatifs séparé
 Le magasin et le connecteur revalident toujours les dossiers des versions et
 chaque écriture effective ; aucun cache ne permet une mutation.
 
+Publication sans écrasement (`CommitMode::CreateNew`) du connecteur local :
+sous Linux `renameat2(RENAME_NOREPLACE)`, repli sur lien physique si le noyau
+ou le système de fichiers ignore l'option, puis, sans liens physiques (exFAT,
+FAT, certains FUSE/CIFS), réservation exclusive du nom puis renommage. Une
+cible existante n'est jamais écrasée ; la limite du dernier repli (un
+programme tiers écrivant dans la réservation vide) est décrite dans
+`connector-local/src/publish.rs`. Hors Linux : lien physique seul, inchangé.
+
 Le connecteur local vide le fichier temporaire en arrière-plan (fil dédié,
 seconde poignée) : sous Windows les données seules sans vider le cache de
 l'appareil, tous les 16 Mio, sinon `sync_data` tous les 128 Mio. La copie

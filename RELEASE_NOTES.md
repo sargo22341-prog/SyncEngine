@@ -8,5 +8,6 @@ description de la GitHub Release, puis vide la liste dans le commit
 Détails : [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 <!-- notes -->
+- Linux : la sauvegarde vers une clé USB ou un disque exFAT/FAT fonctionne (chaque fichier échouait en « accès refusé »).
 - Sauvegarde vers SFTP, FTP, FTPS ou WebDAV : les fichiers sont enfin copiés (aucune suppression déduite d’un serveur distant).
 

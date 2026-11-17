@@ -479,3 +479,47 @@ fn large_write_survives_intermediate_flushes() {
     );
     assert_eq!(names(dir.path()), ["large.bin"]);
 }
+
+/// C2 — Étant donné une destination exFAT vide (montage FUSE, sans liens
+/// physiques), quand on sauvegarde 10 fichiers, alors les 10 sont publiés
+/// sans écrasement et aucun `.partial` ne reste.
+///
+/// Lancé par `scripts/test_exfat_fuse.py` (root : image boucle montée par
+/// `exfat-fuse`) avec `SYNCENGINE_EXFAT_ROOT` pointant dans le montage.
+#[test]
+#[ignore = "montage exFAT FUSE requis : scripts/test_exfat_fuse.py"]
+fn create_new_publishes_on_a_filesystem_without_hard_links() {
+    let root = std::path::PathBuf::from(std::env::var("SYNCENGINE_EXFAT_ROOT").unwrap());
+    let dir = tempfile::Builder::new()
+        .prefix("c2-")
+        .tempdir_in(&root)
+        .unwrap();
+    let connector = writable(dir.path());
+    for index in 0..10 {
+        let name = format!("f{index}.txt");
+        let entry = write_file(
+            &connector,
+            &name,
+            name.as_bytes(),
+            CommitMode::CreateNew,
+            WriteOptions::new(),
+        )
+        .unwrap();
+        assert_eq!(entry.metadata().size(), Some(name.len() as u64));
+        assert_eq!(fs::read(dir.path().join(&name)).unwrap(), name.as_bytes());
+    }
+    // Une cible existante n'est jamais écrasée, même sans liens physiques.
+    let error = write_file(
+        &connector,
+        "f0.txt",
+        b"autre",
+        CommitMode::CreateNew,
+        WriteOptions::new(),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::Conflict);
+    assert_eq!(fs::read(dir.path().join("f0.txt")).unwrap(), b"f0.txt");
+    let names = names(dir.path());
+    assert_eq!(names.len(), 10, "{names:?}");
+    assert!(names.iter().all(|n| !is_staging_name(n)), "{names:?}");
+}
