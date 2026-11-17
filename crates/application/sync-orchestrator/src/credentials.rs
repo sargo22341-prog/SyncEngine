@@ -67,7 +67,16 @@ pub fn missing_credentials(profile: &Profile) -> Vec<MissingCredential> {
     })
 }
 
-/// Message for a missing variable, shared by the preview error.
+/// Message for a missing variable, shared by the preview error (only the
+/// network connectors read secrets).
+#[cfg(any(
+    feature = "sftp",
+    feature = "webdav",
+    feature = "ftp",
+    feature = "ftps",
+    feature = "onedrive",
+    test
+))]
 pub(crate) fn missing_message(variable: &str) -> String {
     format!(
         "{variable} absente de ce processus : une interface lancée depuis le menu ou un agent systemd n’hérite pas des variables d’un terminal (voir le guide, « Secrets »)"
