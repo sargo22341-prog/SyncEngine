@@ -138,6 +138,7 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    #[cfg(target_os = "linux")]
     fn os(code: i32) -> io::Error {
         io::Error::from_raw_os_error(code)
     }

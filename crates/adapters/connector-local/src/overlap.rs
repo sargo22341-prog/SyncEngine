@@ -98,9 +98,11 @@ fn identity_overlap<I: PartialEq>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::path::PathBuf;
 
     /// Simule une vue bind : `/data/vue` a l'identité de `/data/src`.
+    #[cfg(unix)]
     fn fake(path: &Path) -> io::Result<String> {
         Ok(path.to_string_lossy().replace("/data/vue", "/data/src"))
     }

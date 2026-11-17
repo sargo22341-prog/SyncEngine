@@ -13,17 +13,26 @@
 use sync_core::TimestampPrecision;
 
 /// Types `statfs` (`f_type`) reconnus.
+#[cfg(any(target_os = "linux", test))]
 const MSDOS_SUPER_MAGIC: u64 = 0x4d44;
+#[cfg(any(target_os = "linux", test))]
 const EXFAT_SUPER_MAGIC: u64 = 0x2011_bab0;
+#[cfg(any(target_os = "linux", test))]
 const FUSE_SUPER_MAGIC: u64 = 0x6573_5546;
+#[cfg(any(target_os = "linux", test))]
 const NTFS3_SUPER_MAGIC: u64 = 0x7366_746e;
+#[cfg(any(target_os = "linux", test))]
 const NTFS_SB_MAGIC: u64 = 0x5346_544e;
+#[cfg(any(target_os = "linux", test))]
 const SMB_SUPER_MAGIC: u64 = 0x517b;
+#[cfg(any(target_os = "linux", test))]
 const CIFS_SUPER_MAGIC: u64 = 0xff53_4d42;
+#[cfg(any(target_os = "linux", test))]
 const SMB2_SUPER_MAGIC: u64 = 0xfe53_4d42;
 
 /// Précision des dates garantie par un type de système de fichiers ;
 /// `None` : celle de l'OS (nanoseconde sous Linux).
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn precision_for(fs_type: u64) -> Option<TimestampPrecision> {
     match fs_type {
         // vfat / msdos : 2 s pour la date de modification.
