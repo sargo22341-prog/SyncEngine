@@ -102,3 +102,6 @@ et la publication laissent une courte baisse.
   du code `unsafe` ou une dépendance supplémentaire).
 - Le vidage des données seules n’est pas une barrière de durabilité ; il ne
   sert qu’au rythme. Le `sync_all` final reste fait sur la poignée d’écriture.
+- Coût réel de la vérification et intérêt d'une étape de validation séparée
+  ou d'une copie sans relecture : voir
+  [l'état des lieux de la vérification](VERIFICATION_COPIE.md).
